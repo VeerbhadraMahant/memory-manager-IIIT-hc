@@ -19,6 +19,7 @@ import {
   STATUS_LABEL,
   type AssertionStatus,
   type MemoryItem,
+  type Sensitivity,
 } from "@/lib/api";
 
 const STATUSES: AssertionStatus[] = [
@@ -29,6 +30,12 @@ const STATUSES: AssertionStatus[] = [
   "hypothetical",
   "third_party",
 ];
+
+const SENSITIVITIES: Sensitivity[] = ["low", "medium", "high", "special_category"];
+
+// Mirrors migration 002. Fetching these would be more correct; hardcoding keeps the
+// review card synchronous, which matters because it renders mid-conversation.
+const blocks = ["unclassified", "health", "family", "learning", "work"];
 
 export function ReviewCard({
   pending,
@@ -129,13 +136,21 @@ function PendingItem({
   const [status, setStatus] = useState<AssertionStatus>(item.status);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [corrected, setCorrected] = useState<string | null>(null);
 
-  const run = async (fn: () => Promise<unknown>) => {
+  /** `resolve` false keeps the card open — a reclassification is a correction, not a
+   *  decision to keep, and dismissing the card would rob the user of the accept step. */
+  const run = async (fn: () => Promise<unknown>, resolve = true) => {
     setBusy(true);
     setError(null);
     try {
       await fn();
-      onResolved(item.id);
+      if (resolve) {
+        onResolved(item.id);
+      } else {
+        setCorrected("corrected");
+        setBusy(false);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "something went wrong");
       setBusy(false);
@@ -186,19 +201,48 @@ function PendingItem({
         {item.review_reason}
       </p>
 
+      {/* P2 one-tap correction. Misclassification has to be fixable where it is
+          visible, not in a separate view — so the chips that *show* the
+          classification are the controls that change it. Native selects: one
+          interaction, keyboard-operable, and screen-reader labelled for free. */}
       <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px]">
-        <Chip>{item.block_name ?? "unclassified"}</Chip>
-        <Chip>{STATUS_LABEL[item.status]}</Chip>
+        <SelectChip
+          label="Block"
+          value={item.block_name ?? "unclassified"}
+          options={blocks.map((b) => [b, b])}
+          disabled={busy}
+          onChange={(v) => run(() => api.edit(item.id, { block_name: v }), false)}
+        />
+        <SelectChip
+          label="Status"
+          value={item.status}
+          options={STATUSES.map((s) => [s, STATUS_LABEL[s]])}
+          disabled={busy}
+          onChange={(v) =>
+            run(() => api.edit(item.id, { status: v as AssertionStatus }), false)
+          }
+        />
+        <SelectChip
+          label="Sensitivity"
+          value={item.sensitivity}
+          options={SENSITIVITIES.map((s) => [s, SENSITIVITY_LABEL[s]])}
+          disabled={busy}
+          onChange={(v) =>
+            run(() => api.edit(item.id, { sensitivity: v as Sensitivity }), false)
+          }
+        />
         <Chip>{item.source_type}</Chip>
-        <Chip>{SENSITIVITY_LABEL[item.sensitivity]}</Chip>
-        <Chip highlight={item.scope === "session"}>
-          {SCOPE_LABEL[item.scope]}
-        </Chip>
+        <Chip highlight={item.scope === "session"}>{SCOPE_LABEL[item.scope]}</Chip>
       </div>
 
       {error && (
         <p role="alert" className="mt-2 text-xs text-red-700 dark:text-red-400">
           {error}
+        </p>
+      )}
+      {corrected && (
+        <p role="status" className="mt-1.5 text-[11px] text-neutral-500">
+          Reclassified. Still yours to keep or discard.
         </p>
       )}
 
@@ -255,6 +299,38 @@ function PendingItem({
         )}
       </div>
     </li>
+  );
+}
+
+function SelectChip({
+  label,
+  value,
+  options,
+  onChange,
+  disabled,
+}: {
+  label: string;
+  value: string;
+  options: [string, string][];
+  onChange: (v: string) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <label className="inline-flex items-center rounded bg-neutral-200/70 dark:bg-neutral-800">
+      <span className="sr-only">{label}</span>
+      <select
+        value={value}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.value)}
+        className="cursor-pointer appearance-none bg-transparent px-1.5 py-0.5 text-[11px] text-neutral-700 outline-none focus:ring-1 focus:ring-neutral-500 disabled:opacity-40 dark:text-neutral-300"
+      >
+        {options.map(([v, l]) => (
+          <option key={v} value={v}>
+            {l}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 
