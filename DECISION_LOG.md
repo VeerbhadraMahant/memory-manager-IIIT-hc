@@ -249,6 +249,53 @@ could not have arrived by another route.
 
 ---
 
+<!-- D25–D28 are P2 and P6. Same caveat: substance is right, voice is not yours yet. -->
+
+### D25 — Heuristics cross-check the model rather than running before it
+**Chose:** regex and tense heuristics that run *after* the Gemini call and adjust its answer —
+sensitivity upward only, status disagreement into forced review.
+**Considered:** the literal design in SYSTEM_DESIGN §3 — cheap heuristics first, LLM only as fallback.
+**Rejected because:** extraction and classification are one batched call (D16), so there is no
+earlier slot to occupy without adding a request per turn, which the 20/day quota cannot absorb.
+Running them afterwards keeps the same safety property and costs nothing.
+**The asymmetry is the design, not a detail:** sensitivity can only be raised, never lowered, so a
+disagreement between regex and model always resolves toward the more restrictive answer (principle 1).
+Status is treated differently — a regex genuinely cannot out-classify an LLM on tense, so it does not
+overrule, it just buys the item a human glance.
+
+### D26 — The overstatement check runs in Python, not in the model
+**Chose:** the model returns claims labelled with how complete its own wording sounds; code compares
+that against the stored `assertion_status`.
+**Considered:** asking the model directly whether the draft overstates any memory — one call, less
+plumbing, and it reads well in a demo.
+**Rejected because:** a model grading its own accuracy is exactly the check that fails silently, and
+silent failure of a status claim *is* the originating incident. Self-assessment would have been a
+more impressive-sounding implementation of the same bug. The model is only asked to describe its own
+phrasing, which it has no incentive to get wrong; the judgement is deterministic and inspectable.
+
+### D27 — A claim is compared against its most complete source, not all of them
+**Chose:** a claim overstates only when it asserts more than *any* of its sources support.
+**Considered:** flagging whenever any source is less complete than the assertion — the first
+implementation, and the stricter-sounding one.
+**Rejected because:** it fired on "Currently drafting a paper… for submission next month", which is
+accurate — it rests on an `in_progress` fact and a `planned` one and describes both correctly. A
+verifier that flags correct sentences trains the user to dismiss it, which is the habituation failure
+principle 4 exists to prevent. A warning that is right 60% of the time is worse than no warning.
+**Known cost, recorded rather than hidden:** a single claim blending two stages is checked against
+its most complete source, so a blend could hide an overstatement. Mitigated by asking the model for
+one claim per distinct fact, which held under test. Not guaranteed.
+
+### D28 — Revoking a memory rejects it, rather than hiding it from one answer
+**Chose:** "drop this and redo" tombstones the item, clears its attributions, and re-answers.
+**Considered:** excluding it from this one response only, leaving the memory intact.
+**Rejected because:** a user who removes a memory from an answer is telling you the memory is wrong
+or unwanted, not that this particular sentence was awkward. Suppressing it once and quietly reusing
+it next turn is the silent-accumulation behaviour the whole project objects to. Both answers are kept
+and shown side by side, because "here is what I would have said without that" only means something
+if the user can see the difference rather than take it on trust.
+
+---
+
 ## To verify before any of this goes in a slide
 Every citation below is reconstructed from memory and must be checked against the actual paper.
 A fabricated reference at a SIGCHI event is unrecoverable.

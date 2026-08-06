@@ -14,10 +14,11 @@ HCI hackathon project (SIGCHI-supported). Design rationale is a first-class deli
 | `PHASES.md` | Build phases, current status, **and what is stubbed** |
 | `DECISION_LOG.md` | Decisions with their rejected alternatives |
 
-**Current phase: P0, P1 and P3 complete.** The core loop runs — say something, get a reply that shows
-which memories shaped it, and negotiate what gets remembered without leaving the conversation — and
-session scoping is enforced and demonstrable across sessions. See `PHASES.md` for exactly what is and
-is not built.
+**Current phase: P0, P1, P2, P3 and P6 complete** — the whole demo spine. Say something, get a reply
+that shows which memories shaped it, correct the classification in one tap, drop a memory and watch
+the answer change, and ask for a high-stakes draft that refuses to write up unfinished work as
+finished. Remaining: P4 (complete list view), P7 (pre-send PII), P5 (deletion-preview graph),
+P8 (accessibility pass). See `PHASES.md` for exactly what is and is not built.
 
 > **Read this before you demo.** The Gemini free tier allows **20 requests per day, per model** —
 > per *day*. Chat and extraction are split across two models to double that, but a working session
@@ -71,6 +72,7 @@ cd frontend && npm run dev
 .venv/Scripts/python backend/scripts/smoke_p1.py            # 26 checks, the full loop
 .venv/Scripts/python backend/scripts/leak_test_p3.py --no-llm  # store invariants, free
 .venv/Scripts/python backend/scripts/leak_test_p3.py        # 18 checks, full leak test
+.venv/Scripts/python backend/scripts/smoke_p2_p6.py         # 16 checks, CV failure case
 .venv/Scripts/python backend/scripts/migrate.py --status
 curl http://127.0.0.1:8000/health
 ```
@@ -135,6 +137,9 @@ frontend/
 | Sensitive-but-legitimate → session by default | `services/policy.py` — `SESSION_BY_DEFAULT` |
 | No orphaned facts | `source_message_id NOT NULL` in `001_init.sql` |
 | Consequence, not caution | `components/ReviewCard.tsx` wording, `gemini.py` chat prompt |
+| Unfinished work never written up as finished | `routers/chats.py` `verified_draft`, in Python |
+| Regex may raise sensitivity, never lower it | `services/classify.py` — `raise_sensitivity` |
+| Warnings stay credible | `services/classify.py` ranks, `chats.py` most-complete-source rule |
 
 The memory vocabulary (`assertion_status`, `scope`, `sensitivity`, …) appears in three places:
 `001_init.sql` as Postgres enums, `models.py` as Pydantic enums, `lib/api.ts` as TypeScript unions.

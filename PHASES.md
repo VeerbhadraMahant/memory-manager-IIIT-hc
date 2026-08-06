@@ -100,22 +100,83 @@ tokens that cannot pre-exist in the store.
 ---
 
 ## P2 — Classification
+**Status:** done — covered by `python backend/scripts/smoke_p2_p6.py` plus unit-level heuristic checks
 Domain (zero-shot against block names), assertion status (heuristic first, LLM fallback),
 sensitivity (regex first, LLM second). Confidence threshold routes low-confidence items to the
 restrictive block plus forced review. Inline one-tap correction at the point classification happens.
 
-**Done when:** misclassification is visible and correctable without opening a separate view.
+**Done when:** misclassification is visible and correctable without opening a separate view. ✅
+
+### The heuristics run as a cross-check, not a first pass
+`SYSTEM_DESIGN.md` §3 asks for heuristics first with LLM fallback. Extraction and classification are
+batched into one Gemini call for quota reasons (D16), so there is no earlier pass to occupy. The
+heuristics in `services/classify.py` therefore run *against* the model's answer instead, and are
+deliberately one-directional:
+
+- **Sensitivity may only be raised.** Regex sees medication, model said `low` → the item becomes
+  `special_category`, and because policy sends special categories to session scope by default, it
+  also stops being persistent. Regex silence leaves the model's answer alone. Disagreement always
+  resolves toward caution (principle 1).
+- **Status disagreement does not overrule the model** — it drops confidence to 0.5 and forces review.
+  A regex cannot out-classify an LLM on tense, but it can notice something worth a human glance.
+  "Still writing" classified as `completed` is exactly that, and it is the CV incident in miniature.
+
+Verified on 11 hand-built cases including the CV wording, all passing.
+
+### One-tap correction
+The chips that *display* block, status and sensitivity on the review card are the controls that
+change them — native `<select>` elements, so one interaction, keyboard-operable, and labelled for
+screen readers without extra work. Correcting does **not** dismiss the card: a reclassification is a
+correction, not a decision to keep, and collapsing the card would skip the accept step.
 
 ---
 
 ## P6 — Use-time attribution + stake-proportional verification  ← strongest differentiator
+**Status:** done — verified by `python backend/scripts/smoke_p2_p6.py` (16 checks, all passing)
 Responses show which memory items shaped them. Inline revoke and regenerate.
 High-stakes output mode (CV, formal document): every memory-derived claim surfaced for confirmation
 before it lands in the artifact. Stale in_progress items trigger re-confirmation rather than silent reuse.
 
 **Done when:** you can reproduce the CV failure case — memory says a paper is in progress, the system
 refuses to silently render it as completed — and show the "here's what I'd have said without that"
-regeneration.
+regeneration. ✅
+
+### The check is in Python, not in the model
+`POST /chats/{id}/verified-draft` asks Gemini for two things: the draft, and a breakdown of its own
+sentences into claims, each labelled with the memories behind it and **how complete that sentence
+sounds**. The model is never asked whether it overstated anything. The comparison against the stored
+`assertion_status` happens in `routers/chats.py`, in code.
+
+That distinction is the whole point. A model grading its own accuracy is precisely the check that
+fails silently, which is the failure this project exists to prevent — self-assessment would have
+been a more impressive-sounding implementation of the same bug.
+
+Observed: memory says *in progress*, request is "write a CV line", output is *"Currently drafting a
+conference paper… for submission to CHI"* — split into an `in_progress` claim and a `planned` claim,
+both clean. Instructed to state the paper was published, the guard fires:
+*"written as completed, but the memory says planned"*, and the draft is marked not clean to ship.
+
+### Revoke is a memory-level act
+"Drop this and redo" rejects and tombstones the item, deletes its attributions, and re-answers the
+same turn without it — so it does not come back next turn either. Both answers are kept and shown,
+because "here is what I would have said without that" has to be *shown* rather than claimed.
+
+### Decay
+`in_progress` items unconfirmed past `stale_after_days` (default 14) are marked stale at retrieval.
+Stale items are still used — decay is not deletion — but the chat prompt requires them to be voiced
+as "last I knew…" rather than as current fact, and the verification pass flags any draft claim
+resting on one. `POST /memory/items/{id}/confirm` resets the clock in one tap.
+**Set `STALE_AFTER_DAYS=0` to demonstrate this without waiting two weeks.**
+
+### Honest limits
+- **Attribution is injection, not influence.** "Shaped by N memories" means N memories were
+  retrieved and placed in the prompt. Whether each changed the wording is not measured. The revoke
+  flow narrows this usefully — you can *see* the answer change — but the label still overstates
+  slightly. Say "these were available to it", not "these caused it".
+- **Claim granularity depends on the model.** The prompt asks for one claim per distinct fact, and
+  the model did split correctly under test. A sentence that blends two stages into one claim is
+  compared against its most complete source, so a blended claim could hide an overstatement.
+- **`stale_after_days = 14` is a guess** tuned for a demo, not a finding.
 
 ---
 
