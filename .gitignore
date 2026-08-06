@@ -63,6 +63,9 @@ next-env.d.ts
 
 
 # --- editors / os ---
+# .claude/settings.json IS committed — it carries the Stop hook that maintains this
+# file. Only the personal-override layer is ignored.
+.claude/settings.local.json
 .vscode/
 .idea/
 *.swp
