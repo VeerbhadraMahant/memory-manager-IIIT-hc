@@ -3,6 +3,36 @@
 .env.*
 !.env.example
 
+# Key material and Google service-account JSON. The Gemini key lives in .env today,
+# but a downloaded service-account file is the usual way a Google credential ends up
+# committed by accident.
+*.pem
+*.key
+*.p12
+*.pfx
+*-service-account.json
+service-account*.json
+gcp-*.json
+
+
+# --- database dumps ---
+# NOT a blanket *.sql rule — backend/migrations/*.sql must stay tracked. These
+# patterns target dump output specifically, which matters more here than in most
+# projects: the demo database deliberately contains medication, health and family
+# details. A dump committed to a public repo is a real disclosure, not just mess.
+*.dump
+*.sql.gz
+*.sql.bz2
+*.sql.zip
+dump*.sql
+*dump.sql
+backup*.sql
+*backup.sql
+*.sqlite
+*.sqlite3
+*.db
+
+
 # --- python ---
 __pycache__/
 *.py[cod]
@@ -12,6 +42,12 @@ venv/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
 
 # --- node / next.js ---
 node_modules
@@ -21,16 +57,26 @@ build/
 dist/
 *.tsbuildinfo
 .npm/
+.turbo/
+.vercel
+next-env.d.ts
+
 
 # --- editors / os ---
 .vscode/
 .idea/
+*.swp
 .DS_Store
 Thumbs.db
 desktop.ini
 
-# --- logs / scratch ---
+
+# --- logs, scratch, merge debris ---
 *.log
 npm-debug.log*
+yarn-error.log*
 tmp/
 scratch/
+*.orig
+*.rej
+*.bak
