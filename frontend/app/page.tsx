@@ -1,21 +1,24 @@
 "use client";
 
-// P1 — the core loop. A turn happens, the response comes back with the memories that
-// shaped it, and what the system wants to remember appears inline for negotiation.
+// P1 core loop + P3 session scoping.
 //
-// Nothing here opens a settings page: every memory operation is reachable from the
-// transcript (D1). The standalone list view is P4.
+// The session switcher is not a convenience feature — P3's whole claim is that a
+// session-only memory does not survive into a new conversation, and that is not
+// demonstrable without somewhere else to stand.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ReviewCard } from "@/components/ReviewCard";
+import { ScopePanel } from "@/components/ScopePanel";
 import {
   api,
   SCOPE_LABEL,
   STATUS_LABEL,
   type CandidatesResponse,
-  type Health,
+  type Chat,
   type MemoryItem,
+  type Message,
+  type ScopeReport,
   type TurnResponse,
 } from "@/lib/api";
 
@@ -25,35 +28,69 @@ interface Turn {
   ephemeral: boolean;
   reply: string | null;
   used: TurnResponse["used_memories"];
-  userMessageId: string | null;
   extraction: CandidatesResponse | null;
   extractionRunning: boolean;
   error: string | null;
+  fromHistory: boolean;
+}
+
+/** Pair a flat message list into turns. Assistant replies follow their user turn. */
+function toTurns(messages: Message[]): Turn[] {
+  const turns: Turn[] = [];
+  for (const m of messages) {
+    if (m.role === "user") {
+      turns.push({
+        id: m.id,
+        userText: m.content,
+        ephemeral: m.session_ephemeral,
+        reply: null,
+        used: [],
+        extraction: null,
+        extractionRunning: false,
+        error: null,
+        fromHistory: true,
+      });
+    } else if (m.role === "assistant" && turns.length > 0) {
+      turns[turns.length - 1].reply = m.content;
+    }
+  }
+  return turns;
 }
 
 export default function Page() {
+  const [chats, setChats] = useState<Chat[]>([]);
   const [chatId, setChatId] = useState<string | null>(null);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState("");
   const [ephemeral, setEphemeral] = useState(false);
   const [sending, setSending] = useState(false);
-  const [health, setHealth] = useState<Health | null>(null);
   const [memories, setMemories] = useState<MemoryItem[]>([]);
+  const [scope, setScope] = useState<ScopeReport | null>(null);
   const [fatal, setFatal] = useState<string | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
 
-  const refreshMemories = useCallback(() => {
+  const refreshSidebar = useCallback((id: string | null) => {
     api.items({ limit: "100" }).then(setMemories).catch(() => {});
-    api.health().then(setHealth).catch(() => {});
+    if (id) api.scopeReport(id).then(setScope).catch(() => {});
   }, []);
 
+  // Boot: reuse the most recent chat rather than spawning a new one on every reload,
+  // otherwise the chat list fills with empties during a demo.
   useEffect(() => {
-    api
-      .createChat("Demo session")
-      .then((c) => setChatId(c.id))
-      .catch((e) => setFatal(e.message));
-    refreshMemories();
-  }, [refreshMemories]);
+    (async () => {
+      try {
+        const existing = await api.chats();
+        const chat = existing[0] ?? (await api.createChat("Session 1"));
+        const list = existing.length ? existing : [chat];
+        setChats(list);
+        setChatId(chat.id);
+        setTurns(toTurns(await api.messages(chat.id)));
+        refreshSidebar(chat.id);
+      } catch (e) {
+        setFatal(e instanceof Error ? e.message : "failed to reach the backend");
+      }
+    })();
+  }, [refreshSidebar]);
 
   useEffect(() => {
     bottom.current?.scrollIntoView({ behavior: "smooth" });
@@ -62,9 +99,30 @@ export default function Page() {
   const patchTurn = (id: string, patch: Partial<Turn>) =>
     setTurns((ts) => ts.map((t) => (t.id === id ? { ...t, ...patch } : t)));
 
-  // Extraction is async and takes a few seconds, so the card fills in after the
-  // reply rather than with it. Polling is the honest, simple option here; a socket
-  // would be nicer and is not worth the hours.
+  const switchTo = async (id: string) => {
+    setChatId(id);
+    setTurns([]);
+    setScope(null);
+    try {
+      setTurns(toTurns(await api.messages(id)));
+      refreshSidebar(id);
+    } catch (e) {
+      setFatal(e instanceof Error ? e.message : "failed to load session");
+    }
+  };
+
+  const newSession = async () => {
+    try {
+      const chat = await api.createChat(`Session ${chats.length + 1}`);
+      setChats((cs) => [chat, ...cs]);
+      setChatId(chat.id);
+      setTurns([]);
+      refreshSidebar(chat.id);
+    } catch (e) {
+      setFatal(e instanceof Error ? e.message : "failed to start a session");
+    }
+  };
+
   const pollCandidates = useCallback(
     async (turnId: string, chat: string, messageId: string) => {
       for (let i = 0; i < 45; i++) {
@@ -73,16 +131,16 @@ export default function Page() {
           const res = await api.candidates(chat, messageId);
           if (res.status === "done" || res.status === "failed") {
             patchTurn(turnId, { extraction: res, extractionRunning: false });
-            refreshMemories();
+            refreshSidebar(chat);
             return;
           }
         } catch {
-          /* keep polling; a transient failure should not kill the indicator */
+          /* transient failure should not kill the indicator */
         }
       }
       patchTurn(turnId, { extractionRunning: false });
     },
-    [refreshMemories],
+    [refreshSidebar],
   );
 
   const send = async () => {
@@ -99,10 +157,10 @@ export default function Page() {
         ephemeral: wasEphemeral,
         reply: null,
         used: [],
-        userMessageId: null,
         extraction: null,
         extractionRunning: false,
         error: null,
+        fromHistory: false,
       },
     ]);
     setInput("");
@@ -113,16 +171,14 @@ export default function Page() {
       patchTurn(turnId, {
         reply: res.assistant_message.content,
         used: res.used_memories,
-        userMessageId: res.user_message.id,
         extractionRunning: res.extraction_running,
       });
+      refreshSidebar(chatId);
       if (res.extraction_running) {
         void pollCandidates(turnId, chatId, res.user_message.id);
       }
     } catch (e) {
-      patchTurn(turnId, {
-        error: e instanceof Error ? e.message : "request failed",
-      });
+      patchTurn(turnId, { error: e instanceof Error ? e.message : "request failed" });
     } finally {
       setSending(false);
     }
@@ -137,29 +193,55 @@ export default function Page() {
               extraction: {
                 ...t.extraction,
                 candidates: t.extraction.candidates.filter((c) => c.id !== itemId),
-                auto_accepted: t.extraction.auto_accepted.filter(
-                  (c) => c.id !== itemId,
-                ),
+                auto_accepted: t.extraction.auto_accepted.filter((c) => c.id !== itemId),
               },
             }
           : t,
       ),
     );
-    refreshMemories();
+    refreshSidebar(chatId);
   };
 
   return (
-    // w-full is load-bearing: body is flex-col, and mx-auto on a flex item overrides
-    // the default align-items:stretch, which shrink-wraps the box to its content.
     <div className="mx-auto flex w-full min-h-screen max-w-6xl flex-col px-4 py-6 lg:flex-row lg:gap-6">
       <main className="flex min-w-0 flex-1 flex-col">
         <header className="mb-4">
-          <h1 className="text-lg font-semibold tracking-tight">
-            Negotiated AI Memory
-          </h1>
+          <h1 className="text-lg font-semibold tracking-tight">Negotiated AI Memory</h1>
           <p className="text-xs text-neutral-500">
             You decide what is remembered, as it happens.
           </p>
+
+          {/* Capped at six. Test runs accumulate sessions quickly, and an unbounded
+              row of buttons pushed the conversation off the screen. Older sessions
+              stay reachable through the count rather than vanishing silently. */}
+          <nav aria-label="Sessions" className="mt-3 flex flex-wrap items-center gap-1.5">
+            {chats.slice(0, 6).map((ch) => (
+              <button
+                key={ch.id}
+                onClick={() => void switchTo(ch.id)}
+                aria-current={ch.id === chatId ? "true" : undefined}
+                className={
+                  "rounded px-2 py-1 text-xs transition " +
+                  (ch.id === chatId
+                    ? "bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900"
+                    : "border border-neutral-300 text-neutral-600 hover:bg-neutral-100 dark:border-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-800")
+                }
+              >
+                {ch.title ?? "Untitled"}
+              </button>
+            ))}
+            <button
+              onClick={() => void newSession()}
+              className="rounded border border-dashed border-neutral-400 px-2 py-1 text-xs text-neutral-600 hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-400 dark:hover:bg-neutral-800"
+            >
+              + New session
+            </button>
+            {chats.length > 6 && (
+              <span className="text-xs text-neutral-400">
+                +{chats.length - 6} older
+              </span>
+            )}
+          </nav>
         </header>
 
         {fatal && (
@@ -178,12 +260,12 @@ export default function Page() {
                 Try telling it something with a mix of things in it.
               </p>
               <p className="mt-1.5">
-                &ldquo;I&rsquo;ve been on 20mg escitalopram since March. Still
-                writing the CHI paper with Priya, should wrap next month.&rdquo;
+                &ldquo;I&rsquo;ve been on 20mg escitalopram since March. Still writing
+                the CHI paper with Priya, should wrap next month.&rdquo;
               </p>
               <p className="mt-2 text-xs">
-                Health goes to this chat only. The paper is kept as{" "}
-                <em>in progress</em>, not finished.
+                Health goes to this chat only. The paper is kept as <em>in progress</em>,
+                not finished. Then start a new session and ask what it knows.
               </p>
             </div>
           )}
@@ -258,10 +340,7 @@ export default function Page() {
               )}
 
               {t.extraction?.status === "failed" && (
-                <p
-                  role="alert"
-                  className="ml-0 text-xs text-red-700 sm:ml-10 dark:text-red-400"
-                >
+                <p role="alert" className="ml-0 text-xs text-red-700 sm:ml-10 dark:text-red-400">
                   Extraction failed: {t.extraction.error}
                 </p>
               )}
@@ -330,14 +409,11 @@ export default function Page() {
       </main>
 
       <aside className="mt-8 w-full shrink-0 lg:mt-0 lg:w-72">
+        <ScopePanel report={scope} onChanged={() => refreshSidebar(chatId)} />
+
         <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-600 dark:text-neutral-400">
-          Memory ({memories.length})
+          All memory ({memories.length})
         </h2>
-        {health && (
-          <p className="mb-3 text-[11px] text-neutral-400">
-            pgvector {health.pgvector} · {health.embedding_dim}d
-          </p>
-        )}
         {memories.length === 0 ? (
           <p className="text-xs text-neutral-500">Nothing stored yet.</p>
         ) : (
@@ -352,9 +428,7 @@ export default function Page() {
                   <span>{m.block_name}</span>·<span>{STATUS_LABEL[m.status]}</span>·
                   <span
                     className={
-                      m.scope === "session"
-                        ? "text-amber-700 dark:text-amber-400"
-                        : ""
+                      m.scope === "session" ? "text-amber-700 dark:text-amber-400" : ""
                     }
                   >
                     {SCOPE_LABEL[m.scope]}
@@ -366,8 +440,8 @@ export default function Page() {
           </ul>
         )}
         <p className="mt-3 text-[11px] text-neutral-400">
-          The complete, filterable, keyboard-navigable list is P4. This panel is a
-          read-only preview.
+          Review cards appear for turns taken in this page session. Items still awaiting
+          review stay listed here. The complete filterable, keyboard-navigable list is P4.
         </p>
       </aside>
     </div>

@@ -86,6 +86,29 @@ export interface CandidatesResponse {
   auto_accepted: MemoryItem[];
 }
 
+export interface Chat {
+  id: string;
+  user_id: string;
+  title: string | null;
+  created_at: string;
+}
+
+export interface HiddenItem {
+  id: string;
+  content: string;
+  block_name: string | null;
+  origin_chat_title: string | null;
+}
+
+export interface ScopeReport {
+  chat_id: string;
+  visible_persistent: number;
+  visible_session: number;
+  hidden_session_items: HiddenItem[];
+  ephemeral_turns: number;
+  items_from_ephemeral_turns_global: number;
+}
+
 export interface Health {
   status: string;
   pgvector: string | null;
@@ -125,7 +148,12 @@ export const api = {
     return req<MemoryItem[]>(`/memory/items${qs ? `?${qs}` : ""}`);
   },
 
-  createChat: (title?: string) => post<{ id: string }>("/chats", { title }),
+  createChat: (title?: string) => post<Chat>("/chats", { title }),
+  chats: () => req<Chat[]>("/chats"),
+  messages: (chatId: string) => req<Message[]>(`/chats/${chatId}/messages`),
+  scopeReport: (chatId: string) => req<ScopeReport>(`/chats/${chatId}/scope-report`),
+  purgeEphemeral: (chatId: string) =>
+    post<{ redacted_turns: number }>(`/chats/${chatId}/purge-ephemeral`),
 
   sendTurn: (chatId: string, content: string, sessionEphemeral: boolean) =>
     post<TurnResponse>(`/chats/${chatId}/message`, {
