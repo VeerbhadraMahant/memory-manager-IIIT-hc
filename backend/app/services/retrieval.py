@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 
+from app.config import settings
 from app.services import gemini
 
 log = logging.getLogger(__name__)
@@ -25,7 +26,13 @@ TOP_K = 8
 RETRIEVE_SQL = """
 select mi.id, mi.content, mi.status, mi.scope, mi.sensitivity, mi.source_type,
        b.name as block_name,
-       mi.embedding <=> %s::vector as distance
+       mi.embedding <=> %s::vector as distance,
+       -- P6 decay: something the user was in the middle of months ago is not
+       -- evidence that they still are. Only in_progress decays — a completed fact
+       -- does not become less true with time.
+       (mi.status = 'in_progress'
+        and coalesce(mi.last_confirmed_at, mi.created_at)
+            < now() - make_interval(days => %s)) as is_stale
 from memory_items mi
 left join blocks b on b.id = mi.block_id
 where mi.user_id = %s
@@ -38,7 +45,9 @@ limit %s
 """
 
 
-def retrieve(cur, user_id: str, chat_id: str, query: str) -> list[dict]:
+def retrieve(
+    cur, user_id: str, chat_id: str, query: str, exclude: set[str] | None = None
+) -> list[dict]:
     try:
         vec = gemini.embed([query])[0]
     except Exception:
@@ -46,5 +55,10 @@ def retrieve(cur, user_id: str, chat_id: str, query: str) -> list[dict]:
         log.exception("embedding failed during retrieval; answering without memory")
         return []
 
-    cur.execute(RETRIEVE_SQL, (str(vec), user_id, chat_id, TOP_K))
-    return [r for r in cur.fetchall() if r["distance"] <= MAX_DISTANCE]
+    cur.execute(
+        RETRIEVE_SQL, (str(vec), settings.stale_after_days, user_id, chat_id, TOP_K)
+    )
+    rows = [r for r in cur.fetchall() if r["distance"] <= MAX_DISTANCE]
+    if exclude:
+        rows = [r for r in rows if str(r["id"]) not in exclude]
+    return rows

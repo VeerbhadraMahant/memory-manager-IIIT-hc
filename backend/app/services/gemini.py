@@ -181,6 +181,11 @@ Each carries a status. Honour it exactly:
   hypothetical - was raised as a possibility only.
   third_party  - about someone else, not the user.
 
+An item marked UNCONFIRMED FOR A WHILE was true when recorded but has not been checked
+since. Use it, but do not state it as the current situation — say when it was last
+known and invite a correction. "Last I knew you were still writing it, is that where
+things are?" rather than "You are writing it."
+
 If a memory is relevant, use it naturally. If none are, answer normally and do not
 mention that you have a memory system. Never invent memories that are not listed.
 
@@ -201,7 +206,9 @@ otherwise is both false and a promise you are not the one keeping.
 def chat_response(history: list[dict], memory_items: list[dict]) -> str:
     if memory_items:
         lines = "\n".join(
-            f"- [{m['status']}] {m['content']}" for m in memory_items
+            f"- [{m['status']}]{' [UNCONFIRMED FOR A WHILE]' if m.get('is_stale') else ''}"
+            f" {m['content']}"
+            for m in memory_items
         )
         block = f"MEMORY\n{lines}"
     else:
@@ -234,6 +241,82 @@ def chat_response(history: list[dict], memory_items: list[dict]) -> str:
         )
 
     return (with_retry(call).text or "").strip()
+
+
+# ----------------------------------------------------------------- P6 verified draft
+
+
+class DraftClaim(BaseModel):
+    text: str = Field(description="The sentence or clause from the draft.")
+    memory_labels: list[str] = Field(
+        description="Labels like M1, M3 for the memories this rests on. Empty if none."
+    )
+    asserted_as: Literal[
+        "completed", "in_progress", "planned", "hypothetical", "abandoned", "none"
+    ] = Field(
+        description="How complete this sentence makes the thing sound, judged from the "
+        "sentence alone. 'published a paper' is completed; 'is writing a paper' is "
+        "in_progress. Use 'none' if the sentence makes no completeness claim."
+    )
+
+
+class DraftResult(BaseModel):
+    draft: str
+    claims: list[DraftClaim]
+
+
+# Labels rather than UUIDs: asking a model to echo 36-character identifiers back
+# accurately is a reliability problem with no upside. M1..Mn maps back in Python.
+DRAFT_PROMPT = """\
+Write the requested text using only the memories below. Do not invent facts about the
+person. If a memory does not support something, leave it out.
+
+Then break your own draft into claims. For each sentence that rests on a memory, give
+the sentence, the labels of the memories behind it, and — reading only that sentence —
+how finished it makes the thing sound.
+
+One claim per distinct fact. If a sentence covers two things at different stages —
+something underway and something merely planned — split it into two claims so each
+carries its own completeness. A claim that blends stages cannot be checked.
+
+Judge `asserted_as` from your wording, not from the memory. If you wrote "published a
+paper", that is completed even if the memory says otherwise. Report what the sentence
+says. A separate check compares your answer against the memory, and it only works if
+you describe your own wording honestly.
+
+MEMORIES
+{memory_block}
+
+REQUEST
+{instruction}
+"""
+
+
+def verified_draft(instruction: str, memories: list[dict]) -> DraftResult | None:
+    """Draft a high-stakes artifact and label its own claims for checking.
+
+    The model is *not* asked whether it is overstating anything — that comparison is
+    done in Python against the stored status, because a model grading its own accuracy
+    is exactly the check that fails silently. All this call provides is the mapping
+    from sentence to memory plus an honest description of its own phrasing.
+    """
+    block = "\n".join(
+        f"[M{i + 1}] ({m['status']}) {m['content']}" for i, m in enumerate(memories)
+    ) or "(no memories available)"
+
+    def call():
+        return client().models.generate_content(
+            model=settings.gemini_chat_model,
+            contents=DRAFT_PROMPT.format(memory_block=block, instruction=instruction),
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=DraftResult,
+                safety_settings=SAFETY,
+                temperature=0.2,
+            ),
+        )
+
+    return with_retry(call).parsed
 
 
 # ----------------------------------------------------------------- embeddings
