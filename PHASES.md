@@ -53,11 +53,49 @@ Measured: chat response 3.9s, extraction 6–9s async. Response never waits on e
 ---
 
 ## P3 — Session scoping + leak test
+**Status:** done — verified by `python backend/scripts/leak_test_p3.py` (18 checks, all passing)
 Scope enforced at the extraction pass. Ephemeral turns excluded from persistence entirely.
 
 **Done when:** the demo can mark something session-only, start a new session, ask about it, and show
 both that the model does not know it *and* that it never entered the store. Build this as a repeatable
-scripted check — it is a strong live-demo moment.
+scripted check — it is a strong live-demo moment. ✅
+
+Shipped: session switcher in the UI (P3 is not demonstrable without somewhere else to stand);
+`GET /chats/{id}/scope-report` reporting what a session can and cannot reach;
+`POST /chats/{id}/purge-ephemeral`; and the scripted leak test with a `--no-llm` mode.
+
+### Two different guarantees, deliberately not blurred
+The demo should state these separately, because a judge who conflates them will think one of them
+is weaker than it is.
+
+1. **Off the record → never written down.** The extraction pass returns before calling Gemini when a
+   turn is ephemeral. Nothing is derived from it, so nothing about it exists in the memory store.
+   `scope-report.items_from_ephemeral_turns_global` counts memory items whose source message was
+   ephemeral, across the whole database. It is structurally 0.
+2. **Session-scoped → written down, but fenced.** The item exists, carries a chat anchor, and is
+   filtered out in SQL at retrieval for every other chat. The leak test asserts both halves: the fact
+   *is* in the store, and every copy of it is session-scoped with an anchor.
+
+### The honest caveat, which should be said before it is asked
+An off-the-record turn **is still in the `messages` transcript** and is replayed as history within
+its own chat. That is intentional: a model that cannot refer to what you said thirty seconds ago is
+broken, not private. "Off the record" governs persistence, not the current conversation — the same
+sense a journalist uses it. It is gone in the next session because nothing was ever derived from it.
+`POST /chats/{id}/purge-ephemeral` redacts the transcript text too, for anyone who wants that.
+
+### Running it
+```
+python backend/scripts/leak_test_p3.py --no-llm   # store-level invariants, free
+python backend/scripts/leak_test_p3.py            # full, ~3 chat + 2 extraction calls
+```
+The `--no-llm` mode exists because the strongest evidence here is a database query returning zero
+rows, and that should be runnable in front of an audience without spending daily quota.
+
+**Test-design note worth keeping:** the first version of this test probed with the word
+"escitalopram" and failed — earlier smoke runs had left *persistent* memories saying the same thing,
+which a new session is entitled to recall. The test could not distinguish a leak from a legitimate
+recall, which means a passing run would have been meaningless too. Both probes now use invented
+tokens that cannot pre-exist in the store.
 
 ---
 

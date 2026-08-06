@@ -210,6 +210,45 @@ use time.
 
 ---
 
+<!-- D22–D24 are P3. Same caveat: rewrite in your voice. -->
+
+### D22 — Off the record governs persistence, not the current conversation
+**Chose:** an ephemeral turn is never extracted, but its text stays in the `messages` transcript and
+is replayed as history within its own chat.
+**Considered:** excluding ephemeral turns from the history sent to the model, so the assistant cannot
+refer to them even in the same conversation.
+**Rejected because:** an assistant that cannot respond to what you said thirty seconds ago is broken,
+not private, and the user would simply stop using the toggle. The journalistic sense of "off the
+record" is the right one: it is said, it is heard, it is not written down. The guarantee is that
+nothing survives the session, and that holds — nothing was ever derived from it.
+**Consequence, stated rather than hidden:** the raw text is in the database, in `messages`. That is a
+different table from the memory store and a different claim, and PHASES.md says so plainly.
+`POST /chats/{id}/purge-ephemeral` exists for anyone who wants the transcript cleaned too.
+
+### D23 — The scope report names what is out of reach instead of omitting it
+**Chose:** `GET /chats/{id}/scope-report` returns the *contents* of session memories confined to
+other chats, and the UI shows them struck through with the session that owns them.
+**Considered:** simply not returning them, which is what the retrieval path does.
+**Rejected because:** "this is session-only" is otherwise an invisible promise — the user is asked to
+trust a boundary they cannot see. Showing the user their own memories is not a leak; the claim being
+demonstrated is that *this session cannot use them*, not that they are secret from their owner.
+Naming them is what makes the boundary checkable rather than asserted.
+**Also:** the report carries `items_from_ephemeral_turns_global`, a database-wide count that is
+structurally 0. A number an audience can watch is better evidence than a sentence in a slide.
+
+### D24 — The leak test probes with invented tokens, not realistic ones
+**Chose:** canary strings ("Kestrel-Lane-Provisional-77", "Vaudrey-Linnet syndrome") that cannot
+already exist in the store.
+**Considered:** probing with the realistic demo content, which reads better.
+**Rejected because:** the first version did exactly that and failed on "escitalopram" — prior smoke
+runs had left *persistent* memories saying the same thing, which a new session is entitled to recall.
+The test could not tell a leak from a legitimate recall. The important part is that a *passing* run
+would have been equally meaningless: absence of a common word from an answer proves nothing.
+**General lesson worth keeping:** a negative assertion is only evidence if the thing being looked for
+could not have arrived by another route.
+
+---
+
 ## To verify before any of this goes in a slide
 Every citation below is reconstructed from memory and must be checked against the actual paper.
 A fabricated reference at a SIGCHI event is unrecoverable.

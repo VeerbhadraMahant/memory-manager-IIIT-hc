@@ -14,9 +14,10 @@ HCI hackathon project (SIGCHI-supported). Design rationale is a first-class deli
 | `PHASES.md` | Build phases, current status, **and what is stubbed** |
 | `DECISION_LOG.md` | Decisions with their rejected alternatives |
 
-**Current phase: P1 complete** — the core loop runs. Say something in the chat, get a reply that
-shows which memories shaped it, and negotiate what gets remembered without leaving the conversation.
-See `PHASES.md` for exactly what is and is not built.
+**Current phase: P0, P1 and P3 complete.** The core loop runs — say something, get a reply that shows
+which memories shaped it, and negotiate what gets remembered without leaving the conversation — and
+session scoping is enforced and demonstrable across sessions. See `PHASES.md` for exactly what is and
+is not built.
 
 > **Read this before you demo.** The Gemini free tier allows **20 requests per day, per model** —
 > per *day*. Chat and extraction are split across two models to double that, but a working session
@@ -66,8 +67,10 @@ cd frontend && npm run dev
 ## Verify
 
 ```bash
-.venv/Scripts/python backend/scripts/smoke_p0.py     # 19 checks, schema + API, no Gemini
-.venv/Scripts/python backend/scripts/smoke_p1.py     # 26 checks, the full loop
+.venv/Scripts/python backend/scripts/smoke_p0.py            # 19 checks, schema + API, no Gemini
+.venv/Scripts/python backend/scripts/smoke_p1.py            # 26 checks, the full loop
+.venv/Scripts/python backend/scripts/leak_test_p3.py --no-llm  # store invariants, free
+.venv/Scripts/python backend/scripts/leak_test_p3.py        # 18 checks, full leak test
 .venv/Scripts/python backend/scripts/migrate.py --status
 curl http://127.0.0.1:8000/health
 ```
@@ -126,7 +129,7 @@ frontend/
 
 | Principle | Enforced in |
 |---|---|
-| Session scope is real, not a UI filter | `services/extraction.py` (skip) + `services/retrieval.py` (SQL) |
+| Session scope is real, not a UI filter | `services/extraction.py` (skip) + `services/retrieval.py` (SQL), proved by `scripts/leak_test_p3.py` |
 | Interruption budget | `services/policy.py` — `AUTO_ACCEPT_*` |
 | Low confidence → more restrictive block | `services/policy.py` — `TRUST_BLOCK_ABOVE` |
 | Sensitive-but-legitimate → session by default | `services/policy.py` — `SESSION_BY_DEFAULT` |
