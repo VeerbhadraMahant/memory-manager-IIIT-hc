@@ -190,6 +190,32 @@ class CandidatesResponse(BaseModel):
 
 # ------------------------------------------------------------------ P1 edits
 
+class HiddenItem(BaseModel):
+    """A memory that exists but is unreachable from the current chat."""
+    id: UUID
+    content: str
+    block_name: str | None
+    origin_chat_title: str | None
+
+
+class ScopeReport(BaseModel):
+    """What this session can and cannot see. Powers the P3 demo.
+
+    The point of surfacing this is that "session-only" is otherwise an invisible
+    claim — the user is asked to trust that something is confined. This makes the
+    boundary countable, and `items_from_ephemeral_turns_global` makes it checkable.
+    """
+    chat_id: UUID
+    visible_persistent: int
+    visible_session: int
+    hidden_session_items: list[HiddenItem]
+    ephemeral_turns: int
+    # Database-wide, not per chat. Structurally always 0: extraction returns before
+    # calling Gemini when a turn is ephemeral, so no row can reference one. Reported
+    # rather than asserted because a number a judge can watch beats a promise.
+    items_from_ephemeral_turns_global: int
+
+
 class MemoryItemEdit(BaseModel):
     """All fields optional — the review card edits one thing at a time."""
     content: str | None = None

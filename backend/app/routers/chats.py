@@ -13,6 +13,7 @@ from app.models import (
     ExtractionStatus,
     Message,
     MessageCreate,
+    ScopeReport,
     TurnRequest,
     TurnResponse,
 )
@@ -170,6 +171,94 @@ def turn_candidates(chat_id: UUID, message_id: UUID, cur=Depends(db_cursor)):
         "candidates": [i for i in items if i["review_state"] == "pending"],
         "auto_accepted": [i for i in items if i["review_state"] == "auto_accepted"],
     }
+
+
+@router.get("/{chat_id}/scope-report", response_model=ScopeReport)
+def scope_report(chat_id: UUID, cur=Depends(db_cursor)):
+    """What this session can and cannot reach.
+
+    Session scoping is enforced in two different places for two different reasons,
+    and this endpoint reports on both:
+
+    - **Ephemeral turns** never reach the extractor, so nothing is ever derived from
+      them. `items_from_ephemeral_turns_global` counts memory items whose source
+      message was ephemeral, across the whole database. It is structurally 0.
+    - **Session-scoped items** do exist in the store, but retrieval filters them by
+      `session_chat_id`. `hidden_session_items` is what a *different* chat holds that
+      this one cannot use.
+    """
+    _assert_chat(cur, chat_id)
+    live = "deleted_at is null and review_state in ('accepted','auto_accepted')"
+
+    cur.execute(
+        f"""select
+              count(*) filter (where scope = 'persistent') as persistent,
+              count(*) filter (where scope = 'session' and session_chat_id = %s) as session
+            from memory_items where user_id = %s and {live}""",
+        (chat_id, settings.demo_user_id),
+    )
+    visible = cur.fetchone()
+
+    cur.execute(
+        f"""select mi.id, mi.content, b.name as block_name, c.title as origin_chat_title
+            from memory_items mi
+            left join blocks b on b.id = mi.block_id
+            left join chats c on c.id = mi.session_chat_id
+            where mi.user_id = %s and mi.{live}
+              and mi.scope = 'session'
+              and mi.session_chat_id is distinct from %s
+            order by mi.created_at desc""",
+        (settings.demo_user_id, chat_id),
+    )
+    hidden = cur.fetchall()
+
+    cur.execute(
+        "select count(*) as n from messages where chat_id = %s and session_ephemeral",
+        (chat_id,),
+    )
+    ephemeral_turns = cur.fetchone()["n"]
+
+    cur.execute(
+        """select count(*) as n from memory_items mi
+           join messages m on m.id = mi.source_message_id
+           where m.session_ephemeral"""
+    )
+    from_ephemeral = cur.fetchone()["n"]
+
+    return {
+        "chat_id": chat_id,
+        "visible_persistent": visible["persistent"],
+        "visible_session": visible["session"],
+        "hidden_session_items": hidden,
+        "ephemeral_turns": ephemeral_turns,
+        "items_from_ephemeral_turns_global": from_ephemeral,
+    }
+
+
+@router.post("/{chat_id}/purge-ephemeral", response_model=dict)
+def purge_ephemeral(chat_id: UUID, cur=Depends(db_cursor)):
+    """Redact the text of off-the-record turns in this chat.
+
+    Off the record governs *persistence*, not the current conversation: an ephemeral
+    turn is still replayed as history within its own chat, because a model that
+    cannot refer to what you said a moment ago is broken, not private. That text
+    lives in `messages`, which is the transcript, not the memory store.
+
+    This is the escape hatch for someone who wants it gone from the transcript too.
+    Rows are redacted rather than deleted so the transcript still shows that
+    something was said and withdrawn, instead of silently reshaping the history.
+    """
+    _assert_chat(cur, chat_id)
+    cur.execute(
+        """update messages set content = '[redacted — off the record]'
+           where chat_id = %s and session_ephemeral
+             and content <> '[redacted — off the record]'
+           returning id""",
+        (chat_id,),
+    )
+    redacted = len(cur.fetchall())
+    cur.connection.commit()
+    return {"redacted_turns": redacted}
 
 
 def _assert_chat(cur, chat_id: UUID) -> None:
