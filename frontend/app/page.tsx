@@ -8,6 +8,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { DraftPanel } from "@/components/DraftPanel";
 import { ReviewCard } from "@/components/ReviewCard";
 import { ScopePanel } from "@/components/ScopePanel";
 import {
@@ -20,6 +21,7 @@ import {
   type Message,
   type ScopeReport,
   type TurnResponse,
+  type VerifiedDraft as VerifiedDraftT,
 } from "@/lib/api";
 
 interface Turn {
@@ -32,7 +34,24 @@ interface Turn {
   extractionRunning: boolean;
   error: string | null;
   fromHistory: boolean;
+  assistantMessageId: string | null;
+  // P6: kept so "here is what I would have said without that" is shown, not claimed.
+  previousReply: string | null;
+  regenerating: boolean;
+  draft: VerifiedDraftT | null;
 }
+
+const emptyTurn = (): Omit<Turn, "id" | "userText" | "ephemeral" | "fromHistory"> => ({
+  reply: null,
+  used: [],
+  extraction: null,
+  extractionRunning: false,
+  error: null,
+  assistantMessageId: null,
+  previousReply: null,
+  regenerating: false,
+  draft: null,
+});
 
 /** Pair a flat message list into turns. Assistant replies follow their user turn. */
 function toTurns(messages: Message[]): Turn[] {
@@ -43,15 +62,12 @@ function toTurns(messages: Message[]): Turn[] {
         id: m.id,
         userText: m.content,
         ephemeral: m.session_ephemeral,
-        reply: null,
-        used: [],
-        extraction: null,
-        extractionRunning: false,
-        error: null,
         fromHistory: true,
+        ...emptyTurn(),
       });
     } else if (m.role === "assistant" && turns.length > 0) {
       turns[turns.length - 1].reply = m.content;
+      turns[turns.length - 1].assistantMessageId = m.id;
     }
   }
   return turns;
@@ -63,6 +79,7 @@ export default function Page() {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState("");
   const [ephemeral, setEphemeral] = useState(false);
+  const [highStakes, setHighStakes] = useState(false);
   const [sending, setSending] = useState(false);
   const [memories, setMemories] = useState<MemoryItem[]>([]);
   const [scope, setScope] = useState<ScopeReport | null>(null);
@@ -149,38 +166,64 @@ export default function Page() {
 
     const turnId = crypto.randomUUID();
     const wasEphemeral = ephemeral;
+    const wasHighStakes = highStakes;
     setTurns((ts) => [
       ...ts,
       {
         id: turnId,
         userText: text,
         ephemeral: wasEphemeral,
-        reply: null,
-        used: [],
-        extraction: null,
-        extractionRunning: false,
-        error: null,
         fromHistory: false,
+        ...emptyTurn(),
       },
     ]);
     setInput("");
     setSending(true);
 
     try {
-      const res = await api.sendTurn(chatId, text, wasEphemeral);
-      patchTurn(turnId, {
-        reply: res.assistant_message.content,
-        used: res.used_memories,
-        extractionRunning: res.extraction_running,
-      });
-      refreshSidebar(chatId);
-      if (res.extraction_running) {
-        void pollCandidates(turnId, chatId, res.user_message.id);
+      if (wasHighStakes) {
+        // Different endpoint, not a flag on the same one: a high-stakes request
+        // produces an artifact plus a per-claim check, which is a different shape of
+        // answer from a conversational reply.
+        const d = await api.verifiedDraft(chatId, text);
+        patchTurn(turnId, { reply: "", draft: d });
+      } else {
+        const res = await api.sendTurn(chatId, text, wasEphemeral);
+        patchTurn(turnId, {
+          reply: res.assistant_message.content,
+          assistantMessageId: res.assistant_message.id,
+          used: res.used_memories,
+          extractionRunning: res.extraction_running,
+        });
+        if (res.extraction_running) {
+          void pollCandidates(turnId, chatId, res.user_message.id);
+        }
       }
+      refreshSidebar(chatId);
     } catch (e) {
       patchTurn(turnId, { error: e instanceof Error ? e.message : "request failed" });
     } finally {
       setSending(false);
+    }
+  };
+
+  const revoke = async (turn: Turn, itemId: string) => {
+    if (!chatId || !turn.assistantMessageId) return;
+    patchTurn(turn.id, { regenerating: true });
+    try {
+      const r = await api.regenerate(chatId, turn.assistantMessageId, [itemId]);
+      patchTurn(turn.id, {
+        previousReply: r.previous,
+        reply: r.regenerated,
+        used: r.used_memories,
+        regenerating: false,
+      });
+      refreshSidebar(chatId);
+    } catch (e) {
+      patchTurn(turn.id, {
+        regenerating: false,
+        error: e instanceof Error ? e.message : "regenerate failed",
+      });
     }
   };
 
@@ -307,16 +350,48 @@ export default function Page() {
                         Shaped by {t.used.length}{" "}
                         {t.used.length === 1 ? "memory" : "memories"}
                       </summary>
-                      <ul className="mt-1.5 space-y-1 border-l-2 border-neutral-200 pl-2.5 dark:border-neutral-800">
+                      <ul className="mt-1.5 space-y-1.5 border-l-2 border-neutral-200 pl-2.5 dark:border-neutral-800">
                         {t.used.map((m) => (
                           <li key={m.id} className="text-neutral-600 dark:text-neutral-400">
                             {m.content}{" "}
                             <span className="text-neutral-400">
                               ({STATUS_LABEL[m.status]}, {SCOPE_LABEL[m.scope]})
                             </span>
+                            {m.is_stale && (
+                              <span className="ml-1 text-amber-700 dark:text-amber-400">
+                                not confirmed recently
+                              </span>
+                            )}
+                            {/* P6: revoking is a memory-level act, not a display
+                                filter — the item is dropped and the answer redone
+                                without it, so the influence is legible. */}
+                            <button
+                              disabled={t.regenerating}
+                              onClick={() => void revoke(t, m.id)}
+                              className="ml-2 underline underline-offset-2 hover:text-red-700 disabled:opacity-40 dark:hover:text-red-400"
+                            >
+                              drop this and redo
+                            </button>
                           </li>
                         ))}
                       </ul>
+                    </details>
+                  )}
+
+                  {t.regenerating && (
+                    <p className="mt-1.5 text-xs text-neutral-500">
+                      answering again without it…
+                    </p>
+                  )}
+
+                  {t.previousReply && (
+                    <details className="mt-1.5 max-w-[85%] text-xs">
+                      <summary className="cursor-pointer text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200">
+                        What it said before
+                      </summary>
+                      <p className="mt-1 whitespace-pre-wrap border-l-2 border-neutral-300 pl-2.5 text-neutral-500 line-through decoration-neutral-400 dark:border-neutral-700">
+                        {t.previousReply}
+                      </p>
                     </details>
                   )}
                 </div>
@@ -343,6 +418,13 @@ export default function Page() {
                 <p role="alert" className="ml-0 text-xs text-red-700 sm:ml-10 dark:text-red-400">
                   Extraction failed: {t.extraction.error}
                 </p>
+              )}
+
+              {t.draft && (
+                <DraftPanel
+                  draft={t.draft}
+                  onConfirmed={() => refreshSidebar(chatId)}
+                />
               )}
 
               {t.extraction && (
@@ -388,14 +470,27 @@ export default function Page() {
                 type="checkbox"
                 checked={ephemeral}
                 onChange={(e) => setEphemeral(e.target.checked)}
+                disabled={highStakes}
                 className="accent-amber-600"
               />
               Off the record
             </label>
+            <label className="flex items-center gap-1.5 text-xs text-neutral-600 dark:text-neutral-400">
+              <input
+                type="checkbox"
+                checked={highStakes}
+                onChange={(e) => setHighStakes(e.target.checked)}
+                disabled={ephemeral}
+                className="accent-red-600"
+              />
+              High-stakes draft
+            </label>
             <span className="text-xs text-neutral-400">
-              {ephemeral
-                ? "this turn is never sent to the extractor"
-                : "Enter to send, Shift+Enter for a new line"}
+              {highStakes
+                ? "every memory-derived claim is checked before it lands"
+                : ephemeral
+                  ? "this turn is never sent to the extractor"
+                  : "Enter to send, Shift+Enter for a new line"}
             </span>
             <button
               type="submit"

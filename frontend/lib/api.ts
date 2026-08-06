@@ -70,6 +70,7 @@ export interface UsedMemory {
   sensitivity: Sensitivity;
   block_name: string | null;
   distance: number;
+  is_stale: boolean;
 }
 
 export interface TurnResponse {
@@ -84,6 +85,30 @@ export interface CandidatesResponse {
   error: string | null;
   candidates: MemoryItem[];
   auto_accepted: MemoryItem[];
+}
+
+export interface RegenerateResponse {
+  previous: string;
+  regenerated: string;
+  revoked: UsedMemory[];
+  used_memories: UsedMemory[];
+  assistant_message: Message;
+}
+
+export interface DraftClaim {
+  text: string;
+  asserted_as: AssertionStatus | null;
+  sources: UsedMemory[];
+  overstates: boolean;
+  stale_source: boolean;
+  problem: string | null;
+}
+
+export interface VerifiedDraft {
+  instruction: string;
+  draft: string;
+  claims: DraftClaim[];
+  needs_confirmation: boolean;
 }
 
 export interface Chat {
@@ -166,7 +191,17 @@ export const api = {
       `/chats/${chatId}/candidates?message_id=${messageId}`,
     ),
 
+  regenerate: (chatId: string, messageId: string, revokeItemIds: string[]) =>
+    post<RegenerateResponse>(`/chats/${chatId}/regenerate`, {
+      message_id: messageId,
+      revoke_item_ids: revokeItemIds,
+    }),
+
+  verifiedDraft: (chatId: string, instruction: string) =>
+    post<VerifiedDraft>(`/chats/${chatId}/verified-draft`, { instruction }),
+
   accept: (id: string) => post<MemoryItem>(`/memory/items/${id}/accept`),
+  confirm: (id: string) => post<MemoryItem>(`/memory/items/${id}/confirm`),
   reject: (id: string) => post<MemoryItem>(`/memory/items/${id}/reject`),
   rescope: (id: string, scope: Scope) =>
     post<MemoryItem>(`/memory/items/${id}/rescope`, { scope }),
