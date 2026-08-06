@@ -1,0 +1,36 @@
+# --- secrets: never commit ---
+.env
+.env.*
+!.env.example
+
+# --- python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# --- node / next.js ---
+node_modules
+.next/
+out/
+build/
+dist/
+*.tsbuildinfo
+.npm/
+
+# --- editors / os ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- logs / scratch ---
+*.log
+npm-debug.log*
+tmp/
+scratch/
