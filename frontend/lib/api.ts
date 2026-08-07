@@ -261,6 +261,7 @@ export interface RelevanceResponse {
 
 export const api = {
   health: () => req<Health>("/health"),
+  providers: () => req<ProvidersResponse>("/chats/providers"),
   blocks: () => req<Block[]>("/memory/blocks"),
 
   items: (params: Record<string, string> = {}) => {
@@ -275,10 +276,16 @@ export const api = {
   purgeEphemeral: (chatId: string) =>
     post<{ redacted_turns: number }>(`/chats/${chatId}/purge-ephemeral`),
 
-  sendTurn: (chatId: string, content: string, sessionEphemeral: boolean) =>
+  sendTurn: (
+    chatId: string,
+    content: string,
+    sessionEphemeral: boolean,
+    provider?: string,
+  ) =>
     post<TurnResponse>(`/chats/${chatId}/message`, {
       content,
       session_ephemeral: sessionEphemeral,
+      provider: provider || undefined,
     }),
 
   candidates: (chatId: string, messageId: string) =>

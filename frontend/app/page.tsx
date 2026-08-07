@@ -38,6 +38,7 @@ import {
   type CandidatesResponse,
   type Message,
   type Provider,
+  type ProvidersResponse,
   type ScopeReport,
   type TurnResponse,
   type VerifiedDraft as VerifiedDraftT,
@@ -177,7 +178,7 @@ function Workbench() {
   useEffect(() => {
     api
       .providers()
-      .then((r) => {
+      .then((r: ProvidersResponse) => {
         setProviders(r.providers);
         setProvider((p) => p ?? r.default);
       })
