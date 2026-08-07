@@ -31,44 +31,167 @@ export const NODE_H = 108;
 export const NODE_CAP = 150;
 
 export interface PositionedNode {
-  node: GraphNode;
+  id: string;
+  type: "root" | "category" | "memory";
+  label?: string;
+  category?: string;
+  count?: number;
+  memory?: GraphNode;
+  expanded?: boolean;
+  hasChildren?: boolean;
   x: number;
   y: number;
-  /** Isolated nodes get their own grid; the flag lets the view say so. */
   unconnected: boolean;
+}
+
+export interface PositionedEdge {
+  id: string;
+  source: string;
+  target: string;
+  relation?: string;
+  provisional?: boolean;
 }
 
 export interface LayoutResult {
   nodes: PositionedNode[];
-  edges: GraphEdge[];
+  edges: PositionedEdge[];
   width: number;
   height: number;
 }
 
-/**
- * Group label for a node. Blocks are the user-facing grouping (CLAUDE.md core
- * concepts), so they are what the layout clusters by when it needs to cluster.
- */
 export const groupOf = (n: GraphNode) => n.block_name ?? "unclassified";
 
-/**
- * Lay out a provenance graph.
- *
- * Two regions, because most memories in this system have no provenance edge at
- * all yet (`memory_edges` is written by nothing — PHASES.md P5). Running every
- * isolated node through dagre produces one long meaningless row, so:
- *
- *   - nodes with at least one edge go through dagre, top-down, and read as the
- *     derivation structure they are;
- *   - isolated nodes are laid out in a stable grid beneath, sorted by block then
- *     content, which is a deliberately boring arrangement — it is a legible
- *     inventory, not a claim that they relate.
- */
+export interface HierarchicalNodeData {
+  id: string;
+  type: "root" | "category" | "memory";
+  label: string;
+  category?: string;
+  count?: number;
+  memory?: GraphNode;
+  expanded?: boolean;
+  hasChildren?: boolean;
+}
+
+export const DEFAULT_CATEGORIES = [
+  "Personal",
+  "Work",
+  "Projects",
+  "Preferences",
+  "Health",
+  "Learning",
+  "General",
+];
+
+export function buildHierarchicalGraph(
+  nodes: GraphNode[],
+  edges: GraphEdge[],
+  expandedNodes: Set<string>,
+): {
+  hNodes: HierarchicalNodeData[];
+  hEdges: PositionedEdge[];
+} {
+  const hNodes: HierarchicalNodeData[] = [];
+  const hEdges: PositionedEdge[] = [];
+
+  const rootExpanded = expandedNodes.has("root_you");
+  hNodes.push({
+    id: "root_you",
+    type: "root",
+    label: "YOU",
+    expanded: rootExpanded,
+    hasChildren: true,
+  });
+
+  if (!rootExpanded) {
+    return { hNodes, hEdges };
+  }
+
+  const categoryMap = new Map<string, GraphNode[]>();
+  for (const n of nodes) {
+    const cat = groupOf(n);
+    const normalizedCat =
+      cat.toLowerCase() === "unclassified" ? "General" : cat;
+    const existing = categoryMap.get(normalizedCat) ?? [];
+    existing.push(n);
+    categoryMap.set(normalizedCat, existing);
+  }
+
+  const activeCategories = new Set([
+    ...DEFAULT_CATEGORIES,
+    ...categoryMap.keys(),
+  ]);
+
+  for (const cat of activeCategories) {
+    const catMemories = categoryMap.get(cat) ?? [];
+    const catId = `cat_${cat}`;
+    const catExpanded = expandedNodes.has(catId);
+
+    hNodes.push({
+      id: catId,
+      type: "category",
+      label: cat,
+      category: cat,
+      count: catMemories.length,
+      expanded: catExpanded,
+      hasChildren: catMemories.length > 0,
+    });
+
+    hEdges.push({
+      id: `e_root_${catId}`,
+      source: "root_you",
+      target: catId,
+      relation: "contains",
+      provisional: false,
+    });
+
+    if (catExpanded) {
+      for (const mem of catMemories) {
+        const memExpanded = expandedNodes.has(mem.id);
+        const childEdges = edges.filter((e) => e.from_item_id === mem.id);
+
+        hNodes.push({
+          id: mem.id,
+          type: "memory",
+          label: mem.content,
+          category: cat,
+          memory: mem,
+          expanded: memExpanded,
+          hasChildren: childEdges.length > 0,
+        });
+
+        hEdges.push({
+          id: `e_${catId}_${mem.id}`,
+          source: catId,
+          target: mem.id,
+          relation: "item",
+          provisional: mem.scope === "session",
+        });
+      }
+    }
+  }
+
+  const visibleMemIds = new Set(
+    hNodes.filter((n) => n.type === "memory").map((n) => n.id),
+  );
+  for (const e of edges) {
+    if (visibleMemIds.has(e.from_item_id) && visibleMemIds.has(e.to_item_id)) {
+      hEdges.push({
+        id: `e_prov_${e.from_item_id}_${e.to_item_id}`,
+        source: e.from_item_id,
+        target: e.to_item_id,
+        relation: e.relation,
+        provisional: e.relation === "contradicts",
+      });
+    }
+  }
+
+  return { hNodes, hEdges };
+}
+
 export function layoutGraph(
   nodes: GraphNode[],
   edges: GraphEdge[],
 ): LayoutResult {
-  // Sort first, and by id last, so ties never fall through to insertion order.
   const ordered = [...nodes].sort(
     (a, b) =>
       groupOf(a).localeCompare(groupOf(b)) ||
@@ -98,9 +221,6 @@ export function layoutGraph(
 
   if (connected.size > 0) {
     const g = new dagre.graphlib.Graph();
-    // `rankdir: TB` puts sources above what was derived from them, which matches
-    // the direction the cascade actually flows. Reading down the page is reading
-    // toward the consequences of a delete.
     g.setGraph({ rankdir: "TB", nodesep: 36, ranksep: 72, marginx: 24, marginy: 24 });
     g.setDefaultEdgeLabel(() => ({}));
 
@@ -114,9 +234,12 @@ export function layoutGraph(
     for (const n of ordered) {
       if (!connected.has(n.id)) continue;
       const p = g.node(n.id);
-      // dagre centres; React Flow positions from the top-left corner.
       positioned.push({
-        node: n,
+        id: n.id,
+        type: "memory",
+        memory: n,
+        label: n.content,
+        category: groupOf(n),
         x: p.x - NODE_W / 2,
         y: p.y - NODE_H / 2,
         unconnected: false,
@@ -134,23 +257,96 @@ export function layoutGraph(
     isolated.forEach((n, i) => {
       const x = 24 + (i % cols) * (NODE_W + gap);
       const y = top + Math.floor(i / cols) * (NODE_H + gap);
-      positioned.push({ node: n, x, y, unconnected: true });
+      positioned.push({
+        id: n.id,
+        type: "memory",
+        memory: n,
+        label: n.content,
+        category: groupOf(n),
+        x,
+        y,
+        unconnected: true,
+      });
       width = Math.max(width, x + NODE_W);
       height = Math.max(height, y + NODE_H);
     });
   }
 
-  return { nodes: positioned, edges: liveEdges, width, height };
+  const formattedEdges: PositionedEdge[] = liveEdges.map((e) => ({
+    id: `${e.from_item_id}-${e.to_item_id}-${e.relation}`,
+    source: e.from_item_id,
+    target: e.to_item_id,
+    relation: e.relation,
+    provisional: e.relation === "contradicts",
+  }));
+
+  return { nodes: positioned, edges: formattedEdges, width, height };
 }
 
-/**
- * §3.2: "Arrow-key navigation between connected nodes."
- *
- * Builds an adjacency map in stable order so pressing the same key twice from
- * the same node always lands in the same place. Undirected on purpose — a user
- * walking the graph wants to get back to where they came from, and making the
- * return trip require a different key would be a puzzle, not navigation.
- */
+export function layoutHierarchicalGraph(
+  hNodes: HierarchicalNodeData[],
+  hEdges: PositionedEdge[],
+): LayoutResult {
+  const nodeMap = new Map<string, PositionedNode>();
+
+  const centerX = 600;
+  const centerY = 400;
+
+  const root = hNodes.find((n) => n.type === "root");
+  if (root) {
+    nodeMap.set(root.id, { ...root, x: centerX, y: centerY, unconnected: false });
+  }
+
+  const categories = hNodes.filter((n) => n.type === "category");
+  const catCount = categories.length;
+  const catRadius = 240;
+
+  categories.forEach((cat, idx) => {
+    const angle = (2 * Math.PI * idx) / Math.max(1, catCount) - Math.PI / 2;
+    const cx = centerX + catRadius * Math.cos(angle);
+    const cy = centerY + catRadius * Math.sin(angle);
+    nodeMap.set(cat.id, { ...cat, x: cx, y: cy, unconnected: false });
+
+    const catMemories = hNodes.filter(
+      (n) => n.type === "memory" && n.category === cat.category,
+    );
+
+    const memCount = catMemories.length;
+    const memRadius = 180;
+    const spreadAngle = Math.min(Math.PI / 1.5, Math.max(Math.PI / 4, memCount * 0.25));
+
+    catMemories.forEach((mem, mIdx) => {
+      const offsetAngle =
+        memCount === 1
+          ? angle
+          : angle - spreadAngle / 2 + (spreadAngle * mIdx) / (memCount - 1);
+      const mx = cx + memRadius * Math.cos(offsetAngle);
+      const my = cy + memRadius * Math.sin(offsetAngle);
+      nodeMap.set(mem.id, { ...mem, x: mx, y: my, unconnected: false });
+    });
+  });
+
+  const positioned = Array.from(nodeMap.values());
+
+  let minX = Infinity,
+    minY = Infinity,
+    maxX = -Infinity,
+    maxY = -Infinity;
+  positioned.forEach((n) => {
+    minX = Math.min(minX, n.x - 120);
+    minY = Math.min(minY, n.y - 60);
+    maxX = Math.max(maxX, n.x + 120);
+    maxY = Math.max(maxY, n.y + 60);
+  });
+
+  return {
+    nodes: positioned,
+    edges: hEdges,
+    width: Math.max(1200, maxX - minX),
+    height: Math.max(800, maxY - minY),
+  };
+}
+
 export function adjacency(edges: GraphEdge[]): Map<string, string[]> {
   const map = new Map<string, string[]>();
   const add = (a: string, b: string) => {
@@ -165,3 +361,4 @@ export function adjacency(edges: GraphEdge[]): Map<string, string[]> {
   for (const [k, v] of map) map.set(k, [...v].sort());
   return map;
 }
+

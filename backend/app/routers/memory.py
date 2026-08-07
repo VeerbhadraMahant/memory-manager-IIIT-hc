@@ -15,12 +15,11 @@ from app.models import (
     MemoryItem,
     MemoryItemCreate,
     MemoryItemEdit,
+    ProvenanceGraph,
     RescopeRequest,
     ReviewState,
     Scope,
     Sensitivity,
-    SubnodeCreate,
-    SubnodeEdit,
 )
 from app.services import llm
 
