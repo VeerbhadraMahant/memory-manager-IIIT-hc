@@ -83,3 +83,6 @@ scratch/
 *.orig
 *.rej
 *.bak
+
+# -------miscellaneous--------
+gemini_quickstarts.md

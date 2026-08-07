@@ -52,7 +52,7 @@ Fill in `.env`:
 
 - **`LLM_API_KEY`** — https://openrouter.ai/keys. This project talks to OpenRouter, not Gemini —
   ignore anything that mentions `GEMINI_API_KEY`, that's stale from before the port (see
-  `DECISION_LOG.md` D25 if curious why). Get any key from the link above; the free tier is fine
+  `DECISION_LOG.md` D29 if curious why). Get any key from the link above; the free tier is fine
   to start.
 
 - Leave `DEMO_USER_ID` and `NEXT_PUBLIC_API_BASE` as the defaults in `.env.example`.

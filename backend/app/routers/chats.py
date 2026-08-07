@@ -27,6 +27,17 @@ router = APIRouter(prefix="/chats", tags=["chats"])
 HISTORY_TURNS = 12
 
 
+@router.get("/providers", tags=["meta"])
+def list_providers():
+    """Chat providers with a key configured, for the model switcher (D32).
+
+    Declared before `/{chat_id}` so the literal path is not swallowed by the UUID
+    route. Reports configuration, not reachability — a listed provider can still
+    fail on an invalid key or a retired model, and that surfaces on the turn.
+    """
+    return {"providers": llm.available_providers(), "default": llm.resolve_provider(None)}
+
+
 @router.post("", response_model=Chat, status_code=201)
 def create_chat(payload: ChatCreate, cur=Depends(db_cursor)):
     cur.execute(
@@ -106,8 +117,10 @@ def chat_turn(
     )
     history = list(reversed(cur.fetchall()))
 
+    # The provider is chosen per turn, but the memory above was already retrieved —
+    # switching models carries the memory across rather than re-deriving it (D32).
     try:
-        reply = llm.chat_response(history, used)
+        reply, provider_used, model_used = llm.chat_response(history, used, payload.provider)
     except Exception as e:
         raise HTTPException(502, f"LLM call failed: {type(e).__name__}: {e}") from e
 
@@ -139,6 +152,10 @@ def chat_turn(
         "assistant_message": assistant_msg,
         "used_memories": used,
         "extraction_running": not payload.session_ephemeral,
+        # Which model actually answered, not which was asked for — an unconfigured
+        # or stale selection falls back, and that should be visible rather than silent.
+        "provider": provider_used,
+        "model": model_used,
     }
 
 

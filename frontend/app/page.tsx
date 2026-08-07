@@ -18,6 +18,7 @@ import {
   type Chat,
   type MemoryItem,
   type Message,
+  type Provider,
   type ScopeReport,
   type TurnResponse,
 } from "@/lib/api";
@@ -32,6 +33,11 @@ interface Turn {
   extractionRunning: boolean;
   error: string | null;
   fromHistory: boolean;
+  // Which model answered this specific turn. Recorded per turn rather than read
+  // from the current selection, so switching mid-conversation leaves the earlier
+  // replies correctly labelled with the model that actually wrote them (D32).
+  model: string | null;
+  provider: string | null;
 }
 
 /** Pair a flat message list into turns. Assistant replies follow their user turn. */
@@ -49,6 +55,10 @@ function toTurns(messages: Message[]): Turn[] {
         extractionRunning: false,
         error: null,
         fromHistory: true,
+        // Historical turns predate this field; the DB does not record which model
+        // wrote a stored message, so it is honestly unknown rather than guessed.
+        model: null,
+        provider: null,
       });
     } else if (m.role === "assistant" && turns.length > 0) {
       turns[turns.length - 1].reply = m.content;
@@ -67,6 +77,8 @@ export default function Page() {
   const [memories, setMemories] = useState<MemoryItem[]>([]);
   const [scope, setScope] = useState<ScopeReport | null>(null);
   const [fatal, setFatal] = useState<string | null>(null);
+  const [providers, setProviders] = useState<Provider[]>([]);
+  const [provider, setProvider] = useState<string | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
 
   const refreshSidebar = useCallback((id: string | null) => {
@@ -91,6 +103,19 @@ export default function Page() {
       }
     })();
   }, [refreshSidebar]);
+
+  // Which providers exist depends on which keys the server has, so the switcher is
+  // populated from the backend rather than hardcoded — a missing key means the
+  // option is absent, not present-and-broken.
+  useEffect(() => {
+    api
+      .providers()
+      .then((r) => {
+        setProviders(r.providers);
+        setProvider((p) => p ?? r.default);
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     bottom.current?.scrollIntoView({ behavior: "smooth" });
@@ -161,17 +186,22 @@ export default function Page() {
         extractionRunning: false,
         error: null,
         fromHistory: false,
+        model: null,
+        provider: null,
       },
     ]);
     setInput("");
     setSending(true);
 
     try {
-      const res = await api.sendTurn(chatId, text, wasEphemeral);
+      const res = await api.sendTurn(chatId, text, wasEphemeral, provider ?? undefined);
       patchTurn(turnId, {
         reply: res.assistant_message.content,
         used: res.used_memories,
         extractionRunning: res.extraction_running,
+        // From the response, not from local state: the server may have fallen back.
+        model: res.model,
+        provider: res.provider,
       });
       refreshSidebar(chatId);
       if (res.extraction_running) {
@@ -301,6 +331,13 @@ export default function Page() {
                   <p className="max-w-[85%] whitespace-pre-wrap rounded-lg rounded-bl-sm border border-neutral-200 px-3 py-2 text-sm dark:border-neutral-800">
                     {t.reply}
                   </p>
+                  {/* Labelled per turn, so a conversation that switched models shows
+                      which one wrote each reply rather than relabelling the history. */}
+                  {t.model && (
+                    <p className="mt-1 text-[11px] text-neutral-400">
+                      answered by {t.model}
+                    </p>
+                  )}
                   {t.used.length > 0 && (
                     <details className="mt-1.5 max-w-[85%] text-xs">
                       <summary className="cursor-pointer text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200">
@@ -382,7 +419,7 @@ export default function Page() {
             disabled={!chatId || sending}
             className="w-full resize-none rounded-lg border border-neutral-300 bg-transparent p-2.5 text-sm outline-none focus:border-neutral-500 disabled:opacity-50 dark:border-neutral-700"
           />
-          <div className="mt-1.5 flex items-center gap-3">
+          <div className="mt-1.5 flex flex-wrap items-center gap-3">
             <label className="flex items-center gap-1.5 text-xs text-neutral-600 dark:text-neutral-400">
               <input
                 type="checkbox"
@@ -392,6 +429,28 @@ export default function Page() {
               />
               Off the record
             </label>
+
+            {/* Switchable mid-conversation. Changing this changes only who writes the
+                next reply — the memory store is untouched, so the new model inherits
+                the same memories rather than re-deriving them (D32). */}
+            {providers.length > 1 && (
+              <label className="flex items-center gap-1.5 text-xs text-neutral-600 dark:text-neutral-400">
+                <span>Model</span>
+                <select
+                  value={provider ?? ""}
+                  onChange={(e) => setProvider(e.target.value)}
+                  disabled={sending}
+                  className="rounded border border-neutral-300 bg-transparent px-1.5 py-0.5 text-xs outline-none focus:border-neutral-500 disabled:opacity-50 dark:border-neutral-700"
+                >
+                  {providers.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.label} · {p.model}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+
             <span className="text-xs text-neutral-400">
               {ephemeral
                 ? "this turn is never sent to the extractor"

@@ -45,8 +45,22 @@ the provenance edges, cascade deletion, and scope enforcement are the contributi
 abstract exactly those away.
 
 ### LLM usage rules
-The provider is OpenRouter, reached over its OpenAI-compatible API in `backend/app/services/llm.py`
-(see D25–D27). `LLM_BASE_URL` can point at any compatible gateway; no other code changes.
+Chat runs on one of three providers — OpenRouter, Gemini or Groq — selectable per turn from the UI
+(D32). Everything lives in `backend/app/services/llm.py` (see D29–D31 for the port off Gemini).
+`LLM_BASE_URL` can point at any OpenAI-compatible gateway; no other code changes.
+
+- **Only chat is switchable.** Extraction and embeddings are pinned regardless of which model
+  answers, and this is load-bearing rather than incidental: switching the embedder fragments the
+  vector space silently (D31), and routing extraction through a dropdown makes status classification
+  non-reproducible. **The memory must be provider-independent** — that portability is the demo, so
+  do not "simplify" by letting the selector drive the whole pipeline.
+- **Report which model answered, not which was requested.** An unknown or unconfigured provider
+  falls back rather than failing the turn, so the response carries the provider/model that actually
+  ran and the UI labels each turn with it.
+- **Adding a provider** means: a key + model in `config.py`, an entry in `available_providers()`,
+  and a branch in `chat_response()`. Gemini needs its own adapter (not OpenAI-compatible — system
+  prompt is a separate field, `assistant` is `model`); anything OpenAI-compatible reuses
+  `_openai_compatible_chat()`. Strip reasoning traces from any model that emits them.
 
 - **Structured output, always.** Use a response schema for extraction and classification. Do not
   prompt-and-parse — schema enforcement removes a whole class of parsing bugs there is no time for.
@@ -68,7 +82,7 @@ The provider is OpenRouter, reached over its OpenAI-compatible API in `backend/a
   `dimensions` request param, so the pgvector column is unchanged.
 - **Changing the embedding model requires a re-embed.** Vectors from different providers occupy
   different spaces and mixing them **fails silently** — pgvector returns the wrong memories with
-  plausible distances rather than erroring. Run `backend/scripts/reembed.py` (D27).
+  plausible distances rather than erroring. Run `backend/scripts/reembed.py` (D31).
 - **Hard rule:** nothing goes to the LLM before the user has consented to send. Pre-send PII
   detection is client-side only (regex + Luhn). The model classifies only content the user already
   chose to share. This is the one place a hosted LLM tempts a shortcut that breaks the project's own

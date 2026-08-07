@@ -117,7 +117,7 @@ create table memory_items (
   needs_review boolean      not null default false,
 
   -- 768 dims, truncated from the embedding model's native size. Fixed before migrations —
-  -- changing this later forces a full re-embed (scripts/reembed.py, D27).
+  -- changing this later forces a full re-embed (scripts/reembed.py, D31).
   embedding vector(768),
 
   created_at        timestamptz not null default now(),

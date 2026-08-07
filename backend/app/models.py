@@ -155,6 +155,10 @@ class TurnRequest(BaseModel):
     content: str = Field(min_length=1)
     # P3: excludes this turn from extraction entirely, not from the UI.
     session_ephemeral: bool = False
+    # Which chat provider should answer (D32). None means the configured default.
+    # Deliberately not an enum: which providers exist depends on which keys are
+    # present at runtime, and an unknown value falls back rather than 422-ing a turn.
+    provider: str | None = None
 
 
 class UsedMemory(BaseModel):
@@ -179,6 +183,10 @@ class TurnResponse(BaseModel):
     # False when the turn was ephemeral, so the UI can say "nothing was extracted"
     # rather than spinning on an indicator that will never resolve.
     extraction_running: bool
+    # Which provider/model actually answered. Reported rather than assumed, because
+    # a stale or unconfigured selection falls back silently otherwise.
+    provider: str | None = None
+    model: str | None = None
 
 
 class CandidatesResponse(BaseModel):

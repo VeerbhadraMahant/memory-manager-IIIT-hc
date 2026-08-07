@@ -42,6 +42,12 @@ Transaction pooler will not work — it breaks the prepared statements psycopg u
 
 `LLM_API_KEY` — https://openrouter.ai/keys. OpenRouter is reached over its OpenAI-compatible API,
 so `LLM_BASE_URL` can point at any other compatible gateway without further code changes.
+This key also does extraction and embeddings, so it is effectively required.
+
+`GROQ_API_KEY` and `GEMINI_API_KEY` are optional. Whichever are present appear in the composer's
+**Model** switcher, changeable mid-conversation. Switching changes only who writes the next reply —
+extraction and embeddings stay pinned, so the memory carries across providers rather than being
+re-derived (D32). Each reply is labelled with the model that wrote it.
 
 ```bash
 # backend
@@ -89,7 +95,7 @@ After changing the embedding model — including the Gemini → OpenRouter port 
 ```
 
 Embeddings from different providers occupy different vector spaces and **mixing them fails
-silently** — retrieval returns the wrong memories rather than erroring (D27).
+silently** — retrieval returns the wrong memories rather than erroring (D31).
 
 To clear accumulated test memories without touching the schema:
 

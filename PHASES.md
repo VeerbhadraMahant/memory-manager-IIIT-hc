@@ -175,7 +175,7 @@ These routes exist and return **501 with the phase that implements them**, delib
 
 ### As of P1
 
-**Superseded — the project moved off Gemini to OpenRouter (D25–D27).** The Gemini free tier was the
+**Superseded — the project moved off Gemini to OpenRouter (D29–D31).** The Gemini free tier was the
 top project risk at P1: 20 requests per day, per model, which development testing exhausted in a
 single session. That constraint is what the port removed.
 
@@ -190,6 +190,16 @@ session. Backoff handles per-minute limits.
 OpenAI-compatible equivalent, so filter behaviour is now a property of the chosen model rather than
 something the code asserts. The demo content did not trip filters on the configured models, but that
 is a test result, not a guarantee. The `thinking_level` control on chat latency (D18) is also gone.
+
+**Runtime model switching (D32).** The composer carries a provider selector — OpenRouter, Gemini and
+Groq, populated from whichever keys the server actually has. Switching changes only who writes the
+next reply: retrieval, extraction and embeddings stay pinned, so the memory is carried across rather
+than re-derived. Verified live by answering on Groq, switching to Gemini mid-conversation, and having
+Gemini recall Priya and the deadline from the same store without extracting anything itself.
+This turns a provider swap into evidence that the memory layer is the contribution, not the model.
+**Also a hedge:** three providers means a retired free slug or an exhausted daily quota is a dropdown
+change during the demo rather than a dead session — the single largest operational risk in P1's
+original write-up.
 
 Still not done after P1:
 - **No provenance edges are written.** `memory_edges` exists and is empty. Nothing detects that

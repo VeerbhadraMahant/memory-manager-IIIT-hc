@@ -77,6 +77,23 @@ export interface TurnResponse {
   assistant_message: Message;
   used_memories: UsedMemory[];
   extraction_running: boolean;
+  // Which model actually answered — not necessarily the one requested, since an
+  // unconfigured or stale selection falls back on the server (D32).
+  provider: string | null;
+  model: string | null;
+}
+
+/** A chat provider the server has a key for. Memory is shared across all of them. */
+export interface Provider {
+  id: string;
+  label: string;
+  model: string;
+  configured: boolean;
+}
+
+export interface ProvidersResponse {
+  providers: Provider[];
+  default: string;
 }
 
 export interface CandidatesResponse {
@@ -155,10 +172,18 @@ export const api = {
   purgeEphemeral: (chatId: string) =>
     post<{ redacted_turns: number }>(`/chats/${chatId}/purge-ephemeral`),
 
-  sendTurn: (chatId: string, content: string, sessionEphemeral: boolean) =>
+  providers: () => req<ProvidersResponse>("/chats/providers"),
+
+  sendTurn: (
+    chatId: string,
+    content: string,
+    sessionEphemeral: boolean,
+    provider?: string,
+  ) =>
     post<TurnResponse>(`/chats/${chatId}/message`, {
       content,
       session_ephemeral: sessionEphemeral,
+      provider,
     }),
 
   candidates: (chatId: string, messageId: string) =>

@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import logging
 import random
+import re
 import time
 from typing import Any, Literal
 
@@ -32,6 +33,10 @@ from app.config import settings
 log = logging.getLogger(__name__)
 
 _client: httpx.Client | None = None
+
+# Extraction on a large free model can genuinely take a while; the read timeout is
+# the one that matters and 120s is not generous. Shared by every provider.
+_TIMEOUT = httpx.Timeout(connect=10.0, read=120.0, write=30.0, pool=10.0)
 
 
 def client() -> httpx.Client:
@@ -48,9 +53,7 @@ def client() -> httpx.Client:
                 "HTTP-Referer": "http://localhost:3000",
                 "X-Title": "Negotiated AI Memory",
             },
-            # Extraction on a large free model can genuinely take a while; the
-            # read timeout is the one that matters and 120s is not generous.
-            timeout=httpx.Timeout(connect=10.0, read=120.0, write=30.0, pool=10.0),
+            timeout=_TIMEOUT,
         )
     return _client
 
@@ -297,27 +300,198 @@ otherwise is both false and a promise you are not the one keeping.
 """
 
 
-def chat_response(history: list[dict], memory_items: list[dict]) -> str:
+"""Chat providers, switchable per request.
+
+The point of this indirection is what *doesn't* move (D32). Retrieval, extraction
+and embeddings are provider-independent: the memory block below is assembled from
+the store the same way whatever answers the turn, so switching from Groq to Gemini
+mid-conversation carries the memory across rather than re-deriving it. A provider
+here is only a way of turning (history + memory) into text.
+"""
+
+# Reasoning models emit their scratchpad inline. Qwen on Groq is the one in use,
+# but the pattern is general enough to apply to any provider's output — showing a
+# user the model's internal monologue is never the intent.
+_THINK_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL | re.IGNORECASE)
+
+
+def _strip_reasoning(text: str) -> str:
+    text = _THINK_RE.sub("", text)
+    # An unterminated <think> means the model hit its token ceiling mid-thought;
+    # returning the scratchpad would be worse than returning nothing.
+    if "<think>" in text.lower():
+        text = text[: text.lower().index("<think>")]
+    return text.strip()
+
+
+def _openai_compatible_chat(
+    *, base_url: str, api_key: str, model: str, messages: list[dict], label: str
+) -> str:
+    """Both OpenRouter and Groq speak this; only the host and key differ."""
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    if "openrouter" in base_url:
+        headers |= {"HTTP-Referer": "http://localhost:3000", "X-Title": "Negotiated AI Memory"}
+
+    def call():
+        with httpx.Client(base_url=base_url, headers=headers, timeout=_TIMEOUT) as c:
+            r = c.post("/chat/completions", json={
+                "model": model, "messages": messages, "temperature": 0.7,
+            })
+            r.raise_for_status()
+            return r.json()
+
+    data = with_retry(call)
+    if isinstance(data, dict) and data.get("error"):
+        raise RuntimeError(f"{label} error: {data['error'].get('message')}")
+    return _strip_reasoning(_content(data))
+
+
+def _gemini_chat(*, api_key: str, model: str, system: str, history: list[dict]) -> str:
+    """Gemini is not OpenAI-compatible: system prompt is its own field, the
+    assistant role is called 'model', and text sits under candidates[].content.parts[]."""
+    body = {
+        "systemInstruction": {"parts": [{"text": system}]},
+        "contents": [
+            {
+                "role": "model" if m["role"] == "assistant" else "user",
+                "parts": [{"text": m["content"]}],
+            }
+            for m in history
+        ],
+        "generationConfig": {"temperature": 0.7, "maxOutputTokens": 2048},
+    }
+
+    def call():
+        with httpx.Client(timeout=_TIMEOUT) as c:
+            r = c.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+                params={"key": api_key},
+                json=body,
+            )
+            r.raise_for_status()
+            return r.json()
+
+    data = with_retry(call)
+    if "error" in data:
+        raise RuntimeError(f"Gemini error {data['error'].get('code')}: {data['error'].get('message')}")
+
+    cands = data.get("candidates") or []
+    if not cands:
+        # A safety block returns no candidates at all, with the reason at top level.
+        raise RuntimeError(f"Gemini returned no candidates: {str(data.get('promptFeedback'))[:200]}")
+    parts = (cands[0].get("content") or {}).get("parts") or []
+    text = "".join(p.get("text", "") for p in parts).strip()
+    if not text and cands[0].get("finishReason") == "MAX_TOKENS":
+        # Gemini 3.x thinks by default and can spend the whole budget doing it.
+        raise RuntimeError("Gemini hit MAX_TOKENS before emitting text — raise maxOutputTokens")
+    return _strip_reasoning(text)
+
+
+def available_providers() -> list[dict]:
+    """Providers with a key present, for the client's switcher.
+
+    Reports configuration, not reachability — a listed provider can still fail on
+    an invalid key or a retired model, and the error surfaces on the turn itself.
+    """
+    out = [{
+        "id": "openrouter",
+        "label": "OpenRouter",
+        "model": settings.llm_chat_model,
+        "configured": bool(settings.llm_api_key),
+    }, {
+        "id": "gemini",
+        "label": "Gemini",
+        "model": settings.gemini_chat_model,
+        "configured": bool(settings.gemini_api_key),
+    }, {
+        "id": "groq",
+        "label": "Groq",
+        "model": settings.groq_chat_model,
+        "configured": bool(settings.groq_api_key),
+    }]
+    return [p for p in out if p["configured"]]
+
+
+def resolve_provider(provider: str | None) -> str:
+    """Fall back to the default rather than erroring on an unknown provider.
+
+    A chat turn is the wrong place to hard-fail on a stale dropdown value; the
+    response still names which provider actually answered, so the substitution is
+    visible rather than silent.
+    """
+    ids = {p["id"] for p in available_providers()}
+    if provider in ids:
+        return provider
+    if provider:
+        log.warning("unknown or unconfigured provider %r, falling back", provider)
+    return settings.default_chat_provider if settings.default_chat_provider in ids else next(iter(ids), "openrouter")
+
+
+def chat_response(
+    history: list[dict], memory_items: list[dict], provider: str | None = None
+) -> tuple[str, str, str]:
+    """Answer one turn. Returns (reply, provider_id, model) so the caller can record
+    and display which model actually spoke — necessary because `provider` is a
+    request, not a guarantee (see resolve_provider)."""
     if memory_items:
         lines = "\n".join(f"- [{m['status']}] {m['content']}" for m in memory_items)
         block = f"MEMORY\n{lines}"
     else:
         block = "MEMORY\n(nothing relevant)"
 
+    system = CHAT_SYSTEM.format(memory_block=block)
+    chosen = resolve_provider(provider)
+
+    if chosen == "gemini":
+        if not settings.gemini_api_key:
+            raise RuntimeError("GEMINI_API_KEY is not set")
+        return (
+            _gemini_chat(
+                api_key=settings.gemini_api_key,
+                model=settings.gemini_chat_model,
+                system=system,
+                history=history,
+            ),
+            "gemini",
+            settings.gemini_chat_model,
+        )
+
     # OpenAI-compatible roles are already 'user'/'assistant', so unlike Gemini
     # (which needs 'model') the history passes through unmapped.
-    messages = [{"role": "system", "content": CHAT_SYSTEM.format(memory_block=block)}]
+    messages = [{"role": "system", "content": system}]
     messages += [
         {"role": "assistant" if m["role"] == "assistant" else "user", "content": m["content"]}
         for m in history
     ]
 
-    data = _post("/chat/completions", {
-        "model": settings.llm_chat_model,
-        "messages": messages,
-        "temperature": 0.7,
-    })
-    return _content(data)
+    if chosen == "groq":
+        if not settings.groq_api_key:
+            raise RuntimeError("GROQ_API_KEY is not set")
+        return (
+            _openai_compatible_chat(
+                base_url=settings.groq_base_url,
+                api_key=settings.groq_api_key,
+                model=settings.groq_chat_model,
+                messages=messages,
+                label="Groq",
+            ),
+            "groq",
+            settings.groq_chat_model,
+        )
+
+    if not settings.llm_api_key:
+        raise RuntimeError("LLM_API_KEY is not set")
+    return (
+        _openai_compatible_chat(
+            base_url=settings.llm_base_url,
+            api_key=settings.llm_api_key,
+            model=settings.llm_chat_model,
+            messages=messages,
+            label="OpenRouter",
+        ),
+        "openrouter",
+        settings.llm_chat_model,
+    )
 
 
 # ----------------------------------------------------------------- embeddings

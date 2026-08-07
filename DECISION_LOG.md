@@ -247,7 +247,7 @@ would have been equally meaningless: absence of a common word from an answer pro
 **General lesson worth keeping:** a negative assertion is only evidence if the thing being looked for
 could not have arrived by another route.
 
-### D25 — OpenRouter replaces the Gemini API (supersedes D15, D16, D18)
+### D29 — OpenRouter replaces the Gemini API (supersedes D15, D16, D18)
 **Chose:** route chat, extraction and embeddings through OpenRouter's OpenAI-compatible API.
 **Considered:** staying on Gemini and enabling billing, which D15 assumed would happen.
 **Rejected because:** the constraint that drove D15 never went away — the free Gemini key allows
@@ -267,7 +267,7 @@ design rests on and it runs off the critical path; the *faster* one (`gemma-4-26
 answers chat, because that is the call the user waits on. Both were verified on the tense test that
 motivated the split: "still writing" → `in_progress`, "should finish next month" → `planned`.
 
-### D26 — httpx directly, no provider SDK
+### D30 — httpx directly, no provider SDK
 **Chose:** call the two endpoints (`/chat/completions`, `/embeddings`) over httpx, which was already
 a dependency, and drop `google-genai` entirely.
 **Considered:** the `openai` SDK, which is the idiomatic client for an OpenAI-compatible gateway.
@@ -281,7 +281,7 @@ schema is therefore *derived* from the Pydantic model and post-processed (`_stri
 than hand-written, so the two cannot drift; the dropped bounds are re-checked by Pydantic when the
 response is validated, so nothing is actually lost.
 
-### D27 — Re-embed the existing store rather than wipe it (revises D17)
+### D31 — Re-embed the existing store rather than wipe it (revises D17)
 **Chose:** a one-off `backend/scripts/reembed.py` that re-embeds every live memory item with the new
 model, touching the `embedding` column only.
 **Considered:** clearing the test memories, which the README already documents SQL for.
@@ -297,6 +297,34 @@ what shaped a response. This is exactly the re-embed cost D10 warned about, arri
 renormalisation), but the *invariants* they motivated were kept and now guard the new client too —
 one vector per input, enforced by a length check, and unit norm, enforced on every return. A model
 that silently collapses a batch fails loudly here instead of dropping memories.
+
+### D32 — The chat model is switchable at runtime; the memory is not
+**Chose:** a per-turn provider selector (OpenRouter / Gemini / Groq) in the composer. Retrieval,
+extraction and embeddings stay pinned regardless of which model answers.
+**Considered:** switching the whole pipeline together, so the selected provider also extracts and
+embeds. It is the more obvious reading of "switch the model".
+**Rejected because:** it would break the thing worth demonstrating. Embeddings from different
+providers occupy different vector spaces, so switching the embedder mid-session fragments the store
+silently (D31, learned the expensive way). And routing extraction through whatever is selected makes
+status classification — the field the whole design rests on — vary with a dropdown, so a
+misclassification in front of a judge becomes unattributable: model, or system?
+**What this buys, and it is the actual point:** memory is *portable across models*. Switching from
+Groq to Gemini mid-conversation carries the memory across rather than re-deriving it — verified live:
+Qwen answered "you are working on the CHI paper", the selector was changed to Gemini, and Gemini
+answered "with Priya, and your plan is to finish it next month" from the same store, having extracted
+nothing itself. Negotiated memory is a property of the *system*, not of whichever model is renting it.
+That is a stronger claim than any single-provider demo can make, and it falls out of keeping the
+memory layer provider-independent rather than being an extra feature.
+**Honesty details:** the response reports which provider *actually* answered, not which was asked
+for — an unconfigured or stale selection falls back rather than 422-ing a turn, and the fallback is
+visible. Each turn is labelled with the model that wrote it, so switching does not retroactively
+relabel earlier replies. Turns loaded from history show no label at all: the database does not record
+which model wrote a stored message, and guessing would be worse than admitting it.
+**Sharp edge:** Qwen is a reasoning model and emits `<think>…</think>` inline; `llm.py` strips it,
+including the unterminated case where the model hits its token ceiling mid-thought and would
+otherwise return nothing but scratchpad. Gemini is also the one provider here that is *not*
+OpenAI-compatible — system prompt is its own field, `assistant` is called `model`, and a safety block
+returns no candidates at all rather than an error.
 
 ---
 
