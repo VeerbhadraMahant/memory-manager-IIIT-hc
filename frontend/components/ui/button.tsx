@@ -20,14 +20,24 @@ const button = cva(
   {
     variants: {
       variant: {
-        // §4: one primary CTA per surface. Bright orange fill, dark ink on it —
-        // the fill token used as a fill, which is the only thing it is for.
+        // §4: one primary CTA per surface. --accent as a fill with white on it
+        // (6.83:1), which is the only thing a fill token is for. Deliberately
+        // --accent and not --stated: pressing a button is not a memory
+        // semantic, and the green means "you said this" everywhere else.
+        //
+        // The disabled treatment stays a neutral outline rather than a faded
+        // fill. That began as a fix for the old palette — 50% orange over Dark
+        // Slate composited to a muted brown, so a disabled Send read as a broken
+        // colour rather than a control waiting for input — and it is kept
+        // because a half-strength indigo on #F2F2F2 has the same problem.
         primary:
-          "bg-stated text-[color:var(--surface-sunken)] hover:brightness-110 active:brightness-95",
-        // On the dark app background.
+          "bg-accent text-white hover:brightness-110 active:brightness-95 " +
+          "disabled:bg-transparent disabled:opacity-100 disabled:border disabled:border-outline-strong " +
+          "disabled:text-ink-invert-muted",
+        // On the app background.
         outline:
           "border border-outline-strong bg-transparent text-ink-invert hover:bg-raised",
-        // On an off-white card. `on-surface` retunes the focus ring (globals.css).
+        // On a white card. `on-surface` no longer retunes anything (globals.css).
         outlineInk:
           "on-surface border border-outline-ink bg-transparent text-ink hover:bg-[color:var(--surface-sunken)]/5",
         ghost: "bg-transparent text-ink-invert-muted hover:bg-raised hover:text-ink-invert",
@@ -35,9 +45,9 @@ const button = cva(
         // §7: destructive actions carry the danger colour and are separated from
         // the primary action by the caller's layout, not by hue alone.
         danger:
-          "border border-danger bg-danger-dim text-danger-on-dark hover:bg-danger hover:text-[color:var(--surface-sunken)]",
+          "border border-danger bg-danger-dim text-danger-on-bg hover:bg-danger hover:text-white",
         dangerInk:
-          "on-surface border border-danger bg-danger-dim text-danger-ink hover:bg-danger hover:text-[color:var(--surface-sunken)]",
+          "on-surface border border-danger bg-danger-dim text-danger-ink hover:bg-danger hover:text-white",
       },
       size: {
         // 44px floor everywhere a finger lands.

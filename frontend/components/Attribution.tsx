@@ -22,6 +22,7 @@
 import { Undo2 } from "lucide-react";
 
 import { SCOPE_LABEL, STATUS_LABEL, type UsedMemory } from "@/lib/api";
+import { blockLabel } from "@/lib/semantics";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Chip } from "@/components/ui/chip";
@@ -62,8 +63,8 @@ export function AttributionChips({
           className={cn(
             "meta min-h-11 rounded-pill px-3 ring-1 transition-colors duration-[var(--motion-micro)]",
             highlighted
-              ? "bg-stated-dim text-stated-on-dark ring-stated/50"
-              : "bg-white/8 text-ink-invert-muted ring-outline hover:text-ink-invert",
+              ? "bg-accent-dim text-accent ring-accent/40"
+              : "bg-black/5 text-ink-invert-muted ring-outline hover:text-ink-invert",
           )}
         >
           {highlighted ? "clear highlight" : "show in graph"}
@@ -78,7 +79,7 @@ export function AttributionChips({
           >
             <p className="text-body-sm text-ink-invert">{m.content}</p>
             <div className="mt-2 flex flex-wrap items-center gap-1.5">
-              <Chip>{m.block_name ?? "unclassified"}</Chip>
+              <Chip>{blockLabel(m.block_name ?? "unclassified")}</Chip>
               <Chip>{STATUS_LABEL[m.status]}</Chip>
               <Chip tone={m.scope === "session" ? "alert" : "neutral"}>
                 {SCOPE_LABEL[m.scope]}

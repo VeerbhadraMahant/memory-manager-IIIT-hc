@@ -2,76 +2,103 @@
 @import "@xyflow/react/dist/style.css";
 
 /* ============================================================ §1 Tokens
- * frontend_design_guideline.md §1, regenerated per the conflict table: the
- * generator's `background: #121414` is dropped, Dark Slate `#303841` wins.
+ * Light theme, on the supplied palette:
  *
- * Measured, not eyeballed. Every pair below was run through a WCAG contrast
- * calculation before it landed here; the ratios in the comments are that output,
- * and three of the guideline's hand-derived starting points did not survive it:
+ *   #5542D0 indigo · #EBF4EF pale mint · #82A1D7 soft blue · #1E8757 green
+ *   #F2F2F2 grey (the app background, given)
  *
- *   --ink-invert-muted  #A3ABB5  passed on --bg (5.12) but failed on
- *                                --surface-raised (4.32). Lightened.
- *   --stated  #F77A25 as text    4.39 on --bg. Under AA. It is a fill colour,
- *                                so a separate text token was added rather than
- *                                nudging the brand orange.
- *   --danger  #FF6B5E as text    4.25 on --bg. Same treatment.
+ * This replaces the Dark Slate palette in frontend_design_guideline.md §1. The
+ * *rules* from §1 survive the swap and are what made the swap cheap: components
+ * spend tokens rather than hex, fill colours are never used as type, and every
+ * pair is measured. Only the values below moved.
  *
- * Then a second pass, run against the DOM of the *running* app rather than
- * against the palette, caught what the first pass could not: those replacement
- * text tokens are used inside `-dim` chips, and a 12% orange wash over
- * --surface-raised is a lighter background than --surface-raised. Every
- * -on-dark value below is now sized against that composite. The lesson is in
- * the method, not the hex — measuring tokens in pairs misses what happens when
- * they are stacked.
+ * Mapping, and why each one:
  *
- * The rule from §1 holds and is now enforceable by naming: --stated and
- * --inferred are FILL AND STROKE. Text uses an -ink (on light) or -on-dark
- * variant. There is deliberately no token that puts #F77A25 on #FAFAFA.
+ *   indigo  → --accent. Interactive, not semantic: buttons, focus ring, the
+ *             active session. It is the palette's loudest colour and pressing
+ *             things is what the user does most.
+ *   green   → --stated. "You said this" is the grounded end of the pair.
+ *   blue    → --inferred. Cooler and quieter than green, and — the actual
+ *             reason — distinguishable from it, which #5542D0 would not have
+ *             been. A stated/inferred pair that is two blues fails the one job
+ *             it has.
+ *   mint    → --surface-sunken. Note it is the same *luminance* as --bg
+ *             (0.886 vs 0.888), so it separates by hue, not by value. Zones
+ *             using it therefore also need a border; shading alone is invisible.
+ *   white   → --surface / --surface-raised. On #F2F2F2 the only step up that is
+ *             not a tint is white, so those two collapse into one value.
+ *
+ * Two colours are NOT in the palette and are added as status, not brand: a red
+ * for destructive and an amber for the tier-2 PII warning. Both carry meaning
+ * that no palette hue can stand in for — a green "not confirmed recently" row
+ * says the opposite of what it means, and danger has to read as danger.
+ *
+ * Measured, not eyeballed. Ratios below are computed against the surface each
+ * token actually lands on, worst case. Three results worth keeping in view:
+ *
+ *   --inferred  #82A1D7 as text  2.34 on --bg. Fill and stroke only, as before.
+ *   --stated    #1E8757 as text  4.03 on --bg. Under AA, so the -ink variant
+ *                                exists for exactly the same reason the orange
+ *                                needed one.
+ *   --alert     #B26A00 as text  3.79 on --bg. Same treatment.
+ *
+ * Unlike the old palette, --accent and --danger DO clear 4.5:1 as type on
+ * --bg, so there is no separate ink token for either.
  */
 
 :root {
   /* Surfaces */
-  --bg:                #303841;  /* Dark Slate — app background */
-  --surface:           #FAFAFA;  /* Off White — cards, panels, floating surfaces */
-  --surface-raised:    #3A434E;  /* dark-mode container one step up from bg */
-  --surface-sunken:    #262D35;
+  --bg:                #F2F2F2;  /* app background — the conversation sits here */
+  --surface:           #FFFFFF;  /* cards, panels, floating surfaces */
+  --surface-raised:    #FFFFFF;  /* one step up from bg; on light that is white */
+  --surface-sunken:    #EBF4EF;  /* tinted recess — sidebar, memory panel, inputs */
+
+  /* Interactive. Not a memory semantic: nothing about a memory is indigo. */
+  --accent:            #5542D0;  /* on --bg  — 6.10 AA · white on it — 6.83 AA */
+  --accent-dim:        rgb(85 66 208 / 0.10);
 
   /* Memory semantics — fills and strokes */
-  --stated:            #F77A25;
-  --inferred:          #C2CEF2;
+  --stated:            #1E8757;  /* on --bg  — 4.03, ≥3 graphical */
+  --inferred:          #82A1D7;  /* on --bg  — 2.34, fill only */
 
   /* Memory semantics — text. Never use the fill tokens for type.
    *
-   * The -on-dark values are sized against the WORST dark surface they can land
-   * on, which is not --surface-raised: it is a *-dim chip sitting on
-   * --surface-raised (#514A49 for stated). A DOM contrast audit of the running
-   * app caught that — the first pass measured these against the raw surfaces,
-   * passed, and still shipped 4.38:1 chips. Ratios below are worst-case. */
-  --stated-ink:        #8A3A00;  /* on --surface                     — 7.49  AAA */
-  --stated-on-dark:    #FAAF7C;  /* worst: stated-dim on raised      — 4.76  AA  */
-  --inferred-ink:      #2E3F63;  /* on --surface                     — 10.02 AAA */
-  --inferred-on-dark:  #C3CFF2;  /* worst: inferred-dim on raised    — 4.75  AA  */
+   * -ink and -on-bg are the same value now: the app has one background family,
+   * so "on a light card" and "on the app background" are the same problem. Both
+   * names are kept because both are spent across the components, and the pair
+   * is what stops a fill colour being used as type by accident. */
+  --stated-ink:        #166B45;  /* on --surface — 6.51 AA · on --bg — 5.82 AA */
+  --stated-on-bg:      #166B45;
+  --inferred-ink:      #2E4A7D;  /* on --surface — 8.78 AAA · on --bg — 7.84 AAA */
+  --inferred-on-bg:    #2E4A7D;
 
-  /* Tinted backgrounds. Alpha, so they compose over either surface. */
-  --stated-dim:        rgb(247 122 37 / 0.12);
-  --inferred-dim:      rgb(194 206 242 / 0.14);
+  /* Tinted backgrounds. Alpha, so they compose over any of the three surfaces.
+   * Lighter than the old 12% washes: over white these barely move the
+   * luminance, which is what keeps the -ink values above the floor on them. */
+  --stated-dim:        rgb(30 135 87 / 0.10);
+  --inferred-dim:      rgb(130 161 215 / 0.16);
 
   /* Text */
-  --ink:               #0F1419;  /* on --surface                     — 17.74 AAA */
-  --ink-muted:         #4A5560;  /* on --surface                     — 7.29  AAA */
-  --ink-invert:        #E8EAED;  /* on --bg                          — 9.86  AAA */
-  --ink-invert-muted:  #C4C9D0;  /* worst: white/8 chip on raised    — 4.76  AA  */
+  --ink:               #0F1419;  /* on --surface — 17.04 AAA */
+  --ink-muted:         #4A5560;  /* on --surface — 7.61  AAA */
+  --ink-invert:        #0F1419;  /* on --bg      — 15.20 AAA */
+  --ink-invert-muted:  #4A5560;  /* on --bg      — 6.80  AA  */
 
-  /* Lines */
-  --outline:           rgb(250 250 250 / 0.14);
-  --outline-strong:    rgb(250 250 250 / 0.28);
-  --outline-ink:       rgb(15 20 25 / 0.14);  /* the same idea on a light card */
+  /* Lines. Dark alphas now — the old light alphas were sized to sit on Dark
+   * Slate and are invisible on #F2F2F2. */
+  --outline:           rgb(15 20 25 / 0.10);
+  --outline-strong:    rgb(15 20 25 / 0.22);
+  --outline-ink:       rgb(15 20 25 / 0.12);
 
-  /* Status */
-  --danger:            #FF6B5E;  /* fill/stroke only  — 4.25 on --bg, ≥3 graphical */
-  --danger-ink:        #93000A;  /* on --surface                     — 8.96  AAA */
-  --danger-on-dark:    #FFA8A1;  /* worst: danger-dim on raised      — 4.76  AA  */
-  --danger-dim:        rgb(255 107 94 / 0.12);
+  /* Status — added, not from the palette. See the note above. */
+  --alert:             #B26A00;  /* fill/stroke only — 3.79 on --bg */
+  --alert-ink:         #8A5200;  /* on --surface — 6.38 AA · on --bg — 5.71 AA */
+  --alert-dim:         rgb(178 106 0 / 0.10);
+
+  --danger:            #C62828;  /* on --bg — 5.03 AA, so it doubles as type */
+  --danger-ink:        #93000A;  /* on --bg — 8.36 AAA */
+  --danger-on-bg:      #93000A;
+  --danger-dim:        rgb(198 40 40 / 0.09);
 
   /* Radius (§1) */
   --radius-card:  0.5rem;
@@ -95,14 +122,21 @@
   --color-raised:          var(--surface-raised);
   --color-sunken:          var(--surface-sunken);
 
+  --color-accent:          var(--accent);
+  --color-accent-dim:      var(--accent-dim);
+
   --color-stated:          var(--stated);
   --color-stated-ink:      var(--stated-ink);
-  --color-stated-on-dark:  var(--stated-on-dark);
+  --color-stated-on-bg:    var(--stated-on-bg);
   --color-stated-dim:      var(--stated-dim);
   --color-inferred:        var(--inferred);
   --color-inferred-ink:    var(--inferred-ink);
-  --color-inferred-on-dark: var(--inferred-on-dark);
+  --color-inferred-on-bg:  var(--inferred-on-bg);
   --color-inferred-dim:    var(--inferred-dim);
+
+  --color-alert:           var(--alert);
+  --color-alert-ink:       var(--alert-ink);
+  --color-alert-dim:       var(--alert-dim);
 
   --color-ink:             var(--ink);
   --color-ink-muted:       var(--ink-muted);
@@ -115,7 +149,7 @@
 
   --color-danger:          var(--danger);
   --color-danger-ink:      var(--danger-ink);
-  --color-danger-on-dark:  var(--danger-on-dark);
+  --color-danger-on-bg:    var(--danger-on-bg);
   --color-danger-dim:      var(--danger-dim);
 
   /* Type (§1). Hanken for headings, Inter for body, JetBrains strictly for
@@ -177,17 +211,16 @@ h1, h2, h3, h4 {
 /* §6: focus visible everywhere, 2px minimum, never removed. Set globally so an
  * individual component cannot quietly opt out by forgetting it. */
 :focus-visible {
-  outline: 2px solid var(--stated-on-dark);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
   border-radius: 2px;
 }
-/* On the off-white cards the bright orange ring is the one place the fill colour
- * legitimately touches light — as a 2px stroke, which is a graphical object at
- * 3:1, not text. */
-.on-surface :focus-visible,
-.on-surface:focus-visible {
-  outline-color: var(--stated-ink);
-}
+/* The `.on-surface` class on some button variants used to retune this ring,
+ * because the old palette needed a different one on light cards than on the
+ * dark app background. With one background family there is nothing left to
+ * retune — #5542D0 is 6.10:1 on --bg and 6.83:1 on white, well past the 3:1 a
+ * focus indicator needs on either. The class is left on those variants rather
+ * than stripped from five files; it now styles nothing. */
 
 /* Body copy measure (§1: 65ch). Applied by class, because a chat transcript and
  * a chip row want different things from the same page. */
@@ -266,8 +299,9 @@ h1, h2, h3, h4 {
 }
 
 /* ---------------------------------------------------------- React Flow skin
- * The library's default light chrome is replaced wholesale — its own palette
- * would be the one place raw hex re-entered the app through the back door. */
+ * Still overridden wholesale even though the app is light and so is the
+ * library's default chrome: its palette is its own, and letting it show through
+ * is exactly how raw hex re-enters the app through the back door. */
 
 /* React Flow sets `pointer-events: none` on a node when it is not draggable,
  * selectable or connectable — which all three are false here, because selection

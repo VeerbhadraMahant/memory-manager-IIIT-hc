@@ -28,8 +28,10 @@ import {
   SENSITIVITIES,
   STATUS_CHIP,
   STATUSES,
+  blockLabel,
   isStale,
 } from "@/lib/semantics";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Chip, SelectChip, SourceChip } from "@/components/ui/chip";
 
@@ -78,16 +80,23 @@ export function MemoryActionBar({
     return (
       <div className="space-y-3">
         <label className="block">
-          <span className="meta mb-1 block text-ink-muted">Memory text</span>
+          <span className={cn("meta mb-1 block", onLight ? "text-ink-muted" : "text-ink-invert-muted")}>
+            Memory text
+          </span>
           <textarea
             ref={textarea}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             rows={3}
-            className="w-full rounded-input border border-outline-ink bg-white p-3 text-body-sm text-ink"
+            className={cn(
+              "w-full rounded-input border p-3 text-body-sm",
+              onLight
+                ? "border-outline-ink bg-white text-ink"
+                : "border-outline-strong bg-sunken text-ink-invert",
+            )}
           />
         </label>
-        <p className="text-body-sm text-ink-muted">
+        <p className={cn("text-body-sm", onLight ? "text-ink-muted" : "text-ink-invert-muted")}>
           Saving a correction keeps the memory — you have already looked at it.
         </p>
         <div className="flex flex-wrap gap-2">
@@ -116,7 +125,7 @@ export function MemoryActionBar({
           </Button>
         </div>
         {error && (
-          <p role="alert" className="text-body-sm text-danger-ink">
+          <p role="alert" className={cn("text-body-sm", onLight ? "text-danger-ink" : "text-danger-on-bg")}>
             {error}
           </p>
         )}
@@ -132,7 +141,7 @@ export function MemoryActionBar({
           <SelectChip
             label="Block"
             value={item.block_name ?? "unclassified"}
-            options={blocks.map((b) => [b, b] as const)}
+            options={blocks.map((b) => [b, blockLabel(b)] as const)}
             disabled={working}
             onLight={onLight}
             onChange={(v) => void run(() => actions.reclassify(item.id, { block_name: v }))()}
@@ -176,9 +185,15 @@ export function MemoryActionBar({
           it, because the recovery from "this might not be true any more" is one
           tap and the user should not have to go looking for it. */}
       {stale && (
-        <div className="flex flex-wrap items-center gap-2 rounded-input border border-stated/50 bg-stated-dim px-3 py-2">
-          <span className="meta text-stated-ink">not confirmed recently</span>
-          <span className="text-body-sm text-ink-muted">
+        <div className="flex flex-wrap items-center gap-2 rounded-input border border-alert/50 bg-alert-dim px-3 py-2">
+          {/* Amber, not the stated green: this row says "this may no longer be
+              true", and painting it in the colour that means "you said this"
+              inverts it. One value for both surfaces now — --alert-ink is 6.38:1
+              on white and 5.71:1 on --bg, so there is nothing to branch on. */}
+          <span className="meta text-alert-ink">
+            not confirmed recently
+          </span>
+          <span className={onLight ? "text-body-sm text-ink-muted" : "text-body-sm text-ink-invert-muted"}>
             Still in progress, but nothing has re-asserted it. It will be dated
             rather than stated as current.
           </span>
@@ -261,7 +276,7 @@ export function MemoryActionBar({
       </div>
 
       {error && (
-        <p role="alert" className="text-body-sm text-danger-ink">
+        <p role="alert" className={cn("text-body-sm", onLight ? "text-danger-ink" : "text-danger-on-bg")}>
           {error}
         </p>
       )}
@@ -280,7 +295,7 @@ export function MemorySummary({
 }) {
   return (
     <p className={onLight ? "text-body-sm text-ink-muted" : "text-body-sm text-ink-invert-muted"}>
-      {item.block_name ?? "unclassified"} · {STATUS_LABEL[item.status]} ·{" "}
+      {blockLabel(item.block_name ?? "unclassified")} · {STATUS_LABEL[item.status]} ·{" "}
       {SCOPE_LABEL[item.scope]}
       {item.review_state === "pending" && " · awaiting your review"}
       {item.needs_review && item.review_state !== "pending" && " · flagged for review"}

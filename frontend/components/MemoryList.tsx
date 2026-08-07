@@ -34,6 +34,7 @@ import {
   SENSITIVITIES,
   STATUSES,
   STATUS_CHIP,
+  blockLabel,
   describeMemory,
   isStale,
 } from "@/lib/semantics";
@@ -174,7 +175,7 @@ export function MemoryList({
           <FilterSelect
             label="Block"
             value={filters.block}
-            options={blocks.map((b) => [b, b] as const)}
+            options={blocks.map((b) => [b, blockLabel(b)] as const)}
             onChange={(v) => set("block", v)}
           />
           <FilterSelect
@@ -223,9 +224,9 @@ export function MemoryList({
         <div
           role="group"
           aria-label="Actions for selected memories"
-          className="flex flex-wrap items-center gap-2 rounded-card border border-stated/50 bg-stated-dim p-3"
+          className="flex flex-wrap items-center gap-2 rounded-card border border-accent/40 bg-accent-dim p-3"
         >
-          <span className="meta tnum text-stated-on-dark">
+          <span className="meta tnum text-accent">
             {selection.size} selected
           </span>
           {selectedPending.length > 0 && (
@@ -275,7 +276,7 @@ export function MemoryList({
       )}
 
       {error && (
-        <p role="alert" className="rounded-card border border-danger bg-danger-dim p-3 text-body-sm text-danger-on-dark">
+        <p role="alert" className="rounded-card border border-danger bg-danger-dim p-3 text-body-sm text-danger-on-bg">
           {error}
         </p>
       )}
@@ -364,7 +365,7 @@ function Row({
             className="min-w-0 flex-1"
           >
             <summary
-              className="tap flex cursor-pointer list-none flex-col gap-1.5 rounded-input px-2 py-2 marker:hidden hover:bg-white/5 [&::-webkit-details-marker]:hidden"
+              className="tap flex cursor-pointer list-none flex-col gap-1.5 rounded-input px-2 py-2 marker:hidden hover:bg-black/[0.04] [&::-webkit-details-marker]:hidden"
               // The full sentence, so a screen reader gets the whole memory from
               // the row without expanding it (§6, and the same string the graph
               // node is labelled with).
@@ -377,7 +378,7 @@ function Row({
                 </span>
               </span>
               <span className="flex flex-wrap items-center gap-1.5">
-                <Chip>{item.block_name ?? "unclassified"}</Chip>
+                <Chip>{blockLabel(item.block_name ?? "unclassified")}</Chip>
                 <Chip tone={stale ? "danger" : "neutral"}>
                   {STATUS_CHIP[item.status]}
                   {stale && " · stale"}
@@ -432,7 +433,7 @@ function FilterSelect({
     <label
       className={cn(
         "meta inline-flex min-h-11 items-center gap-1.5 rounded-pill px-3 ring-1",
-        value ? "bg-stated-dim text-stated-on-dark ring-stated/50" : "bg-white/8 text-ink-invert-muted ring-outline",
+        value ? "bg-accent-dim text-accent ring-accent/40" : "bg-black/5 text-ink-invert-muted ring-outline",
       )}
     >
       <span>{label}</span>
@@ -472,8 +473,8 @@ function FilterToggle({
       className={cn(
         "meta min-h-11 rounded-pill px-3 ring-1 transition-colors duration-[var(--motion-micro)]",
         pressed
-          ? "bg-stated-dim text-stated-on-dark ring-stated/50"
-          : "bg-white/8 text-ink-invert-muted ring-outline hover:text-ink-invert",
+          ? "bg-accent-dim text-accent ring-accent/40"
+          : "bg-black/5 text-ink-invert-muted ring-outline hover:text-ink-invert",
       )}
     >
       {children}

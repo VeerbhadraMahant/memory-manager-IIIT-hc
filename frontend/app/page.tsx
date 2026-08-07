@@ -8,28 +8,43 @@
 // session-only memory does not survive into a new conversation, and that is not
 // demonstrable without somewhere else to stand.
 //
-// Layout follows §1 exactly: 1200 container, 800 conversation column, 16/40
-// margins. The memory workspace sits below the conversation at the full 1200
-// rather than squeezed into a rail, because the graph needs width and because a
-// view crammed into a sidebar reads as the secondary one — which is precisely
-// what §2 says neither view is.
+// Layout: three zones — sessions left, conversation centre, memory right.
+//
+// Two earlier arrangements and what each got wrong. The workspace first sat
+// *below* the conversation, which put the graph under the fold: a memory forming
+// and the graph reacting to it could never be on screen together, which is the
+// whole point of retrieval highlighting. A permanent 50/50 split fixed that and
+// introduced the opposite problem — memory competed with the conversation at
+// every moment, including the moments when the conversation was the thing to
+// read, and on a projector the transcript lost.
+//
+// So memory keeps its column and the column collapses (components/MemoryPanel).
+// The conversation is capped at 760px and centred in what is left, and the
+// session switcher moved out of the page header into a real sidebar, where it
+// stops competing with the transcript for horizontal space.
 
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
-import { Loader2, Send } from "lucide-react";
+import { Cpu, EyeOff, FileCheck2, Loader2, Network, Send } from "lucide-react";
 
 import { AttributionChips } from "@/components/Attribution";
 import { DraftPanel } from "@/components/DraftPanel";
-import { MemoryWorkspace } from "@/components/MemoryWorkspace";
+import { EmptyHeading, SuggestionCards } from "@/components/EmptyState";
+import { MemoryPanel, MemoryPanelToggle } from "@/components/MemoryPanel";
 import { PiiModal, PiiStrip } from "@/components/PiiIntervention";
 import { ReviewCard } from "@/components/ReviewCard";
-import { ScopePanel } from "@/components/ScopePanel";
+import { SessionSidebar, SidebarOpenButton } from "@/components/SessionSidebar";
 import { Button } from "@/components/ui/button";
-import { Chip } from "@/components/ui/chip";
 import {
   MemoryLiveRegion,
   MemoryProvider,
   useMemoryStore,
 } from "@/lib/memory-store";
+import {
+  DESKTOP_QUERY,
+  WIDE_QUERY,
+  useMediaQuery,
+  useMemoryPanel,
+} from "@/lib/shell";
 import { scanForPii, worstTier, type PiiCategory, type PiiFinding } from "@/lib/pii";
 import { cn } from "@/lib/utils";
 import {
@@ -144,7 +159,22 @@ function Workbench() {
   const [sessionOnly, setSessionOnly] = useState(false);
   const [gate, setGate] = useState<{ text: string; findings: PiiFinding[] } | null>(null);
 
+  // ------------------------------------------------------------------ shell
+  //
+  // Layout is Tailwind breakpoints; these two queries drive *behaviour* only —
+  // whether a zone is covering the conversation, and therefore whether it needs
+  // a focus trap and an Escape key.
+  const desktop = useMediaQuery(DESKTOP_QUERY);
+  const wide = useMediaQuery(WIDE_QUERY);
+  const [memoryOpen, setMemoryOpen] = useMemoryPanel();
+  // Two separate states, because at ≥1024px the sidebar is never absent (260px
+  // or a 56px rail) and below it is never a rail (drawer or nothing). One
+  // boolean would need a different default on each side of the breakpoint.
+  const [railCollapsed, setRailCollapsed] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+
   const bottom = useRef<HTMLDivElement>(null);
+  const composer = useRef<HTMLTextAreaElement>(null);
 
   const refreshSidebar = useCallback(
     (id: string | null) => {
@@ -205,6 +235,8 @@ function Workbench() {
     setTurns((ts) => ts.map((t) => (t.id === id ? { ...t, ...patch } : t)));
 
   const switchTo = async (id: string) => {
+    // Picking a session is the drawer's only job, so it stands down afterwards.
+    setDrawerOpen(false);
     setChatId(id);
     setTurns([]);
     setScope(null);
@@ -218,6 +250,7 @@ function Workbench() {
   };
 
   const newSession = async () => {
+    setDrawerOpen(false);
     try {
       const chat = await api.createChat(`Session ${chats.length + 1}`);
       setChats((cs) => [chat, ...cs]);
@@ -372,84 +405,96 @@ function Workbench() {
     refreshSidebar(chatId);
   };
 
+  const empty = turns.length === 0 && !fatal;
+
   return (
-    <div className="mx-auto w-full max-w-[1200px] px-4 py-6 md:px-10">
-      <header className="mb-6">
-        <h1 className="text-headline-lg text-ink-invert">Negotiated AI Memory</h1>
-        <p className="mt-1 text-body-md text-ink-invert-muted">
-          You decide what is remembered, as it happens.
-        </p>
+    <div className="flex min-h-dvh w-full lg:h-dvh lg:min-h-0 lg:overflow-hidden">
+      <SessionSidebar
+        chats={chats}
+        currentId={chatId}
+        collapsed={desktop && railCollapsed}
+        open={drawerOpen}
+        overlay={!desktop}
+        // One control, two meanings, because the sidebar is two different things
+        // on either side of 1024px: a column that narrows, or a drawer that goes.
+        onToggle={() =>
+          desktop ? setRailCollapsed((c) => !c) : setDrawerOpen(false)
+        }
+        onSelect={(id) => void switchTo(id)}
+        onNew={() => void newSession()}
+      />
 
-        {/* Capped at six. Test runs accumulate sessions quickly, and an unbounded
-            row of buttons pushed the conversation off the screen. Older sessions
-            stay reachable through the count rather than vanishing silently. */}
-        <nav aria-label="Sessions" className="mt-4 flex flex-wrap items-center gap-2">
-          {chats.slice(0, 6).map((ch) => (
-            <button
-              key={ch.id}
-              onClick={() => void switchTo(ch.id)}
-              aria-current={ch.id === chatId ? "true" : undefined}
-              className={cn(
-                "min-h-11 rounded-pill px-4 text-body-sm transition-colors duration-[var(--motion-micro)]",
-                ch.id === chatId
-                  ? "bg-stated text-[color:var(--surface-sunken)] font-medium"
-                  : "border border-outline-strong text-ink-invert-muted hover:text-ink-invert",
-              )}
-            >
-              {ch.title ?? "Untitled"}
-            </button>
-          ))}
-          <button
-            onClick={() => void newSession()}
-            className="min-h-11 rounded-pill border border-dashed border-outline-strong px-4 text-body-sm text-ink-invert-muted hover:text-ink-invert"
-          >
-            + New session
-          </button>
-          {chats.length > 6 && (
-            <span className="meta tnum text-ink-invert-muted">
-              +{chats.length - 6} older
-            </span>
-          )}
-        </nav>
-      </header>
-
-      {fatal && (
-        <p
-          role="alert"
-          className="mb-6 rounded-card border border-danger bg-danger-dim p-4 text-body-sm text-danger-on-dark"
-        >
-          Backend unreachable: {fatal}. Is uvicorn running on port 8000?
-        </p>
-      )}
-
-      {/* Conversation column capped at 800 (§1); the scope rail takes the rest. */}
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,800px)_minmax(0,1fr)]">
-        <main className="flex min-w-0 flex-col">
+      {/* Centre zone. Its own scroll container at ≥1024px so the transcript and
+          the memory panel move independently and neither pushes the other off
+          screen. Capped at 760px and centred: a wider column would fill the
+          space freed by collapsing memory, which is not what the space is for. */}
+      <main className="flex min-w-0 flex-1 flex-col lg:min-h-0 lg:overflow-y-auto">
+        <div className="sticky top-0 z-10 flex shrink-0 items-center gap-2 border-b border-outline bg-bg px-4 py-2 md:px-6">
+          <SidebarOpenButton open={drawerOpen} onOpen={() => setDrawerOpen(true)} />
           <h2 className="sr-only">Conversation</h2>
+          {/* Which session you are in, for the widths where the sidebar is not
+              on screen to say so. */}
+          <p className="meta truncate text-ink-invert-muted">
+            {chats.find((c) => c.id === chatId)?.title ?? "Loading…"}
+          </p>
+          <div className="ml-auto flex items-center gap-2">
+            {/* Always reachable, unlike the matching link inside the memory
+                panel — that one is unmounted-from-tab-order when the panel is
+                collapsed (MemoryPanel.tsx), and finding it would otherwise cost
+                an "open the panel" click first. Icon-only: the top bar is
+                genuinely space-starved at 390px, same exception the collapsed
+                sidebar rail and the panel edge toggle already get. */}
+            <a
+              href="/graph"
+              target="_blank"
+              rel="noopener noreferrer"
+              title="View memory graph"
+              aria-label="View memory graph — opens in a new tab"
+              className="tap inline-flex items-center justify-center rounded-input text-ink-invert-muted hover:bg-raised hover:text-ink-invert"
+            >
+              <Network className="size-4" aria-hidden="true" />
+            </a>
+            <MemoryPanelToggle
+              open={memoryOpen}
+              onToggle={() => setMemoryOpen(!memoryOpen)}
+            />
+          </div>
+        </div>
 
-          <div className="flex-1 space-y-6">
-            {turns.length === 0 && !fatal && (
-              <div className="rounded-card border border-dashed border-outline-strong p-6">
-                <p className="text-body-md font-medium text-ink-invert">
-                  Try telling it something with a mix of things in it.
-                </p>
-                <p className="measure mt-2 text-body-md text-ink-invert-muted">
-                  &ldquo;I&rsquo;ve been on 20mg escitalopram since March. Still
-                  writing the CHI paper with Priya, should wrap next month.&rdquo;
-                </p>
-                <p className="measure mt-3 text-body-sm text-ink-invert-muted">
-                  Health goes to this chat only. The paper is kept as{" "}
-                  <em>in progress</em>, not finished. Then start a new session and
-                  ask what it knows.
-                </p>
-              </div>
-            )}
+        <div
+          className={cn(
+            "mx-auto flex w-full max-w-[760px] flex-1 flex-col px-4 md:px-6",
+            // Empty: heading, composer and the three beats sit in the middle of
+            // the column rather than pinned to the bottom of an empty page.
+            empty && "justify-center",
+          )}
+        >
+          {fatal && (
+            <p
+              role="alert"
+              className="mt-6 rounded-card border border-danger bg-danger-dim p-4 text-body-sm text-danger-on-bg"
+            >
+              Backend unreachable: {fatal}. Is uvicorn running on port 8000?
+            </p>
+          )}
 
+          {empty && <EmptyHeading />}
+
+          <div className={cn("space-y-6", !empty && "flex-1 py-6")}>
             {turns.map((t) => (
-              <article key={t.id} className="space-y-2">
+              <article key={t.id} className="space-y-3">
+                {/* The user speaks in a bubble; the assistant does not. That
+                    asymmetry is the convention every chat UI has settled on, and
+                    it is doing real work here: a bubble is a quotation of
+                    something *said*, and the reply is the page talking. It also
+                    buys the reply the full column width, which matters because
+                    the reply is the thing with review cards and attribution
+                    hanging off it. */}
                 <div className="flex justify-end">
-                  <div className="max-w-[85%] rounded-card rounded-br-sm bg-surface px-4 py-3 text-ink">
-                    <p className="measure text-body-md">{t.userText}</p>
+                  <div className="max-w-[85%] rounded-card rounded-br-sm bg-surface px-4 py-3 text-ink shadow-[0_1px_2px_rgb(15_20_25/0.06)]">
+                    <p className="measure whitespace-pre-wrap text-body-md">
+                      {t.userText}
+                    </p>
                     {t.ephemeral && (
                       <p className="meta mt-1.5 text-ink-muted">
                         off the record — never extracted
@@ -461,7 +506,7 @@ function Workbench() {
                 {t.error && (
                   <p
                     role="alert"
-                    className="rounded-card border border-danger bg-danger-dim px-4 py-3 text-body-sm text-danger-on-dark"
+                    className="rounded-card border border-danger bg-danger-dim px-4 py-3 text-body-sm text-danger-on-bg"
                   >
                     {t.error}
                   </p>
@@ -476,13 +521,13 @@ function Workbench() {
 
                 {t.reply && (
                   <div>
-                    <p className="measure max-w-[85%] whitespace-pre-wrap rounded-card rounded-bl-sm border border-outline bg-raised px-4 py-3 text-body-md text-ink-invert">
+                    <p className="measure whitespace-pre-wrap text-body-md text-ink-invert">
                       {t.reply}
                     </p>
                     {/* Labelled per turn, so a conversation that switched models shows
                         which one wrote each reply rather than relabelling the history. */}
                     {t.model && (
-                      <p className="meta mt-1.5 text-ink-invert-muted">
+                      <p className="meta mt-1.5 text-left text-ink-invert-muted">
                         answered by {t.model}
                       </p>
                     )}
@@ -497,6 +542,11 @@ function Workbench() {
                       onHighlight={(map) => {
                         setRelevance(map);
                         setHighlightTurn(map ? t.id : null);
+                        // The chips are complete on their own with the panel
+                        // shut (§4.4). Asking for the graph highlight is the one
+                        // thing they cannot do alone, so it opens the panel
+                        // rather than silently doing nothing visible.
+                        if (map) setMemoryOpen(true);
                       }}
                     />
 
@@ -537,7 +587,7 @@ function Workbench() {
                 )}
 
                 {t.sessionOnlyApplied !== null && t.sessionOnlyApplied > 0 && (
-                  <p role="status" className="meta ml-0 text-stated-on-dark sm:ml-10">
+                  <p role="status" className="meta ml-0 text-stated-on-bg sm:ml-10">
                     <span className="tnum">{t.sessionOnlyApplied}</span> kept to
                     this session only
                   </p>
@@ -546,7 +596,7 @@ function Workbench() {
                 {t.extraction?.status === "failed" && (
                   <p
                     role="alert"
-                    className="ml-0 text-body-sm text-danger-on-dark sm:ml-10"
+                    className="ml-0 text-body-sm text-danger-on-bg sm:ml-10"
                   >
                     Extraction failed: {t.extraction.error}
                   </p>
@@ -569,12 +619,18 @@ function Workbench() {
           </div>
 
           {/* ---------------------------------------------------- composer */}
+          {/* One <form> in one position in the tree, restyled rather than moved,
+              so the first turn landing does not remount the textarea out from
+              under the caret. */}
           <form
             onSubmit={(e) => {
               e.preventDefault();
               submit();
             }}
-            className="sticky bottom-0 mt-6 bg-bg pb-2 pt-3"
+            className={cn(
+              "bg-bg",
+              empty ? "py-4" : "sticky bottom-0 mt-6 pb-2 pt-3",
+            )}
           >
             {/* §4.3 tier 2. Above the composer, no focus steal, dismissible. */}
             <PiiStrip
@@ -586,35 +642,46 @@ function Workbench() {
               }
             />
 
-            <label htmlFor="composer" className="sr-only">
-              Message
-            </label>
-            <textarea
-              id="composer"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  submit();
-                }
-              }}
-              rows={2}
-              placeholder="Say something…"
-              disabled={!chatId || sending}
-              // 16px minimum, or iOS zooms the viewport on focus (§5).
-              className="w-full resize-none rounded-input border border-outline-strong bg-raised p-3 text-body-md text-ink-invert placeholder:text-ink-invert-muted disabled:opacity-50"
-            />
+            {/* One surface, not two. The textarea and its controls used to be
+                separate boxes with the page background running between them,
+                which on #F2F2F2 read as two unrelated widgets; a single white
+                card with a visible edge is both the convention and the honest
+                grouping — everything inside it applies to the message you are
+                about to send. */}
+            <div className="rounded-card border border-outline-strong bg-surface p-2 shadow-[0_1px_3px_rgb(15_20_25/0.08)] focus-within:border-accent">
+              <label htmlFor="composer" className="sr-only">
+                Message
+              </label>
+              <textarea
+                id="composer"
+                ref={composer}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    submit();
+                  }
+                }}
+                rows={2}
+                placeholder="Say something…"
+                disabled={!chatId || sending}
+                // 16px minimum, or iOS zooms the viewport on focus (§5). No
+                // border or ring of its own — the card around it carries both,
+                // and two nested focus treatments is one too many.
+                className="w-full resize-none bg-transparent px-2 py-1.5 text-body-md text-ink placeholder:text-ink-muted focus-visible:outline-none disabled:opacity-50"
+              />
 
-            <div className="mt-2 flex flex-wrap items-center gap-3">
+              <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
               <label className="flex min-h-11 items-center gap-2 text-body-sm text-ink-invert-muted">
                 <input
                   type="checkbox"
                   checked={ephemeral}
                   onChange={(e) => setEphemeral(e.target.checked)}
                   disabled={highStakes}
-                  className="size-4 accent-[color:var(--stated)]"
+                  className="size-4 accent-[color:var(--accent)]"
                 />
+                <EyeOff className="size-4 shrink-0" aria-hidden="true" />
                 Off the record
               </label>
 
@@ -626,6 +693,7 @@ function Workbench() {
                 // and the provider slugs are long enough to push the composer
                 // past a 390px viewport. The control clips its own label instead.
                 <label className="flex min-w-0 max-w-full items-center gap-2 text-body-sm text-ink-invert-muted">
+                  <Cpu className="size-4 shrink-0" aria-hidden="true" />
                   <span className="shrink-0">Model</span>
                   <select
                     value={provider ?? ""}
@@ -658,6 +726,7 @@ function Workbench() {
                   disabled={ephemeral}
                   className="size-4 accent-[color:var(--danger)]"
                 />
+                <FileCheck2 className="size-4 shrink-0" aria-hidden="true" />
                 High-stakes draft
               </label>
 
@@ -682,36 +751,34 @@ function Workbench() {
                 )}
                 Send
               </Button>
+              </div>
             </div>
           </form>
-        </main>
 
-        <aside className="flex flex-col gap-4">
-          <ScopePanel report={scope} onChanged={() => refreshSidebar(chatId)} />
+          {/* Below the composer, so the first thing on screen is still the thing
+              you type into. Fills it and stops — Send stays the user's act. */}
+          {empty && (
+            <SuggestionCards
+              onPick={(prompt) => {
+                setInput(prompt);
+                composer.current?.focus();
+              }}
+            />
+          )}
+        </div>
+      </main>
 
-          <div className="rounded-card border border-outline p-4">
-            <h2 className="meta mb-2 text-ink-invert-muted">Detection</h2>
-            <p className="text-body-sm text-ink-invert-muted">
-              Pre-send checks run on this device. Open the network tab — nothing
-              leaves before you press Send.
-            </p>
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              <Chip tone={tier === "irreversible" ? "danger" : tier ? "alert" : "neutral"}>
-                {tier ? `${findings.length} found` : "clear"}
-              </Chip>
-              {dismissed.size > 0 && (
-                <Chip>{dismissed.size} silenced this session</Chip>
-              )}
-            </div>
-          </div>
-        </aside>
-      </div>
-
-      {/* The memory workspace, full container width so the graph is not a
-          sidebar novelty (§2). */}
-      <div className="mt-10">
-        <MemoryWorkspace relevance={relevance} />
-      </div>
+      <MemoryPanel
+        open={memoryOpen}
+        overlay={!wide}
+        onToggle={() => setMemoryOpen(!memoryOpen)}
+        scope={scope}
+        onScopeChanged={() => refreshSidebar(chatId)}
+        findings={findings}
+        tier={tier}
+        silenced={dismissed.size}
+        relevance={relevance}
+      />
 
       {/* §4.3 tier 1. Focus-trapped, and it always offers a way through. */}
       <PiiModal

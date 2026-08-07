@@ -13,7 +13,7 @@
 // not reflow the row it sits in.
 
 import { useState } from "react";
-import { EyeOff, Loader2 } from "lucide-react";
+import { EyeOff, Layers, Loader2 } from "lucide-react";
 
 import { api, type ScopeReport } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -38,11 +38,17 @@ export function ScopePanel({
       aria-label="What this session can see"
       className="rounded-card border border-outline bg-raised p-4"
     >
-      <h2 className="meta mb-3 text-ink-invert-muted">This session</h2>
+      <h2 className="meta mb-3 flex items-center gap-1.5 text-ink-invert-muted">
+        <Layers className="size-4" aria-hidden="true" />
+        This session
+      </h2>
 
+      {/* "Can use in this session", not "Can use" — the workspace header counts
+          the whole store, and two unlabelled totals side by side read as a
+          counting bug instead of as scoping working. */}
       <dl className="space-y-1.5">
         <Row
-          label="Can use"
+          label="Can use in this session"
           value={report.visible_persistent + report.visible_session}
         />
         <Row label="— remembered" value={report.visible_persistent} dim />
@@ -63,7 +69,11 @@ export function ScopePanel({
                 className="mt-0.5 size-3.5 shrink-0 text-ink-invert-muted"
               />
               <span>
-                <span className="block text-body-sm text-ink-invert-muted line-through">
+                {/* Strikethrough already says "not available here". Dropping the
+                    contrast as well put this under the 4.5:1 floor for the one
+                    thing on the panel that has to be readable — the memory the
+                    user is being told they cannot reach. */}
+                <span className="block text-body-sm text-ink-invert line-through decoration-[color:var(--danger)] decoration-2">
                   {h.content}
                 </span>
                 <span className="meta text-ink-invert-muted">
@@ -88,7 +98,7 @@ export function ScopePanel({
           "mt-3 border-t pt-3 text-body-sm",
           clean
             ? "border-outline text-ink-invert-muted"
-            : "border-danger text-danger-on-dark",
+            : "border-danger text-danger-on-bg",
         )}
       >
         <span className="meta tnum">
@@ -149,17 +159,17 @@ function Row({
   return (
     <div className="flex items-baseline justify-between gap-2">
       <dt
-        className={cn(
-          "text-body-sm",
-          dim ? "text-ink-invert-muted opacity-70" : "text-ink-invert-muted",
-        )}
+        // `dim` used to add opacity-70, which took --ink-invert-muted from
+        // 4.76:1 to about 3.5:1. Hierarchy is carried by the indent and the em
+        // dash instead; nothing on this panel goes under the floor.
+        className={cn("text-body-sm text-ink-invert-muted", dim && "pl-3")}
       >
         {label}
       </dt>
       <dd
         className={cn(
           "meta tnum",
-          highlight ? "text-stated-on-dark" : "text-ink-invert",
+          highlight ? "text-alert-ink" : "text-ink-invert",
         )}
       >
         {value}

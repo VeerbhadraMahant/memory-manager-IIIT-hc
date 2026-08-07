@@ -29,9 +29,11 @@ export function DialogContent({
 }) {
   return (
     <DialogPrimitive.Portal>
-      {/* Scrim at 60%: strong enough to isolate the foreground, which is the
-          point of a modal — §4.6 blur-purpose, not decoration. */}
-      <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-[color:var(--surface-sunken)]/70 backdrop-blur-[2px]" />
+      {/* Scrim: --ink at 40%, strong enough to isolate the foreground, which is
+          the point of a modal — §4.6 blur-purpose, not decoration. It used to be
+          --surface-sunken, which was the darkest surface in the old palette and
+          is the *lightest* one now; a light wash over a light page dims nothing. */}
+      <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-[color:var(--ink)]/40 backdrop-blur-[2px]" />
       <DialogPrimitive.Content
         className={cn(
           "fixed left-1/2 top-1/2 z-50 w-[calc(100vw-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2",

@@ -14,6 +14,7 @@
 
 import dagre from "@dagrejs/dagre";
 import type { GraphEdge, GraphNode } from "./api";
+import { blockKey, blockLabel } from "./semantics";
 
 // Fixed, not minimum. React Flow measures unsized nodes from the DOM, and
 // fitView runs against whatever it has measured *so far* — which on the first
@@ -30,15 +31,34 @@ export const NODE_H = 108;
 /** §3.4: above ~150 nodes the graph is unreadable. */
 export const NODE_CAP = 150;
 
+export const ROOT_W = 96;
+export const ROOT_H = 96;
+export const CAT_W = 200;
+export const CAT_H = 56;
+
+/** Box for a node of each kind. The layout, React Flow and the component all
+ *  read this, so a node can never be positioned as one size and drawn as
+ *  another — which is how the cards ended up overlapping. */
+export function nodeBox(type: "root" | "category" | "memory") {
+  if (type === "root") return { width: ROOT_W, height: ROOT_H };
+  if (type === "category") return { width: CAT_W, height: CAT_H };
+  return { width: NODE_W, height: NODE_H };
+}
+
 export interface PositionedNode {
   id: string;
   type: "root" | "category" | "memory";
   label?: string;
+  /** Canonical (lowercase) block key. What the API is given. */
   category?: string;
+  /** Display-cased block name. What a human reads. */
+  categoryLabel?: string;
   count?: number;
   memory?: GraphNode;
   expanded?: boolean;
   hasChildren?: boolean;
+  /** A block node with nothing in it. Rendered recessive, never like a full one. */
+  empty?: boolean;
   x: number;
   y: number;
   unconnected: boolean;
@@ -59,33 +79,48 @@ export interface LayoutResult {
   height: number;
 }
 
-export const groupOf = (n: GraphNode) => n.block_name ?? "unclassified";
+/** Canonical block key for a memory. Lowercase, so `work` and `Work` are one
+ *  block rather than two nodes with the same meaning. */
+export const groupOf = (n: GraphNode) => blockKey(n.block_name ?? "unclassified");
 
 export interface HierarchicalNodeData {
   id: string;
   type: "root" | "category" | "memory";
   label: string;
   category?: string;
+  categoryLabel?: string;
   count?: number;
   memory?: GraphNode;
   expanded?: boolean;
   hasChildren?: boolean;
+  empty?: boolean;
 }
 
-export const DEFAULT_CATEGORIES = [
-  "Personal",
-  "Work",
-  "Projects",
-  "Preferences",
-  "Health",
-  "Learning",
-  "General",
-];
+export const catId = (key: string) => `cat_${blockKey(key)}`;
+
+/**
+ * Which block nodes the graph draws, in a stable order.
+ *
+ * Derived from the blocks the backend actually has plus whatever the memories
+ * reference — never from a hardcoded list. A hardcoded list is what put
+ * `Projects 0` and `Preferences 0` next to `work 18`: invented blocks that no
+ * item could ever land in, rendered identically to the real ones.
+ */
+export function categoryKeys(
+  knownBlocks: readonly string[],
+  nodes: readonly GraphNode[],
+): string[] {
+  const keys = new Set<string>();
+  for (const b of knownBlocks) keys.add(blockKey(b));
+  for (const n of nodes) keys.add(groupOf(n));
+  return [...keys].sort();
+}
 
 export function buildHierarchicalGraph(
   nodes: GraphNode[],
   edges: GraphEdge[],
   expandedNodes: Set<string>,
+  knownBlocks: readonly string[] = [],
 ): {
   hNodes: HierarchicalNodeData[];
   hEdges: PositionedEdge[];
@@ -108,38 +143,36 @@ export function buildHierarchicalGraph(
 
   const categoryMap = new Map<string, GraphNode[]>();
   for (const n of nodes) {
-    const cat = groupOf(n);
-    const normalizedCat =
-      cat.toLowerCase() === "unclassified" ? "General" : cat;
-    const existing = categoryMap.get(normalizedCat) ?? [];
+    const key = groupOf(n);
+    const existing = categoryMap.get(key) ?? [];
     existing.push(n);
-    categoryMap.set(normalizedCat, existing);
+    categoryMap.set(key, existing);
   }
 
-  const activeCategories = new Set([
-    ...DEFAULT_CATEGORIES,
-    ...categoryMap.keys(),
-  ]);
-
-  for (const cat of activeCategories) {
-    const catMemories = categoryMap.get(cat) ?? [];
-    const catId = `cat_${cat}`;
-    const catExpanded = expandedNodes.has(catId);
+  for (const key of categoryKeys(knownBlocks, nodes)) {
+    // Sorted so the layout is a function of the data, not of row order (§3.1).
+    const catMemories = [...(categoryMap.get(key) ?? [])].sort(
+      (a, b) => a.content.localeCompare(b.content) || a.id.localeCompare(b.id),
+    );
+    const id = catId(key);
+    const catExpanded = expandedNodes.has(id);
 
     hNodes.push({
-      id: catId,
+      id,
       type: "category",
-      label: cat,
-      category: cat,
+      label: blockLabel(key),
+      category: key,
+      categoryLabel: blockLabel(key),
       count: catMemories.length,
       expanded: catExpanded,
       hasChildren: catMemories.length > 0,
+      empty: catMemories.length === 0,
     });
 
     hEdges.push({
-      id: `e_root_${catId}`,
+      id: `e_root_${id}`,
       source: "root_you",
-      target: catId,
+      target: id,
       relation: "contains",
       provisional: false,
     });
@@ -153,15 +186,16 @@ export function buildHierarchicalGraph(
           id: mem.id,
           type: "memory",
           label: mem.content,
-          category: cat,
+          category: key,
+          categoryLabel: blockLabel(key),
           memory: mem,
           expanded: memExpanded,
           hasChildren: childEdges.length > 0,
         });
 
         hEdges.push({
-          id: `e_${catId}_${mem.id}`,
-          source: catId,
+          id: `e_${id}_${mem.id}`,
+          source: id,
           target: mem.id,
           relation: "item",
           provisional: mem.scope === "session",
@@ -240,6 +274,7 @@ export function layoutGraph(
         memory: n,
         label: n.content,
         category: groupOf(n),
+        categoryLabel: blockLabel(groupOf(n)),
         x: p.x - NODE_W / 2,
         y: p.y - NODE_H / 2,
         unconnected: false,
@@ -263,6 +298,7 @@ export function layoutGraph(
         memory: n,
         label: n.content,
         category: groupOf(n),
+        categoryLabel: blockLabel(groupOf(n)),
         x,
         y,
         unconnected: true,
@@ -283,68 +319,67 @@ export function layoutGraph(
   return { nodes: positioned, edges: formattedEdges, width, height };
 }
 
+/**
+ * §3.1 again, and the reason the previous version had to go: the mindmap was
+ * laid out by hand on a fixed 180px radius around each block, with no notion of
+ * how large a node was. Any block holding more than about five memories stacked
+ * its cards on top of each other, and expanded cards were placed in the same
+ * free space as the block pills they belonged to.
+ *
+ * dagre does the same job with collision built in — it reserves each node's real
+ * box, so children cannot land on their parent or on each other. Input is sorted
+ * before insertion (see `categoryKeys` and the memory sort in
+ * `buildHierarchicalGraph`), which is what makes the result identical on every
+ * render rather than merely usually identical.
+ *
+ * Only the containment edges (root→block, block→memory) drive the layout.
+ * Provenance edges between memories are still drawn, but letting them pull on
+ * the ranking turns the tree into a tangle.
+ */
 export function layoutHierarchicalGraph(
   hNodes: HierarchicalNodeData[],
   hEdges: PositionedEdge[],
 ): LayoutResult {
-  const nodeMap = new Map<string, PositionedNode>();
+  const g = new dagre.graphlib.Graph();
+  g.setGraph({
+    // LR rather than TB: memory cards are 216 wide and 108 tall, so a top-down
+    // tree grows sideways at ~256px per memory and is mostly empty vertically.
+    // Ranking left-to-right spends the cheap axis on the many-nodes rank, which
+    // roughly doubles the usable zoom in the split layout's right-hand pane.
+    rankdir: "LR",
+    // Generous separation: these are cards, not dots, and the complaint the
+    // previous layout earned was collision, not wasted space.
+    nodesep: 28,
+    ranksep: 96,
+    marginx: 48,
+    marginy: 48,
+  });
+  g.setDefaultEdgeLabel(() => ({}));
 
-  const centerX = 600;
-  const centerY = 400;
+  for (const n of hNodes) g.setNode(n.id, nodeBox(n.type));
 
-  const root = hNodes.find((n) => n.type === "root");
-  if (root) {
-    nodeMap.set(root.id, { ...root, x: centerX, y: centerY, unconnected: false });
+  const present = new Set(hNodes.map((n) => n.id));
+  for (const e of hEdges) {
+    if (e.relation !== "contains" && e.relation !== "item") continue;
+    if (present.has(e.source) && present.has(e.target)) g.setEdge(e.source, e.target);
   }
 
-  const categories = hNodes.filter((n) => n.type === "category");
-  const catCount = categories.length;
-  const catRadius = 240;
+  dagre.layout(g);
 
-  categories.forEach((cat, idx) => {
-    const angle = (2 * Math.PI * idx) / Math.max(1, catCount) - Math.PI / 2;
-    const cx = centerX + catRadius * Math.cos(angle);
-    const cy = centerY + catRadius * Math.sin(angle);
-    nodeMap.set(cat.id, { ...cat, x: cx, y: cy, unconnected: false });
-
-    const catMemories = hNodes.filter(
-      (n) => n.type === "memory" && n.category === cat.category,
-    );
-
-    const memCount = catMemories.length;
-    const memRadius = 180;
-    const spreadAngle = Math.min(Math.PI / 1.5, Math.max(Math.PI / 4, memCount * 0.25));
-
-    catMemories.forEach((mem, mIdx) => {
-      const offsetAngle =
-        memCount === 1
-          ? angle
-          : angle - spreadAngle / 2 + (spreadAngle * mIdx) / (memCount - 1);
-      const mx = cx + memRadius * Math.cos(offsetAngle);
-      const my = cy + memRadius * Math.sin(offsetAngle);
-      nodeMap.set(mem.id, { ...mem, x: mx, y: my, unconnected: false });
-    });
+  let width = 0;
+  let height = 0;
+  const positioned: PositionedNode[] = hNodes.map((n) => {
+    const box = nodeBox(n.type);
+    const p = g.node(n.id);
+    // dagre reports centres; React Flow positions by top-left.
+    const x = p.x - box.width / 2;
+    const y = p.y - box.height / 2;
+    width = Math.max(width, x + box.width);
+    height = Math.max(height, y + box.height);
+    return { ...n, x, y, unconnected: false };
   });
 
-  const positioned = Array.from(nodeMap.values());
-
-  let minX = Infinity,
-    minY = Infinity,
-    maxX = -Infinity,
-    maxY = -Infinity;
-  positioned.forEach((n) => {
-    minX = Math.min(minX, n.x - 120);
-    minY = Math.min(minY, n.y - 60);
-    maxX = Math.max(maxX, n.x + 120);
-    maxY = Math.max(maxY, n.y + 60);
-  });
-
-  return {
-    nodes: positioned,
-    edges: hEdges,
-    width: Math.max(1200, maxX - minX),
-    height: Math.max(800, maxY - minY),
-  };
+  return { nodes: positioned, edges: hEdges, width, height };
 }
 
 export function adjacency(edges: GraphEdge[]): Map<string, string[]> {

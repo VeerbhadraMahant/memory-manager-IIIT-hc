@@ -14,6 +14,14 @@
 //   3. No hover-only actions       → nothing here has an onMouseEnter handler
 //   4. Node cap at ~150            → NODE_CAP, plus the backend's own cap
 //   5. prefers-reduced-motion      → globals.css blanket override + fitView flag
+//
+// Two rules this file previously broke, both now enforced here rather than
+// remembered: §7 forbids raw hex in components (the panels below spend tokens,
+// and the panel that sits on a dark surface passes `onLight={false}` so its
+// controls are not dark ink on a dark card), and CLAUDE.md's honesty constraint
+// forbids controls that only look like they do something — the inspector's
+// merge/split/summary buttons announced a notice and changed nothing, so they
+// are gone rather than demoed.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -29,22 +37,12 @@ import {
 } from "@xyflow/react";
 import {
   CheckSquare,
-  Edit3,
-  FileText,
-  Filter,
-  GitBranch,
-  GitMerge,
-  History,
-  Info,
   Layers,
   Maximize2,
   Minimize2,
-  MessageSquare,
   Network,
-  PlusCircle,
   Search,
   Sparkles,
-  Square,
   Trash2,
   X,
 } from "lucide-react";
@@ -53,14 +51,20 @@ import type { GraphNode, MemoryItem, ProvenanceGraph } from "@/lib/api";
 import { useMemoryStore } from "@/lib/memory-store";
 import {
   NODE_CAP,
-  NODE_H,
-  NODE_W,
   adjacency,
   buildHierarchicalGraph,
+  catId,
+  categoryKeys,
   layoutGraph,
   layoutHierarchicalGraph,
+  nodeBox,
 } from "@/lib/graph-layout";
-import { RELATION_LABEL, STATUS_CHIP, describeMemory } from "@/lib/semantics";
+import {
+  RELATION_LABEL,
+  STATUS_CHIP,
+  blockLabel,
+  describeMemory,
+} from "@/lib/semantics";
 import { MemoryActionBar, MemorySummary } from "@/components/MemoryActionBar";
 import {
   CategoryNode,
@@ -68,6 +72,7 @@ import {
   RootNode,
   type MemoryNodeData,
 } from "@/components/MemoryNode";
+import { Button } from "@/components/ui/button";
 import { Chip } from "@/components/ui/chip";
 import { cn } from "@/lib/utils";
 
@@ -116,15 +121,15 @@ function GraphInner({
   relevance: Map<string, number> | null;
   onRequestDelete: (item: MemoryItem) => void;
 }) {
-  const { graph, items } = useMemoryStore();
+  const { graph, items, blocks } = useMemoryStore();
   const reduced = usePrefersReducedMotion();
-  const { setViewport, fitBounds } = useReactFlow();
+  const { fitView, fitBounds } = useReactFlow();
   const canvas = useRef<HTMLDivElement>(null);
 
-  // Graph modes: "hierarchical" (interactive Mindmap) vs "provenance" (DAG layout)
+  // Graph modes: "hierarchical" (blocks and their contents) vs "provenance" (DAG).
   const [viewMode, setViewMode] = useState<"hierarchical" | "provenance">("hierarchical");
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(
-    () => new Set(["root_you", "cat_Personal", "cat_Work", "cat_Projects", "cat_General"]),
+    () => new Set(["root_you"]),
   );
 
   const [searchQuery, setSearchQuery] = useState("");
@@ -132,36 +137,50 @@ function GraphInner({
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; id: string } | null>(null);
   const [multiSelectMode, setMultiSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [actionNotice, setActionNotice] = useState<string | null>(null);
 
   const source = useMemo(() => graph?.nodes ?? [], [graph]);
   const rawEdges = useMemo(() => graph?.edges ?? [], [graph]);
   const capped = source.length > NODE_CAP;
   const visible = useMemo(() => source.slice(0, NODE_CAP), [source]);
 
-  // Toggle node expansion
+  // Block nodes come from the blocks the backend actually has, never from a
+  // hardcoded list — that list is what put `Projects 0` beside `work 18`.
+  const categoryIds = useMemo(
+    () => categoryKeys(blocks, visible).map(catId),
+    [blocks, visible],
+  );
+
+  // Blocks start open once, so the first paint shows what is remembered rather
+  // than a single dot. Seeded once, not on every blocks change, or collapsing a
+  // block would reopen itself.
+  const seeded = useRef(false);
+  useEffect(() => {
+    if (seeded.current || categoryIds.length === 0) return;
+    seeded.current = true;
+    setExpandedNodes((prev) => new Set([...prev, ...categoryIds]));
+  }, [categoryIds]);
+
   const toggleExpand = useCallback((id: string) => {
     setExpandedNodes((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
   }, []);
 
-  // Hierarchical graph data
   const hierarchicalData = useMemo(() => {
-    const { hNodes, hEdges } = buildHierarchicalGraph(visible, rawEdges, expandedNodes);
+    const { hNodes, hEdges } = buildHierarchicalGraph(
+      visible,
+      rawEdges,
+      expandedNodes,
+      blocks,
+    );
     return layoutHierarchicalGraph(hNodes, hEdges);
-  }, [visible, rawEdges, expandedNodes]);
+  }, [visible, rawEdges, expandedNodes, blocks]);
 
-  // Provenance DAG layout data
   const provenanceLayout = useMemo(() => layoutGraph(visible, rawEdges), [visible, rawEdges]);
 
-  // Select layout based on viewMode
   const layout = viewMode === "hierarchical" ? hierarchicalData : provenanceLayout;
   const neighbours = useMemo(() => adjacency(rawEdges), [rawEdges]);
 
@@ -223,7 +242,6 @@ function GraphInner({
     setContextMenu({ x: e.clientX, y: e.clientY, id });
   }, []);
 
-  // Filter & search matching
   const searchMatches = useMemo(() => {
     if (!searchQuery.trim()) return null;
     const q = searchQuery.toLowerCase();
@@ -236,36 +254,35 @@ function GraphInner({
     return matches;
   }, [searchQuery, visible]);
 
-  // Nodes for React Flow
   const nodes: Node<MemoryNodeData>[] = useMemo(
     () =>
       layout.nodes.map((p) => {
-        const isMem = "memory" in p && p.memory;
-        const memObj = isMem ? p.memory : undefined;
         const id = p.id;
         const isMatch = searchMatches ? searchMatches.has(id) : null;
+        const box = nodeBox(p.type ?? "memory");
 
         return {
           id,
           type: p.type || "memory",
           position: { x: p.x, y: p.y },
-          width: p.type === "root" ? 96 : p.type === "category" ? 160 : NODE_W,
-          height: p.type === "root" ? 96 : p.type === "category" ? 56 : NODE_H,
+          ...box,
           draggable: false,
           focusable: false,
           data: {
             id,
             label: p.label,
             category: p.category,
+            categoryLabel: p.categoryLabel,
             count: p.count,
-            memory: memObj,
+            memory: p.memory,
             expanded: p.expanded,
             hasChildren: p.hasChildren,
+            empty: p.empty,
             selected: id === selectedId || selectedIds.has(id),
             doomed: doomed.has(id),
             degraded: degraded.has(id),
             relevance: isMatch !== null ? (isMatch ? 1.0 : 0.1) : relevance?.get(id) ?? null,
-            unconnected: false,
+            unconnected: p.unconnected,
             onToggleExpand: toggleExpand,
             onActivate: handleActivateNode,
             onDoubleClick: (nodeId: string) => setInspectorId(nodeId),
@@ -289,36 +306,43 @@ function GraphInner({
     ],
   );
 
-  // Edges for React Flow
   const edges: Edge[] = useMemo(
     () =>
       layout.edges.map((e) => {
-        const dying = doomed.has(e.source || (e as any).from_item_id) || doomed.has(e.target || (e as any).to_item_id);
-        const sourceId = e.source || (e as any).from_item_id;
-        const targetId = e.target || (e as any).to_item_id;
-        const isHighlighted = searchMatches && (searchMatches.has(sourceId) || searchMatches.has(targetId));
+        const dying = doomed.has(e.source) || doomed.has(e.target);
+        const isHighlighted =
+          !!searchMatches && (searchMatches.has(e.source) || searchMatches.has(e.target));
+        const stroke = isHighlighted
+          ? "var(--stated)"
+          : dying
+            ? "var(--danger)"
+            : "var(--outline-strong)";
 
         return {
-          id: e.id || `${sourceId}-${targetId}`,
-          source: sourceId,
-          target: targetId,
-          label: e.relation && e.relation !== "contains" && e.relation !== "item" ? RELATION_LABEL[e.relation] || e.relation : undefined,
+          id: e.id,
+          source: e.source,
+          target: e.target,
+          label:
+            e.relation && e.relation !== "contains" && e.relation !== "item"
+              ? RELATION_LABEL[e.relation] ?? e.relation
+              : undefined,
           labelShowBg: true,
-          labelBgStyle: { fill: "#1a1c1c" },
-          labelStyle: { fill: "#C2CEF2", fontSize: 10, fontFamily: "monospace" },
-          animated: e.provisional,
-          markerEnd: {
-            type: MarkerType.ArrowClosed,
-            color: isHighlighted ? "#F77A25" : dying ? "#ef4444" : "#574237",
+          labelBgStyle: { fill: "var(--surface-sunken)" },
+          labelStyle: {
+            fill: "var(--inferred-on-bg)",
+            fontSize: 11,
+            fontFamily: "var(--font-mono)",
           },
+          animated: e.provisional && !reduced,
+          markerEnd: { type: MarkerType.ArrowClosed, color: stroke },
           style: {
-            stroke: isHighlighted ? "#F77A25" : dying ? "#ef4444" : "#574237",
+            stroke,
             strokeWidth: isHighlighted ? 2.5 : dying ? 2 : 1.5,
             strokeDasharray: e.provisional ? "5 5" : undefined,
           },
         };
       }),
-    [layout.edges, doomed, searchMatches],
+    [layout.edges, doomed, searchMatches, reduced],
   );
 
   const [pane, setPane] = useState({ w: 0, h: 0 });
@@ -340,48 +364,35 @@ function GraphInner({
     };
   }, []);
 
+  // React Flow's own fit, not hand-computed viewport maths. The hand-rolled
+  // version centred against the *layout* bounds rather than the measured node
+  // bounds, so the graph sat off-centre whenever the pane resized under it —
+  // which in the split layout it does on every breakpoint.
   const fitted = useRef(false);
   useEffect(() => {
     if (!pane.w || !pane.h || layout.nodes.length === 0) return;
-    const inset = 0.85;
-    const zoom = Math.max(
-      0.25,
-      Math.min(
-        (pane.w * inset) / Math.max(layout.width, 1),
-        (pane.h * inset) / Math.max(layout.height, 1),
-        1,
-      ),
-    );
     const duration = fitted.current && !reduced ? 350 : 0;
     fitted.current = true;
-    setViewport(
-      {
-        x: (pane.w - layout.width * zoom) / 2,
-        y: (pane.h - layout.height * zoom) / 2,
-        zoom,
-      },
-      { duration },
+    // A frame's grace so React Flow has measured the nodes this layout added.
+    const t = setTimeout(
+      () => void fitView({ padding: 0.12, minZoom: 0.2, maxZoom: 1, duration }),
+      0,
     );
-  }, [pane, layout, setViewport, reduced]);
+    return () => clearTimeout(t);
+  }, [pane, layout, fitView, reduced]);
 
-  // Auto-center camera on searched match
   useEffect(() => {
     if (searchMatches && searchMatches.size > 0) {
       const firstMatchId = Array.from(searchMatches)[0];
       const matchNode = layout.nodes.find((n) => n.id === firstMatchId);
       if (matchNode) {
         fitBounds(
-          {
-            x: matchNode.x - 100,
-            y: matchNode.y - 100,
-            width: 400,
-            height: 300,
-          },
-          { duration: 500 },
+          { x: matchNode.x - 100, y: matchNode.y - 100, width: 400, height: 300 },
+          { duration: reduced ? 0 : 500 },
         );
       }
     }
-  }, [searchMatches, layout.nodes, fitBounds]);
+  }, [searchMatches, layout.nodes, fitBounds, reduced]);
 
   const selected = items.find((i) => i.id === selectedId) ?? null;
   const inspectorNode = visible.find((n) => n.id === inspectorId) ?? null;
@@ -392,345 +403,321 @@ function GraphInner({
       className="flex min-h-0 flex-1 flex-col gap-4"
       onClick={() => setContextMenu(null)}
     >
-      {/* Top Interactive Controls Toolbar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#574237] bg-[#303841] p-3 text-white shadow-xl">
-        {/* Search Bar */}
-        <div className="relative flex-1 min-w-[200px] max-w-md">
-          <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-gray-400" />
+      {/* ------------------------------------------------------------ toolbar */}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-card border border-outline bg-raised p-3">
+        <label className="relative min-w-[200px] max-w-md flex-1">
+          <span className="sr-only">Search the memory graph</span>
+          <Search
+            aria-hidden="true"
+            className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-ink-invert-muted"
+          />
           <input
-            type="text"
+            type="search"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search memory graph..."
-            className="w-full rounded-full border border-gray-600 bg-[#1a1c1c] py-1.5 pl-9 pr-8 text-xs text-white placeholder-gray-400 focus:border-[#F77A25] focus:outline-none focus:ring-1 focus:ring-[#F77A25]"
+            placeholder="Search memory graph…"
+            className="min-h-11 w-full rounded-pill border border-outline-strong bg-sunken pl-9 pr-9 text-body-sm text-ink-invert placeholder:text-ink-invert-muted"
           />
           {searchQuery && (
             <button
+              type="button"
               onClick={() => setSearchQuery("")}
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white"
+              className="tap absolute right-0 top-1/2 -translate-y-1/2 text-ink-invert-muted hover:text-ink-invert"
             >
-              <X className="size-3.5" />
+              <span className="sr-only">Clear search</span>
+              <X className="mx-auto size-4" aria-hidden="true" />
             </button>
           )}
-        </div>
+        </label>
 
-        {/* View Mode Toggle */}
-        <div className="flex items-center gap-2">
-          <button
+        {/* Wrapping, because the graph now lives in a 420px panel rather than in
+            half the viewport: unwrapped, these rows scrolled the panel sideways. */}
+        <div role="group" aria-label="Graph layout" className="flex flex-wrap items-center gap-2">
+          <ModeButton
+            active={viewMode === "hierarchical"}
             onClick={() => setViewMode("hierarchical")}
-            className={cn(
-              "flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-mono transition-colors",
-              viewMode === "hierarchical"
-                ? "bg-[#F77A25] text-black font-bold"
-                : "bg-[#1a1c1c] text-gray-300 hover:text-white",
-            )}
+            icon={<Sparkles className="size-4" aria-hidden="true" />}
           >
-            <Sparkles className="size-3.5" />
-            Mindmap
-          </button>
-          <button
+            Blocks
+          </ModeButton>
+          <ModeButton
+            active={viewMode === "provenance"}
             onClick={() => setViewMode("provenance")}
-            className={cn(
-              "flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-mono transition-colors",
-              viewMode === "provenance"
-                ? "bg-[#F77A25] text-black font-bold"
-                : "bg-[#1a1c1c] text-gray-300 hover:text-white",
-            )}
+            icon={<Network className="size-4" aria-hidden="true" />}
           >
-            <Network className="size-3.5" />
-            Provenance DAG
-          </button>
+            Provenance
+          </ModeButton>
         </div>
 
-        {/* Multi-Select & Expansion Controls */}
-        <div className="flex items-center gap-2">
-          <button
+        <div className="flex flex-wrap items-center gap-2">
+          {/* §14: a real Lucide icon with an announced pressed state, not a
+              checkbox glyph that could mean either thing. */}
+          <Button
+            variant={multiSelectMode ? "primary" : "outline"}
+            size="sm"
+            aria-pressed={multiSelectMode}
             onClick={() => {
               setMultiSelectMode((prev) => !prev);
               setSelectedIds(new Set());
             }}
-            className={cn(
-              "flex items-center gap-1.5 rounded-md border border-gray-600 px-2.5 py-1 text-xs font-mono text-gray-300 hover:bg-[#1a1c1c]",
-              multiSelectMode && "border-[#F77A25] text-[#F77A25]",
-            )}
           >
-            {multiSelectMode ? <CheckSquare className="size-3.5" /> : <Square className="size-3.5" />}
-            Multi-Select {selectedIds.size > 0 && `(${selectedIds.size})`}
-          </button>
+            <CheckSquare className="size-4" aria-hidden="true" />
+            Select several
+            {selectedIds.size > 0 && <span className="tnum">({selectedIds.size})</span>}
+          </Button>
 
-          <button
+          <Button
+            variant="outline"
+            size="sm"
             onClick={() =>
               setExpandedNodes(
-                new Set([
-                  "root_you",
-                  "cat_Personal",
-                  "cat_Work",
-                  "cat_Projects",
-                  "cat_Preferences",
-                  "cat_Health",
-                  "cat_Learning",
-                  "cat_General",
-                  ...visible.map((n) => n.id),
-                ]),
+                new Set(["root_you", ...categoryIds, ...visible.map((n) => n.id)]),
               )
             }
-            className="flex items-center gap-1 rounded-md border border-gray-600 bg-[#1a1c1c] px-2.5 py-1 text-xs font-mono text-gray-300 hover:text-white"
           >
-            <Maximize2 className="size-3" /> Expand All
-          </button>
+            <Maximize2 className="size-4" aria-hidden="true" /> Expand all
+          </Button>
 
-          <button
+          <Button
+            variant="outline"
+            size="sm"
             onClick={() => setExpandedNodes(new Set(["root_you"]))}
-            className="flex items-center gap-1 rounded-md border border-gray-600 bg-[#1a1c1c] px-2.5 py-1 text-xs font-mono text-gray-300 hover:text-white"
           >
-            <Minimize2 className="size-3" /> Collapse All
-          </button>
+            <Minimize2 className="size-4" aria-hidden="true" /> Collapse all
+          </Button>
         </div>
       </div>
 
-      {actionNotice && (
-        <div className="rounded-md border border-[#F77A25]/40 bg-[#F77A25]/10 px-4 py-2 text-xs font-mono text-[#F77A25]">
-          {actionNotice}
-        </div>
-      )}
-
-      {/* Main Canvas & Detail Sidebar */}
-      <div className="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row">
-        {/* Canvas Surface */}
-        <div className="relative flex h-[70dvh] min-h-[460px] flex-1 flex-col overflow-hidden rounded-card border border-[#574237] bg-[#303841] shadow-2xl">
+      {/* --------------------------------------------- canvas + detail panel */}
+      <div className="flex min-h-0 flex-1 flex-col gap-4">
+        {/* Stacked, not side by side. In the split layout this whole workspace is
+           half the viewport, and a 380px detail rail beside the canvas left the
+           graph too narrow to read at any usable zoom. */}
+        <div className="relative flex h-[68dvh] min-h-[440px] flex-col overflow-hidden rounded-card border border-outline bg-bg">
           {capped && (
-            <p className="border-b border-[#574237] bg-[#F77A25]/10 px-4 py-2 text-xs font-mono text-[#F77A25]">
-              Showing {NODE_CAP} of {source.length} memories.
+            <p className="meta border-b border-outline bg-alert-dim px-4 py-2 text-alert-ink">
+              Showing <span className="tnum">{NODE_CAP}</span> of{" "}
+              <span className="tnum">{source.length}</span> memories.
             </p>
           )}
 
           <div ref={canvas} className="relative min-h-0 flex-1 cursor-grab active:cursor-grabbing">
-            <ReactFlow
-              nodes={nodes}
-              edges={edges}
-              nodeTypes={nodeTypes}
-              fitViewOptions={{ padding: 0.15 }}
-              nodesDraggable={false}
-              nodesConnectable={false}
-              elementsSelectable={false}
-              proOptions={{ hideAttribution: true }}
-              minZoom={0.15}
-              maxZoom={1.8}
-              onPaneClick={() => {
-                onSelect(null);
-                setInspectorId(null);
-              }}
-              aria-label="Interactive Memory Knowledge Graph"
-            >
-              <Background variant={BackgroundVariant.Dots} gap={24} size={1.2} color="#574237" />
-              <Controls showInteractive={false} />
-            </ReactFlow>
+            {visible.length === 0 ? (
+              <EmptyCanvas />
+            ) : (
+              <ReactFlow
+                nodes={nodes}
+                edges={edges}
+                nodeTypes={nodeTypes}
+                nodesDraggable={false}
+                nodesConnectable={false}
+                elementsSelectable={false}
+                proOptions={{ hideAttribution: true }}
+                minZoom={0.15}
+                maxZoom={1.8}
+                onPaneClick={() => {
+                  onSelect(null);
+                  setInspectorId(null);
+                }}
+                aria-label="Memory graph"
+              >
+                <Background
+                  variant={BackgroundVariant.Dots}
+                  gap={24}
+                  size={1.2}
+                  color="var(--outline-strong)"
+                />
+                <Controls showInteractive={false} />
+              </ReactFlow>
+            )}
           </div>
         </div>
 
-        {/* Selected Node Sidebar */}
-        <aside aria-label="Selected memory details" className="w-full shrink-0 rounded-card border border-[#574237] bg-[#1a1c1c] p-4 text-white shadow-2xl lg:w-96">
+        {/* The dark panel. `onLight={false}` is load-bearing: the shared action
+            bar defaults to its off-white-card styling, which on this surface
+            rendered `Still true`, `Edit` and `Only this chat` as dark ink on a
+            dark card — they read as disabled while Delete stayed visible, which
+            is the emphasis exactly backwards. */}
+        <aside
+          aria-label="Selected memory details"
+          className="w-full rounded-card border border-outline bg-raised p-4"
+        >
           {selected ? (
             <div className="space-y-4">
-              <div className="flex items-center justify-between border-b border-gray-700 pb-2">
-                <span className="font-mono text-xs font-bold text-[#F77A25]">
-                  {selected.block_name || "General"}
+              <div className="flex items-center justify-between gap-2 border-b border-outline pb-2">
+                <span className="meta text-stated-on-bg">
+                  {blockLabel(selected.block_name ?? "unclassified")}
                 </span>
-                <button
-                  onClick={() => setInspectorId(selected.id)}
-                  className="flex items-center gap-1 rounded bg-[#303841] px-2.5 py-1 text-xs font-mono text-[#C2CEF2] hover:bg-gray-700"
-                >
-                  <Layers className="size-3" /> Inspect Node
-                </button>
+                <Button variant="outline" size="sm" onClick={() => setInspectorId(selected.id)}>
+                  <Layers className="size-4" aria-hidden="true" /> Inspect
+                </Button>
               </div>
 
-              <p className="text-sm text-gray-100">{selected.content}</p>
-              <MemorySummary item={selected} />
+              <p className="measure text-body-md text-ink-invert">{selected.content}</p>
+              <MemorySummary item={selected} onLight={false} />
 
-              <div className="border-t border-gray-700 pt-3">
-                <MemoryActionBar item={selected} onRequestDelete={onRequestDelete} />
+              <div className="border-t border-outline pt-3">
+                <MemoryActionBar
+                  item={selected}
+                  onLight={false}
+                  onRequestDelete={onRequestDelete}
+                />
+              </div>
+
+              {/* §3/§6: the graph's edges as sentences, navigable rather than
+                  merely readable. */}
+              <div className="border-t border-outline pt-3">
+                <NodeConnections
+                  node={selected}
+                  graph={graph}
+                  onSelect={(id) => onSelect(id)}
+                />
               </div>
             </div>
           ) : (
-            <div className="space-y-3 p-2">
-              <h3 className="font-mono text-base font-semibold text-white">Interactive Knowledge Graph</h3>
-              <p className="text-xs text-gray-400">
-                • Click <strong>YOU</strong> to expand memory categories.
+            <div className="space-y-2">
+              <h3 className="text-headline-md text-ink-invert">Nothing selected</h3>
+              <p className="text-body-sm text-ink-invert-muted">
+                Click <strong>YOU</strong> to fold the blocks away, a block to open
+                it, or a memory to act on it here. Everything in this panel is also
+                in the list view.
               </p>
-              <p className="text-xs text-gray-400">
-                • Click a category or memory to toggle expansion.
-              </p>
-              <p className="text-xs text-gray-400">
-                • <strong>Double-click</strong> any node to open the Inspector Panel.
-              </p>
-              <p className="text-xs text-gray-400">
-                • <strong>Right-click</strong> a node for memory actions (Edit, Add Child, Merge, Split).
+              <p className="text-body-sm text-ink-invert-muted">
+                Keyboard: Tab reaches every node, Enter selects, arrow keys walk
+                between connected memories.
               </p>
             </div>
           )}
         </aside>
       </div>
 
-      {/* Floating Inspector Panel */}
+      {/* ------------------------------------------------------- inspector */}
       {inspectorNode && (
-        <div className="fixed right-6 top-24 z-50 w-96 rounded-xl border border-[#F77A25]/50 bg-[#303841]/95 p-5 text-white shadow-[0_10px_40px_rgba(0,0,0,0.6)] backdrop-blur-xl">
-          <div className="flex items-center justify-between border-b border-gray-700 pb-3 mb-4">
-            <div className="flex items-center gap-2">
-              <div className="size-3 rounded-full bg-[#F77A25]" />
-              <h3 className="font-mono text-sm font-bold text-white">
-                Inspector: {inspectorNode.block_name || "General"}
-              </h3>
-            </div>
+        <div
+          role="dialog"
+          aria-label={`Inspector: ${inspectorNode.content}`}
+          className="fixed right-6 top-24 z-50 max-h-[70dvh] w-96 overflow-y-auto rounded-card border border-outline-strong bg-raised p-5 shadow-xl"
+        >
+          <div className="mb-4 flex items-center justify-between gap-2 border-b border-outline pb-3">
+            <h3 className="meta text-stated-on-bg">
+              {blockLabel(inspectorNode.block_name ?? "unclassified")}
+            </h3>
             <button
+              type="button"
               onClick={() => setInspectorId(null)}
-              className="text-gray-400 hover:text-white"
+              className="tap text-ink-invert-muted hover:text-ink-invert"
             >
-              <X className="size-4" />
+              <span className="sr-only">Close inspector</span>
+              <X className="mx-auto size-4" aria-hidden="true" />
             </button>
           </div>
 
-          <div className="space-y-3 text-xs">
-            <div>
-              <span className="font-mono text-gray-400">Memory Content</span>
-              <p className="mt-1 rounded bg-[#1a1c1c] p-2.5 text-gray-200">{inspectorNode.content}</p>
-            </div>
+          <div className="space-y-3">
+            <p className="measure rounded-input bg-sunken p-3 text-body-sm text-ink-invert">
+              {inspectorNode.content}
+            </p>
 
-            <div className="grid grid-cols-2 gap-2 font-mono">
-              <div className="rounded bg-[#1a1c1c] p-2">
-                <span className="text-gray-400">Source Type</span>
-                <p className="font-semibold text-[#F77A25]">{inspectorNode.source_type}</p>
-              </div>
-              <div className="rounded bg-[#1a1c1c] p-2">
-                <span className="text-gray-400">Status</span>
-                <p className="font-semibold text-white">{STATUS_CHIP[inspectorNode.status]}</p>
-              </div>
-              <div className="rounded bg-[#1a1c1c] p-2">
-                <span className="text-gray-400">Sensitivity</span>
-                <p className="font-semibold text-[#C2CEF2]">{inspectorNode.sensitivity}</p>
-              </div>
-              <div className="rounded bg-[#1a1c1c] p-2">
-                <span className="text-gray-400">Confidence</span>
-                <p className="font-semibold text-green-400">{Math.round(inspectorNode.confidence * 100)}%</p>
-              </div>
-            </div>
+            <dl className="grid grid-cols-2 gap-2">
+              <Fact label="Source" value={inspectorNode.source_type} />
+              <Fact label="Status" value={STATUS_CHIP[inspectorNode.status]} />
+              <Fact label="Sensitivity" value={inspectorNode.sensitivity} />
+              <Fact
+                label="Confidence"
+                value={`${Math.round(inspectorNode.confidence * 100)}%`}
+              />
+            </dl>
 
-            {/* Quick Actions inside Inspector */}
-            <div className="space-y-2 border-t border-gray-700 pt-3">
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  onClick={() => {
-                    setActionNotice(`Edit content triggered for node ${inspectorNode.id}`);
-                    setTimeout(() => setActionNotice(null), 3000);
-                  }}
-                  className="flex items-center justify-center gap-1.5 rounded border border-gray-600 bg-[#1a1c1c] py-2 font-mono text-xs hover:border-[#F77A25]"
-                >
-                  <Edit3 className="size-3.5" /> Edit Content
-                </button>
-                <button
-                  onClick={() => {
-                    setActionNotice(`Add Child triggered for node ${inspectorNode.id}`);
-                    setTimeout(() => setActionNotice(null), 3000);
-                  }}
-                  className="flex items-center justify-center gap-1.5 rounded border border-gray-600 bg-[#1a1c1c] py-2 font-mono text-xs hover:border-[#F77A25]"
-                >
-                  <PlusCircle className="size-3.5" /> Add Child
-                </button>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  onClick={() => {
-                    setActionNotice(`Merge branch initiated for node ${inspectorNode.id}`);
-                    setTimeout(() => setActionNotice(null), 3000);
-                  }}
-                  className="flex items-center justify-center gap-1.5 rounded border border-gray-600 bg-[#1a1c1c] py-2 font-mono text-xs hover:border-[#F77A25]"
-                >
-                  <GitMerge className="size-3.5" /> Merge
-                </button>
-                <button
-                  onClick={() => {
-                    setActionNotice(`Split memory initiated for node ${inspectorNode.id}`);
-                    setTimeout(() => setActionNotice(null), 3000);
-                  }}
-                  className="flex items-center justify-center gap-1.5 rounded border border-gray-600 bg-[#1a1c1c] py-2 font-mono text-xs hover:border-[#F77A25]"
-                >
-                  <GitBranch className="size-3.5" /> Split
-                </button>
-              </div>
-
-              {inspectorItem && (
-                <button
-                  onClick={() => {
-                    onRequestDelete(inspectorItem);
+            {/* The same action bar again, rather than a second set of buttons
+                that would have to be kept in step with it (§2). */}
+            {inspectorItem && (
+              <div className="border-t border-outline pt-3">
+                <MemoryActionBar
+                  item={inspectorItem}
+                  onLight={false}
+                  compact
+                  onRequestDelete={(it) => {
+                    onRequestDelete(it);
                     setInspectorId(null);
                   }}
-                  className="flex w-full items-center justify-center gap-1.5 rounded border border-red-500/50 bg-red-500/10 py-2 font-mono text-xs text-red-400 hover:bg-red-500/20"
-                >
-                  <Trash2 className="size-3.5" /> Prune Branch / Delete
-                </button>
-              )}
-            </div>
+                />
+              </div>
+            )}
           </div>
         </div>
       )}
 
-      {/* Floating Right-Click Context Menu */}
+      {/* -------------------------------------------------- context menu */}
       {contextMenu && (
         <div
+          role="menu"
           style={{ top: contextMenu.y, left: contextMenu.x }}
-          className="fixed z-50 w-48 rounded-lg border border-[#F77A25]/40 bg-[#303841] p-1.5 text-xs text-white shadow-2xl backdrop-blur-xl"
+          className="fixed z-50 w-52 rounded-card border border-outline-strong bg-raised p-1.5 shadow-xl"
         >
           <button
+            type="button"
+            role="menuitem"
             onClick={() => {
               setInspectorId(contextMenu.id);
               setContextMenu(null);
             }}
-            className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left font-mono hover:bg-[#F77A25] hover:text-black"
+            className="tap flex w-full items-center gap-2 rounded-input px-2.5 text-left text-body-sm text-ink-invert hover:bg-sunken"
           >
-            <Layers className="size-3.5" /> Inspect Node
+            <Layers className="size-4" aria-hidden="true" /> Inspect
           </button>
-          <button
-            onClick={() => {
-              setActionNotice(`Edit requested for node ${contextMenu.id}`);
-              setContextMenu(null);
-              setTimeout(() => setActionNotice(null), 3000);
-            }}
-            className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left font-mono hover:bg-[#F77A25] hover:text-black"
-          >
-            <Edit3 className="size-3.5" /> Edit Memory
-          </button>
-          <button
-            onClick={() => {
-              setActionNotice(`Add Child requested for node ${contextMenu.id}`);
-              setContextMenu(null);
-              setTimeout(() => setActionNotice(null), 3000);
-            }}
-            className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left font-mono hover:bg-[#F77A25] hover:text-black"
-          >
-            <PlusCircle className="size-3.5" /> Add Child Node
-          </button>
-          <button
-            onClick={() => {
-              setActionNotice(`Summary generated for node ${contextMenu.id}`);
-              setContextMenu(null);
-              setTimeout(() => setActionNotice(null), 3000);
-            }}
-            className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left font-mono hover:bg-[#F77A25] hover:text-black"
-          >
-            <FileText className="size-3.5" /> Generate Summary
-          </button>
-          <button
-            onClick={() => {
-              setActionNotice(`History trace opened for node ${contextMenu.id}`);
-              setContextMenu(null);
-              setTimeout(() => setActionNotice(null), 3000);
-            }}
-            className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left font-mono hover:bg-[#F77A25] hover:text-black"
-          >
-            <History className="size-3.5" /> View History
-          </button>
+          {items.some((i) => i.id === contextMenu.id) && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                const it = items.find((i) => i.id === contextMenu.id);
+                setContextMenu(null);
+                if (it) onRequestDelete(it);
+              }}
+              className="tap flex w-full items-center gap-2 rounded-input px-2.5 text-left text-body-sm text-danger-on-bg hover:bg-danger-dim"
+            >
+              <Trash2 className="size-4" aria-hidden="true" /> Delete…
+            </button>
+          )}
         </div>
       )}
+    </div>
+  );
+}
+
+function ModeButton({
+  active,
+  onClick,
+  icon,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={onClick}
+      className={cn(
+        "meta inline-flex min-h-11 items-center gap-1.5 rounded-pill px-3 ring-1 transition-colors duration-[var(--motion-micro)]",
+        active
+          ? "bg-accent text-white ring-accent"
+          : "bg-sunken text-ink-invert-muted ring-outline hover:text-ink-invert",
+      )}
+    >
+      {icon}
+      {children}
+    </button>
+  );
+}
+
+function Fact({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-input bg-sunken p-2">
+      <dt className="meta text-ink-invert-muted">{label}</dt>
+      <dd className="meta mt-0.5 text-ink-invert">{value}</dd>
     </div>
   );
 }
@@ -738,16 +725,16 @@ function GraphInner({
 function EmptyCanvas() {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
-      <Network className="size-8 text-gray-500" aria-hidden="true" />
-      <p className="text-base text-gray-200">No memories to draw yet.</p>
-      <p className="max-w-sm text-xs text-gray-400">
-        Say something in the conversation and keep what comes back. Both views fill up together.
+      <Network className="size-8 text-ink-invert-muted" aria-hidden="true" />
+      <p className="text-body-md text-ink-invert">No memories to draw yet.</p>
+      <p className="measure text-body-sm text-ink-invert-muted">
+        Say something in the conversation and keep what comes back. Both views fill
+        up together.
       </p>
-      <Chip>Interactive Mindmap</Chip>
+      <Chip>Blocks</Chip>
     </div>
   );
 }
-
 
 /** The graph's edges for one node, as sentences. §3/§6: any graph capability
  *  must have a lossless textual equivalent, and this is that equivalent —
@@ -757,7 +744,7 @@ function NodeConnections({
   graph,
   onSelect,
 }: {
-  node: GraphNode;
+  node: GraphNode | MemoryItem;
   graph: ProvenanceGraph | null;
   onSelect: (id: string) => void;
 }) {
@@ -773,7 +760,7 @@ function NodeConnections({
 
   if (links.length === 0) {
     return (
-      <p className="text-body-sm text-ink-muted">
+      <p className="text-body-sm text-ink-invert-muted">
         Not connected to any other memory.
       </p>
     );
@@ -781,16 +768,19 @@ function NodeConnections({
 
   return (
     <div>
-      <h4 className="meta text-ink-muted">Connected to {links.length}</h4>
+      <h4 className="meta text-ink-invert-muted">
+        Connected to <span className="tnum">{links.length}</span>
+      </h4>
       <ul className="mt-1.5 space-y-1">
         {links.map(({ other, relation, outgoing }) => (
           <li key={`${other.id}-${relation}-${outgoing}`}>
             <button
+              type="button"
               onClick={() => onSelect(other.id)}
-              className="on-surface w-full rounded-input px-2 py-2 text-left text-body-sm text-ink hover:bg-black/5"
+              className="w-full rounded-input px-2 py-2 text-left text-body-sm text-ink-invert hover:bg-sunken"
               aria-label={`${outgoing ? "This" : other.content} ${RELATION_LABEL[relation] ?? relation} ${outgoing ? other.content : "this"}. ${describeMemory(other)}`}
             >
-              <span className="meta mr-2 text-ink-muted">
+              <span className="meta mr-2 text-ink-invert-muted">
                 {outgoing ? "→" : "←"} {RELATION_LABEL[relation] ?? relation}
               </span>
               {other.content}

@@ -212,6 +212,17 @@ class TurnRequest(BaseModel):
     # P3: excludes this turn from extraction entirely, not from the UI.
     session_ephemeral: bool = False
 
+    # D32: which chat provider answers this turn. Absent means the server's
+    # default; an unknown value falls back rather than failing the turn, and the
+    # response reports which one actually ran.
+    provider: str | None = None
+
+    # Pin the turn to specific memories instead of retrieving. Both of these
+    # were read by chats.chat_turn but never declared here, so every turn raised
+    # AttributeError on TurnRequest and the conversation could not proceed —
+    # which is why no review card or attribution chip ever rendered.
+    selected_memory_ids: list[UUID] | None = None
+
 
 class UsedMemory(BaseModel):
     """A memory item that was injected into the prompt for this response.

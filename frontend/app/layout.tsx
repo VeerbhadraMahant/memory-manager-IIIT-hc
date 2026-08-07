@@ -30,15 +30,15 @@ export const metadata: Metadata = {
   description: "Memory the user negotiates, rather than memory that accumulates silently.",
 };
 
-// The app is Dark Slate everywhere; there is no light theme to switch to, so the
+// The app is light everywhere (D45); there is no dark theme to switch to, so the
 // colour-scheme is declared rather than inherited — otherwise the browser paints
-// form controls and scrollbars for a light page that does not exist.
+// form controls and scrollbars for a dark page that does not exist.
 export const viewport = {
-  colorScheme: "dark",
+  colorScheme: "light",
   // The one literal hex in the app, and unavoidable: browser chrome is painted
   // before any stylesheet, so this cannot read `var(--bg)`. It must be kept
   // equal to --bg in globals.css by hand.
-  themeColor: "#303841",
+  themeColor: "#F2F2F2",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

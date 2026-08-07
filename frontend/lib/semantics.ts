@@ -24,7 +24,7 @@ export interface SourceEncoding {
   /** Text colour on a light card. */
   ink: string;
   /** Text colour on the dark app background. */
-  onDark: string;
+  onBg: string;
   /** Tailwind border utility — solid for stated, dashed for inferred. */
   border: string;
   /** Glyph shape: filled dot vs. hollow ring. Rendered by <SourceGlyph>. */
@@ -38,7 +38,7 @@ export const SOURCE: Record<SourceType, SourceEncoding> = {
     label: "STATED",
     fill: "var(--stated)",
     ink: "var(--stated-ink)",
-    onDark: "var(--stated-on-dark)",
+    onBg: "var(--stated-on-bg)",
     border: "border-solid",
     glyph: "dot",
     description: "you said this",
@@ -47,7 +47,7 @@ export const SOURCE: Record<SourceType, SourceEncoding> = {
     label: "INFERRED",
     fill: "var(--inferred)",
     ink: "var(--inferred-ink)",
-    onDark: "var(--inferred-on-dark)",
+    onBg: "var(--inferred-on-bg)",
     border: "border-dashed",
     glyph: "ring",
     description: "the model worked this out",
@@ -95,6 +95,23 @@ export const FALLBACK_BLOCKS = [
   "family",
   "learning",
 ];
+
+/**
+ * Block names are stored lowercase (migration 002) and were being rendered
+ * verbatim in some views and title-cased in others, which put `work` and `Work`
+ * on screen at the same time and read as two blocks. One convention, applied in
+ * the display layer only: the key is what goes to the API, the label is what a
+ * human sees. Never derive one from a hardcoded list — the blocks table is the
+ * only source of truth for which blocks exist.
+ */
+export const blockKey = (name: string) => name.trim().toLowerCase();
+
+export const blockLabel = (name: string) =>
+  blockKey(name)
+    .split(/[\s_-]+/)
+    .filter(Boolean)
+    .map((w) => w[0].toUpperCase() + w.slice(1))
+    .join(" ") || "Unclassified";
 
 /** Matches the backend's `stale_after_days` default. A guess tuned for a demo,
  *  not a finding — PHASES.md says so and so does the tooltip copy. */

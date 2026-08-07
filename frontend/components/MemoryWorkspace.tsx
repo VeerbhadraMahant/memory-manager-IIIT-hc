@@ -17,8 +17,8 @@
 // It deliberately does not own any memory *action*. Those all live in
 // useMemoryActions(), which both views call directly.
 
-import { useCallback, useState, useSyncExternalStore } from "react";
-import { List, Network } from "lucide-react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { ExternalLink, List, Network } from "lucide-react";
 
 import type { MemoryItem, ProvenanceGraph } from "@/lib/api";
 import { useMemoryStore } from "@/lib/memory-store";
@@ -55,8 +55,19 @@ export function MemoryWorkspace({
   /** §4.4: which memories shaped the turn currently in focus, and how strongly.
    *  Drives the graph's glow tiers. Null means "not highlighting anything". */
   relevance,
+  /** Opens straight to this view without touching the stored preference, so the
+   *  full-page graph route (app/graph) can start on Graph without changing what
+   *  the side panel shows next time — only an explicit tab click writes to
+   *  localStorage (`choose`, below). */
+  initialView,
+  /** Hides the "open in a new tab" link. Set on the full-page route itself —
+   *  opening a new tab from the page that already *is* the new tab is a no-op
+   *  wearing a link. */
+  hideExpandLink,
 }: {
   relevance: Map<string, number> | null;
+  initialView?: View;
+  hideExpandLink?: boolean;
 }) {
   const { items, loading } = useMemoryStore();
   const stored = useSyncExternalStore(
@@ -66,7 +77,7 @@ export function MemoryWorkspace({
   );
   // Local override so a click is instant; the stored value is the fallback and
   // the cross-tab source.
-  const [override, setOverride] = useState<View | null>(null);
+  const [override, setOverride] = useState<View | null>(initialView ?? null);
   const view = override ?? stored;
 
   const [requestedId, setRequestedId] = useState<string | null>(null);
@@ -85,6 +96,20 @@ export function MemoryWorkspace({
     window.localStorage.setItem(STORAGE_KEY, next);
   }, []);
 
+  // §4.4: a chip's "show in graph" opens the collapsed panel (page.tsx) — but
+  // opening it is not the same as *showing* anything if the stored preference
+  // is List, which was the discovered failure: the panel opened, the highlight
+  // was set, and the graph glow had no canvas to render on. The click accomplishes
+  // nothing the user can see. The ref catches the null→set transition rather than
+  // every relevance change, so clearing and re-setting the same highlight while
+  // already on the graph does not fight a manual switch back to List.
+  const wasHighlighting = useRef(false);
+  useEffect(() => {
+    const isHighlighting = relevance !== null;
+    if (isHighlighting && !wasHighlighting.current) choose("graph");
+    wasHighlighting.current = isHighlighting;
+  }, [relevance, choose]);
+
   return (
     <section
       id="memory-workspace"
@@ -94,41 +119,75 @@ export function MemoryWorkspace({
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-headline-lg text-ink-invert">Memory</h2>
+          {/* Scoped explicitly. This number counts every memory in the store;
+              the session panel counts the subset this chat can reach, and the
+              two disagreeing without labels read as a bug rather than as the
+              point of session scoping. */}
           <p className="text-body-sm text-ink-invert-muted">
             <span className="tnum">{items.length}</span>{" "}
-            {items.length === 1 ? "thing" : "things"} it can use. Both views do
-            everything; pick whichever answers your question.
+            {items.length === 1 ? "memory" : "memories"} in total, across every
+            session. Both views do everything; pick whichever answers your
+            question.
           </p>
         </div>
 
-        {/* Prominent, persistent, and a real tablist — arrow keys move between
-            tabs, which is the pattern a screen-reader user will expect from
-            something announced as one. */}
-        <div
-          role="tablist"
-          aria-label="Memory view"
-          className="inline-flex rounded-pill border border-outline bg-raised p-1"
-          onKeyDown={(e) => {
-            if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
-              e.preventDefault();
-              choose(view === "list" ? "graph" : "list");
-            }
-          }}
-        >
-          <ViewTab
-            active={view === "list"}
-            onClick={() => choose("list")}
-            icon={<List className="size-4" aria-hidden="true" />}
+        <div className="flex items-center gap-2">
+          {/* Prominent, persistent, and a real tablist — arrow keys move between
+              tabs, which is the pattern a screen-reader user will expect from
+              something announced as one. */}
+          <div
+            role="tablist"
+            aria-label="Memory view"
+            className="inline-flex rounded-pill border border-outline bg-raised p-1"
+            onKeyDown={(e) => {
+              if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+                e.preventDefault();
+                choose(view === "list" ? "graph" : "list");
+              }
+            }}
           >
-            List
-          </ViewTab>
-          <ViewTab
-            active={view === "graph"}
-            onClick={() => choose("graph")}
-            icon={<Network className="size-4" aria-hidden="true" />}
-          >
-            Graph
-          </ViewTab>
+            <ViewTab
+              active={view === "list"}
+              onClick={() => choose("list")}
+              icon={<List className="size-4" aria-hidden="true" />}
+            >
+              List
+            </ViewTab>
+            <ViewTab
+              active={view === "graph"}
+              onClick={() => choose("graph")}
+              icon={<Network className="size-4" aria-hidden="true" />}
+            >
+              Graph
+            </ViewTab>
+          </div>
+
+          {/* Escape hatch to the full-page graph explorer. A real anchor with
+              target="_blank", not a router push: the graph is exploratory and the
+              conversation underneath should keep running rather than being
+              navigated away from. List stays reachable on the new tab too — see
+              app/graph/page.tsx — so this is a bigger canvas for the same coequal
+              view, not a graph-only surface (principle 6). */}
+          {!hideExpandLink && (
+            <a
+              href="/graph"
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Open the memory graph in a new tab"
+              // The visible text below and aria-label say the same thing on
+              // purpose (not a redundancy to trim): checked directly against
+              // Chrome's accessibility tree, a link whose text is split across
+              // a bare text node plus a sr-only <span> gets an empty computed
+              // name here and falls back to `title` — dropping "opens in a new
+              // tab", the one thing a screen-reader user most needs warned
+              // about before this link fires. aria-label is what actually wins.
+              aria-label="View memory graph — opens in a new tab"
+              className="tap inline-flex items-center gap-1.5 rounded-input px-2 text-body-sm text-ink-invert-muted hover:bg-raised hover:text-ink-invert"
+            >
+              <ExternalLink className="size-4 shrink-0" aria-hidden="true" />
+              View memory graph
+            </a>
+          )}
         </div>
       </header>
 
@@ -205,7 +264,7 @@ function ViewTab({
       className={cn(
         "inline-flex min-h-11 items-center gap-2 rounded-pill px-4 text-body-sm font-medium transition-colors duration-[var(--motion-micro)]",
         active
-          ? "bg-stated text-[color:var(--surface-sunken)]"
+          ? "bg-accent text-white"
           : "text-ink-invert-muted hover:text-ink-invert",
       )}
     >

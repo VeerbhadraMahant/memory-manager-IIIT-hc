@@ -160,9 +160,9 @@ export function PiiStrip({
   return (
     <div
       role="status"
-      className="anim-enter mb-2 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-input border border-stated/40 bg-stated-dim px-3 py-2"
+      className="anim-enter mb-2 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-input border border-alert/40 bg-alert-dim px-3 py-2"
     >
-      <span className="meta text-stated-on-dark">
+      <span className="meta text-alert-ink">
         {categories.map((c) => CATEGORY_LABEL[c]).join(", ")}
       </span>
       <span className="text-body-sm text-ink-invert-muted">
@@ -174,7 +174,7 @@ export function PiiStrip({
           type="checkbox"
           checked={sessionOnly}
           onChange={(e) => onSessionOnly(e.target.checked)}
-          className="size-4 accent-[color:var(--stated)]"
+          className="size-4 accent-[color:var(--accent)]"
         />
         Keep to this session
       </label>

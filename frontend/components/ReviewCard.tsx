@@ -32,7 +32,7 @@ import {
   type Sensitivity,
 } from "@/lib/api";
 import { useMemoryActions, useMemoryStore } from "@/lib/memory-store";
-import { FALLBACK_BLOCKS, STATUSES, STATUS_CHIP } from "@/lib/semantics";
+import { FALLBACK_BLOCKS, STATUSES, STATUS_CHIP, blockLabel } from "@/lib/semantics";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Chip, SelectChip, SourceChip } from "@/components/ui/chip";
@@ -210,7 +210,7 @@ function PendingItem({
   // The review card cannot wait on a blocks fetch mid-conversation, so it uses
   // whatever the store has and falls back to the seeded names.
   const blockOptions = (blocks.length ? blocks : FALLBACK_BLOCKS).map(
-    (b) => [b, b] as const,
+    (b) => [b, blockLabel(b)] as const,
   );
 
   return (

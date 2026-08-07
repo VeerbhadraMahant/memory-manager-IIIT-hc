@@ -17,19 +17,24 @@ import type { SourceType } from "@/lib/api";
 
 type Tone = "neutral" | "stated" | "inferred" | "alert" | "danger";
 
-const TONE_ON_DARK: Record<Tone, string> = {
-  neutral: "bg-white/8 text-ink-invert-muted ring-outline",
-  stated: "bg-stated-dim text-stated-on-dark ring-stated/40",
-  inferred: "bg-inferred-dim text-inferred-on-dark ring-inferred/40",
-  alert: "bg-stated-dim text-stated-on-dark ring-stated/60",
-  danger: "bg-danger-dim text-danger-on-dark ring-danger/50",
+// Two maps, one per surface family. They are near-identical now that the app is
+// light throughout — the pair is kept because it is what makes the fill/text
+// split enforceable, and `alert` is the reason it still earns its place: it used
+// to borrow the stated tokens, which on this palette would paint "not confirmed
+// recently" green. It has its own amber now.
+const TONE_ON_BG: Record<Tone, string> = {
+  neutral: "bg-black/5 text-ink-invert-muted ring-outline",
+  stated: "bg-stated-dim text-stated-on-bg ring-stated/40",
+  inferred: "bg-inferred-dim text-inferred-on-bg ring-inferred/50",
+  alert: "bg-alert-dim text-alert-ink ring-alert/50",
+  danger: "bg-danger-dim text-danger-on-bg ring-danger/50",
 };
 
 const TONE_ON_LIGHT: Record<Tone, string> = {
   neutral: "bg-black/5 text-ink-muted ring-outline-ink",
   stated: "bg-stated-dim text-stated-ink ring-stated/40",
   inferred: "bg-inferred-dim text-inferred-ink ring-inferred/50",
-  alert: "bg-stated-dim text-stated-ink ring-stated/60",
+  alert: "bg-alert-dim text-alert-ink ring-alert/50",
   danger: "bg-danger-dim text-danger-ink ring-danger/50",
 };
 
@@ -48,7 +53,7 @@ export function Chip({
     <span
       className={cn(
         "meta inline-flex items-center gap-1 rounded-pill px-2 py-1 ring-1",
-        onLight ? TONE_ON_LIGHT[tone] : TONE_ON_DARK[tone],
+        onLight ? TONE_ON_LIGHT[tone] : TONE_ON_BG[tone],
         className,
       )}
     >
@@ -74,7 +79,7 @@ export function SourceGlyph({
   className?: string;
 }) {
   const enc = SOURCE[source];
-  const color = onLight ? enc.ink : enc.onDark;
+  const color = onLight ? enc.ink : enc.onBg;
   return (
     <span
       aria-hidden="true"
@@ -126,7 +131,7 @@ export function SelectChip({
     <span
       className={cn(
         "meta relative inline-flex items-center rounded-pill ring-1",
-        onLight ? TONE_ON_LIGHT[tone] : TONE_ON_DARK[tone],
+        onLight ? TONE_ON_LIGHT[tone] : TONE_ON_BG[tone],
         disabled && "opacity-50",
       )}
     >
@@ -146,7 +151,7 @@ export function SelectChip({
           </option>
         ))}
       </select>
-      <span className="pointer-events-none flex items-center gap-1 px-2 py-1 peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-[color:var(--stated-on-dark)]">
+      <span className="pointer-events-none flex items-center gap-1 px-2 py-1 peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-[color:var(--accent)]">
         {options.find(([v]) => v === value)?.[1] ?? value}
         <ChevronDown className="size-3 opacity-70" aria-hidden="true" />
       </span>

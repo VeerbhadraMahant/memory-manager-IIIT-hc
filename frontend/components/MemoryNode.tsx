@@ -23,15 +23,19 @@ import { AlertTriangle } from "lucide-react";
 import type { GraphNode } from "@/lib/api";
 import { SOURCE, STATUS_CHIP, describeMemory, isStale } from "@/lib/semantics";
 import { cn } from "@/lib/utils";
-import { NODE_H, NODE_W } from "@/lib/graph-layout";
+import { CAT_H, CAT_W, NODE_H, NODE_W, ROOT_H, ROOT_W } from "@/lib/graph-layout";
 
 export interface MemoryNodeData extends Record<string, unknown> {
   memory?: GraphNode;
   label?: string;
   category?: string;
+  categoryLabel?: string;
   count?: number;
   expanded?: boolean;
   hasChildren?: boolean;
+  /** Block with nothing in it — drawn recessive so it cannot be mistaken for a
+   *  populated one (§12 of the fix list; identical treatment was pure noise). */
+  empty?: boolean;
   selected?: boolean;
   doomed?: boolean;
   degraded?: boolean;
@@ -45,7 +49,7 @@ export interface MemoryNodeData extends Record<string, unknown> {
 }
 
 export function RootNode({ data }: NodeProps) {
-  const { label = "YOU", expanded, onActivate, onToggleExpand } = data as MemoryNodeData;
+  const { label = "YOU", expanded, onToggleExpand } = data as MemoryNodeData;
 
   return (
     <>
@@ -53,14 +57,21 @@ export function RootNode({ data }: NodeProps) {
       <div
         role="button"
         tabIndex={0}
+        aria-expanded={expanded}
+        aria-label={`Everything it knows about you. ${expanded ? "Expanded" : "Collapsed"}.`}
         onClick={() => onToggleExpand?.("root_you")}
-        className="flex size-24 cursor-pointer flex-col items-center justify-center rounded-full border-4 border-[#F77A25] bg-[#303841] shadow-[0_0_25px_rgba(247,122,37,0.6)] transition-all duration-300 hover:scale-110 active:scale-95"
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onToggleExpand?.("root_you");
+          }
+        }}
+        style={{ width: ROOT_W, height: ROOT_H }}
+        className="flex cursor-pointer flex-col items-center justify-center rounded-full border-4 border-stated bg-bg transition-transform duration-[var(--motion-state)] hover:scale-105 active:scale-95"
       >
-        <span className="font-mono text-lg font-bold tracking-wider text-[#F77A25]">
-          {label}
-        </span>
-        <span className="mt-0.5 text-[10px] text-gray-400">
-          {expanded ? "Collapse" : "Expand"}
+        <span className="meta text-base font-bold text-stated-on-bg">{label}</span>
+        <span className="meta mt-0.5 text-ink-invert-muted">
+          {expanded ? "collapse" : "expand"}
         </span>
       </div>
       <Handle type="target" position={Position.Top} isConnectable={false} />
@@ -75,6 +86,7 @@ export function CategoryNode({ data }: NodeProps) {
     count = 0,
     expanded,
     hasChildren,
+    empty,
     onToggleExpand,
   } = data as MemoryNodeData & { id: string };
 
@@ -84,24 +96,52 @@ export function CategoryNode({ data }: NodeProps) {
       <div
         role="button"
         tabIndex={0}
+        aria-expanded={hasChildren ? expanded : undefined}
+        aria-label={
+          empty
+            ? `${label} block, empty.`
+            : `${label} block, ${count} ${count === 1 ? "memory" : "memories"}. ${expanded ? "Expanded" : "Collapsed"}.`
+        }
         onClick={() => onToggleExpand?.(id)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onToggleExpand?.(id);
+          }
+        }}
+        style={{ width: CAT_W, height: CAT_H }}
         className={cn(
-          "flex h-14 min-w-[140px] cursor-pointer items-center justify-between gap-3 rounded-full border-2 border-[#C2CEF2] bg-[#1a1c1c] px-4 shadow-[0_0_15px_rgba(194,206,242,0.3)] transition-all duration-300 hover:scale-105 hover:border-[#F77A25]",
-          expanded && "border-[#F77A25] shadow-[0_0_20px_rgba(247,122,37,0.5)]",
+          "flex cursor-pointer items-center justify-between gap-3 rounded-pill border-2 border-inferred bg-sunken px-4",
+          "transition-colors duration-[var(--motion-state)] hover:border-stated",
+          expanded && !empty && "border-stated",
+          // Recessive, not identical: an empty block is a place a memory could
+          // go, not a thing the model knows.
+          empty && "border-dashed border-outline-strong opacity-55",
         )}
       >
-        <div className="flex items-center gap-2">
-          <span className="inline-block size-2.5 rounded-full bg-[#C2CEF2]" />
-          <span className="font-mono text-sm font-semibold text-white">
-            {label}
-          </span>
+        <div className="flex min-w-0 items-center gap-2">
+          <span
+            aria-hidden="true"
+            className={cn(
+              "inline-block size-2.5 shrink-0 rounded-full",
+              empty ? "bg-transparent ring-1 ring-outline-strong" : "bg-inferred",
+            )}
+          />
+          <span className="meta truncate text-ink-invert">{label}</span>
         </div>
-        <div className="flex items-center gap-1">
-          <span className="rounded-full bg-[#303841] px-2 py-0.5 font-mono text-xs text-[#C2CEF2]">
+        <div className="flex shrink-0 items-center gap-1.5">
+          <span
+            className={cn(
+              "meta tnum rounded-pill px-2 py-0.5",
+              empty
+                ? "text-ink-invert-muted"
+                : "bg-raised text-inferred-on-bg",
+            )}
+          >
             {count}
           </span>
           {hasChildren && (
-            <span className="font-mono text-xs text-[#F77A25]">
+            <span aria-hidden="true" className="meta text-stated-on-bg">
               {expanded ? "−" : "+"}
             </span>
           )}
@@ -170,16 +210,16 @@ function MemoryNodeInner({ data }: NodeProps) {
           background: doomed
             ? "var(--danger-dim)"
             : selected
-              ? "#1e2020"
-              : "#121414",
+              ? "var(--surface-raised)"
+              : "var(--surface-sunken)",
           boxShadow: glow,
           opacity: dim ? 0.35 : 1,
         }}
         className={cn(
-          "group relative flex cursor-pointer flex-col gap-1.5 overflow-hidden rounded-card border-2 px-3 py-2 text-left shadow-lg",
+          "group relative flex cursor-pointer flex-col gap-1.5 overflow-hidden rounded-card border-2 px-3 py-2 text-left",
           enc.border,
-          "transition-all duration-300 hover:scale-102 hover:shadow-[0_0_15px_rgba(247,122,37,0.4)]",
-          selected && "ring-2 ring-[#F77A25]",
+          "transition-colors duration-[var(--motion-state)]",
+          selected && "ring-2 ring-[color:var(--stated)]",
           unconnected && !selected && "opacity-90",
         )}
       >
@@ -189,64 +229,41 @@ function MemoryNodeInner({ data }: NodeProps) {
             className="inline-block size-2.5 shrink-0 rounded-full"
             style={
               enc.glyph === "dot"
-                ? { background: selected ? enc.ink : enc.onDark }
-                : { border: `2px solid ${selected ? enc.ink : enc.onDark}` }
+                ? { background: selected ? enc.ink : enc.onBg }
+                : { border: `2px solid ${selected ? enc.ink : enc.onBg}` }
             }
           />
           <span
             className="meta font-mono text-xs font-bold"
-            style={{ color: selected ? enc.ink : enc.onDark }}
+            style={{ color: selected ? enc.ink : enc.onBg }}
           >
             {enc.label}
           </span>
           {(stale || degraded) && (
             <AlertTriangle
               aria-hidden="true"
-              className="ml-auto size-3.5 text-amber-500"
+              className="ml-auto size-3.5 text-[color:var(--danger)]"
             />
           )}
         </div>
 
-        <p
-          className={cn(
-            "line-clamp-2 flex-1 text-body-sm text-gray-100",
-          )}
-        >
+        <p className="line-clamp-2 flex-1 text-body-sm text-ink-invert">
           {memory.content}
         </p>
 
         <div className="flex shrink-0 items-center justify-between gap-x-2 overflow-hidden">
           <span
             className={cn(
-              "meta font-mono text-[10px]",
-              stale ? "text-red-400" : "text-gray-400",
+              "meta truncate",
+              stale ? "text-danger-on-bg" : "text-ink-invert-muted",
             )}
           >
             {STATUS_CHIP[memory.status]}
             {stale && " · stale"}
           </span>
           {memory.scope === "session" && (
-            <span className="meta font-mono text-[9px] text-[#F77A25]">
-              session
-            </span>
+            <span className="meta shrink-0 text-alert-ink">session</span>
           )}
-        </div>
-
-        {/* Hover Tooltip Preview Card */}
-        <div className="pointer-events-none absolute bottom-full left-1/2 mb-2 hidden w-64 -translate-x-1/2 rounded-lg border border-[#F77A25]/40 bg-[#303841]/95 p-3 text-xs text-white shadow-2xl backdrop-blur-md group-hover:block z-50">
-          <div className="flex items-center justify-between border-b border-gray-700 pb-1.5 mb-1.5">
-            <span className="font-mono text-[10px] text-[#F77A25] font-bold">
-              {memory.block_name || "General"}
-            </span>
-            <span className="font-mono text-[9px] text-gray-400">
-              Confidence: {Math.round(memory.confidence * 100)}%
-            </span>
-          </div>
-          <p className="line-clamp-3 text-gray-200">{memory.content}</p>
-          <div className="mt-2 flex items-center justify-between font-mono text-[9px] text-gray-400 border-t border-gray-700/50 pt-1">
-            <span>Status: {STATUS_CHIP[memory.status]}</span>
-            <span>Double-click to Inspect</span>
-          </div>
         </div>
       </div>
 
