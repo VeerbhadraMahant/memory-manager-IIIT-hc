@@ -139,6 +139,32 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 const post = <T,>(path: string, body?: unknown) =>
   req<T>(path, { method: "POST", body: body ? JSON.stringify(body) : undefined });
 
+export interface MemorySubnode {
+  id: string;
+  memory_item_id: string;
+  content: string;
+  confidence: number;
+  category: string | null;
+  created_at: string;
+}
+
+export interface NodeSummaryResponse {
+  memory_item_id: string;
+  title: string;
+  summary: string;
+  key_points: string[];
+  subnode_count: number;
+}
+
+export interface PruneResponse {
+  pruned_count: number;
+  message: string;
+}
+
+export interface RelevanceResponse {
+  scores: Record<string, number>;
+}
+
 export const api = {
   health: () => req<Health>("/health"),
   blocks: () => req<Block[]>("/memory/blocks"),
@@ -155,10 +181,16 @@ export const api = {
   purgeEphemeral: (chatId: string) =>
     post<{ redacted_turns: number }>(`/chats/${chatId}/purge-ephemeral`),
 
-  sendTurn: (chatId: string, content: string, sessionEphemeral: boolean) =>
+  sendTurn: (
+    chatId: string,
+    content: string,
+    sessionEphemeral: boolean,
+    selectedMemoryIds?: string[],
+  ) =>
     post<TurnResponse>(`/chats/${chatId}/message`, {
       content,
       session_ephemeral: sessionEphemeral,
+      selected_memory_ids: selectedMemoryIds && selectedMemoryIds.length > 0 ? selectedMemoryIds : undefined,
     }),
 
   candidates: (chatId: string, messageId: string) =>
@@ -183,6 +215,23 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(patch),
     }),
+
+  // Graph & Subnode API
+  getSubnodes: (itemId: string) => req<MemorySubnode[]>(`/memory/items/${itemId}/subnodes`),
+  createSubnode: (itemId: string, content: string, confidence = 0.9, category?: string) =>
+    post<MemorySubnode>(`/memory/items/${itemId}/subnodes`, { content, confidence, category }),
+  editSubnode: (subnodeId: string, patch: Partial<{ content: string; confidence: number; category: string }>) =>
+    req<MemorySubnode>(`/memory/subnodes/${subnodeId}`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    }),
+  deleteSubnode: (subnodeId: string) =>
+    req<{ status: string; id: string }>(`/memory/subnodes/${subnodeId}`, {
+      method: "DELETE",
+    }),
+  pruneSubnodes: (itemId: string) => post<PruneResponse>(`/memory/items/${itemId}/prune`),
+  getNodeSummary: (itemId: string) => req<NodeSummaryResponse>(`/memory/items/${itemId}/summary`),
+  computeRelevance: (prompt: string) => post<RelevanceResponse>("/memory/relevance", { prompt }),
 };
 
 // ---------------------------------------------------------------- labels

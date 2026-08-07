@@ -10,6 +10,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ReviewCard } from "@/components/ReviewCard";
 import { ScopePanel } from "@/components/ScopePanel";
+import { MemoryGraph } from "@/components/MemoryGraph";
 import {
   api,
   SCOPE_LABEL,
@@ -67,6 +68,9 @@ export default function Page() {
   const [memories, setMemories] = useState<MemoryItem[]>([]);
   const [scope, setScope] = useState<ScopeReport | null>(null);
   const [fatal, setFatal] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<"chat" | "graph" | "split">("split");
+  const [relevanceScores, setRelevanceScores] = useState<Record<string, number>>({});
+  const [selectedMemoryIdsForChat, setSelectedMemoryIdsForChat] = useState<string[]>([]);
   const bottom = useRef<HTMLDivElement>(null);
 
   const refreshSidebar = useCallback((id: string | null) => {
@@ -143,12 +147,44 @@ export default function Page() {
     [refreshSidebar],
   );
 
+  // Recompute node prompt relevance in realtime when user types a prompt
+  useEffect(() => {
+    if (!input.trim()) {
+      setRelevanceScores({});
+      return;
+    }
+    const timer = setTimeout(async () => {
+      try {
+        const res = await api.computeRelevance(input.trim());
+        setRelevanceScores(res.scores);
+      } catch {
+        // Ignore transient error
+      }
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [input]);
+
+  const handleSelectMemoryForChat = (mem: MemoryItem) => {
+    setSelectedMemoryIdsForChat([mem.id]);
+    setInput(`Regarding node "${mem.content}": `);
+    if (viewMode === "graph") setViewMode("split");
+  };
+
+  const handleSelectMultipleMemoriesForChat = (mems: MemoryItem[]) => {
+    const ids = mems.map((m) => m.id);
+    setSelectedMemoryIdsForChat(ids);
+    setInput(`Summarize and compare facts across selected nodes (${mems.length} nodes): `);
+    if (viewMode === "graph") setViewMode("split");
+  };
+
   const send = async () => {
     const text = input.trim();
     if (!text || !chatId || sending) return;
 
     const turnId = crypto.randomUUID();
     const wasEphemeral = ephemeral;
+    const targetedIds = [...selectedMemoryIdsForChat];
+
     setTurns((ts) => [
       ...ts,
       {
@@ -164,10 +200,12 @@ export default function Page() {
       },
     ]);
     setInput("");
+    setSelectedMemoryIdsForChat([]);
+    setRelevanceScores({});
     setSending(true);
 
     try {
-      const res = await api.sendTurn(chatId, text, wasEphemeral);
+      const res = await api.sendTurn(chatId, text, wasEphemeral, targetedIds);
       patchTurn(turnId, {
         reply: res.assistant_message.content,
         used: res.used_memories,
@@ -211,37 +249,70 @@ export default function Page() {
             You decide what is remembered, as it happens.
           </p>
 
-          {/* Capped at six. Test runs accumulate sessions quickly, and an unbounded
-              row of buttons pushed the conversation off the screen. Older sessions
-              stay reachable through the count rather than vanishing silently. */}
-          <nav aria-label="Sessions" className="mt-3 flex flex-wrap items-center gap-1.5">
-            {chats.slice(0, 6).map((ch) => (
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-b border-neutral-200 dark:border-neutral-800 pb-3">
+            <nav aria-label="Sessions" className="flex flex-wrap items-center gap-1.5">
+              {chats.slice(0, 6).map((ch) => (
+                <button
+                  key={ch.id}
+                  onClick={() => void switchTo(ch.id)}
+                  aria-current={ch.id === chatId ? "true" : undefined}
+                  className={
+                    "rounded px-2 py-1 text-xs transition " +
+                    (ch.id === chatId
+                      ? "bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900 font-medium shadow-sm"
+                      : "border border-neutral-300 text-neutral-600 hover:bg-neutral-100 dark:border-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-800")
+                  }
+                >
+                  {ch.title ?? "Untitled"}
+                </button>
+              ))}
               <button
-                key={ch.id}
-                onClick={() => void switchTo(ch.id)}
-                aria-current={ch.id === chatId ? "true" : undefined}
-                className={
-                  "rounded px-2 py-1 text-xs transition " +
-                  (ch.id === chatId
-                    ? "bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900"
-                    : "border border-neutral-300 text-neutral-600 hover:bg-neutral-100 dark:border-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-800")
-                }
+                onClick={() => void newSession()}
+                className="rounded border border-dashed border-neutral-400 px-2 py-1 text-xs text-neutral-600 hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-400 dark:hover:bg-neutral-800"
               >
-                {ch.title ?? "Untitled"}
+                + New session
               </button>
-            ))}
-            <button
-              onClick={() => void newSession()}
-              className="rounded border border-dashed border-neutral-400 px-2 py-1 text-xs text-neutral-600 hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-400 dark:hover:bg-neutral-800"
-            >
-              + New session
-            </button>
-            {chats.length > 6 && (
-              <span className="text-xs text-neutral-400">
-                +{chats.length - 6} older
-              </span>
-            )}
-          </nav>
+              {chats.length > 6 && (
+                <span className="text-xs text-neutral-400">
+                  +{chats.length - 6} older
+                </span>
+              )}
+            </nav>
+
+            {/* View Mode Mode Toggles */}
+            <div className="flex items-center gap-1 bg-neutral-100 dark:bg-neutral-900 p-1 rounded-lg border border-neutral-200 dark:border-neutral-800 text-xs font-medium">
+              <button
+                onClick={() => setViewMode("chat")}
+                className={`px-2.5 py-1 rounded-md transition ${
+                  viewMode === "chat"
+                    ? "bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white shadow-sm font-semibold"
+                    : "text-neutral-500 hover:text-neutral-900 dark:hover:text-white"
+                }`}
+              >
+                💬 Chat Only
+              </button>
+              <button
+                onClick={() => setViewMode("split")}
+                className={`px-2.5 py-1 rounded-md transition ${
+                  viewMode === "split"
+                    ? "bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white shadow-sm font-semibold"
+                    : "text-neutral-500 hover:text-neutral-900 dark:hover:text-white"
+                }`}
+              >
+                ⚡ Split View
+              </button>
+              <button
+                onClick={() => setViewMode("graph")}
+                className={`px-2.5 py-1 rounded-md transition ${
+                  viewMode === "graph"
+                    ? "bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white shadow-sm font-semibold"
+                    : "text-neutral-500 hover:text-neutral-900 dark:hover:text-white"
+                }`}
+              >
+                🧠 Synaptic Graph
+              </button>
+            </div>
+          </div>
         </header>
 
         {fatal && (
@@ -253,159 +324,206 @@ export default function Page() {
           </p>
         )}
 
-        <div className="flex-1 space-y-4">
-          {turns.length === 0 && !fatal && (
-            <div className="rounded-lg border border-dashed border-neutral-300 p-6 text-sm text-neutral-500 dark:border-neutral-800">
-              <p className="font-medium text-neutral-700 dark:text-neutral-300">
-                Try telling it something with a mix of things in it.
-              </p>
-              <p className="mt-1.5">
-                &ldquo;I&rsquo;ve been on 20mg escitalopram since March. Still writing
-                the CHI paper with Priya, should wrap next month.&rdquo;
-              </p>
-              <p className="mt-2 text-xs">
-                Health goes to this chat only. The paper is kept as <em>in progress</em>,
-                not finished. Then start a new session and ask what it knows.
-              </p>
-            </div>
-          )}
+        {viewMode === "graph" ? (
+          <div className="flex-1 w-full h-[620px]">
+            <MemoryGraph
+              memories={memories}
+              relevanceScores={relevanceScores}
+              onSelectMemoryForChat={handleSelectMemoryForChat}
+              onSelectMultipleMemoriesForChat={handleSelectMultipleMemoriesForChat}
+              onRedirectToChat={(id) => void switchTo(id)}
+              onRefreshMemories={() => refreshSidebar(chatId)}
+            />
+          </div>
+        ) : (
+          <div className="flex flex-col xl:flex-row gap-6 flex-1 min-h-0">
+            {/* Chat Column */}
+            <div className="flex-1 flex flex-col min-w-0">
+              <div className="flex-1 space-y-4 max-h-[520px] overflow-y-auto pr-1">
+                {turns.length === 0 && !fatal && (
+                  <div className="rounded-lg border border-dashed border-neutral-300 p-6 text-sm text-neutral-500 dark:border-neutral-800">
+                    <p className="font-medium text-neutral-700 dark:text-neutral-300">
+                      Try telling it something with a mix of things in it.
+                    </p>
+                    <p className="mt-1.5">
+                      &ldquo;I&rsquo;ve been on 20mg escitalopram since March. Still writing
+                      the CHI paper with Priya, should wrap next month.&rdquo;
+                    </p>
+                    <p className="mt-2 text-xs">
+                      Health goes to this chat only. The paper is kept as <em>in progress</em>,
+                      not finished. Then start a new session and ask what it knows.
+                    </p>
+                  </div>
+                )}
 
-          {turns.map((t) => (
-            <article key={t.id} className="space-y-2">
-              <div className="flex justify-end">
-                <p className="max-w-[85%] rounded-lg rounded-br-sm bg-neutral-900 px-3 py-2 text-sm text-white dark:bg-neutral-100 dark:text-neutral-900">
-                  {t.userText}
-                  {t.ephemeral && (
-                    <span className="mt-1 block text-[11px] opacity-70">
-                      off the record — never extracted
-                    </span>
-                  )}
-                </p>
+                {turns.map((t) => (
+                  <article key={t.id} className="space-y-2">
+                    <div className="flex justify-end">
+                      <p className="max-w-[85%] rounded-lg rounded-br-sm bg-neutral-900 px-3 py-2 text-sm text-white dark:bg-neutral-100 dark:text-neutral-900">
+                        {t.userText}
+                        {t.ephemeral && (
+                          <span className="mt-1 block text-[11px] opacity-70">
+                            off the record — never extracted
+                          </span>
+                        )}
+                      </p>
+                    </div>
+
+                    {t.error && (
+                      <p
+                        role="alert"
+                        className="rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200"
+                      >
+                        {t.error}
+                      </p>
+                    )}
+
+                    {t.reply === null && !t.error && (
+                      <p className="text-sm text-neutral-400">thinking…</p>
+                    )}
+
+                    {t.reply && (
+                      <div>
+                        <p className="max-w-[85%] whitespace-pre-wrap rounded-lg rounded-bl-sm border border-neutral-200 px-3 py-2 text-sm dark:border-neutral-800">
+                          {t.reply}
+                        </p>
+                        {t.used.length > 0 && (
+                          <details className="mt-1.5 max-w-[85%] text-xs">
+                            <summary className="cursor-pointer text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200">
+                              Shaped by {t.used.length}{" "}
+                              {t.used.length === 1 ? "memory" : "memories"}
+                            </summary>
+                            <ul className="mt-1.5 space-y-1 border-l-2 border-neutral-200 pl-2.5 dark:border-neutral-800">
+                              {t.used.map((m) => (
+                                <li key={m.id} className="text-neutral-600 dark:text-neutral-400">
+                                  {m.content}{" "}
+                                  <span className="text-neutral-400">
+                                    ({STATUS_LABEL[m.status]}, {SCOPE_LABEL[m.scope]})
+                                  </span>
+                                </li>
+                              ))}
+                            </ul>
+                          </details>
+                        )}
+                      </div>
+                    )}
+
+                    <p aria-live="polite" className="sr-only">
+                      {t.extractionRunning ? "Reviewing new memories" : ""}
+                    </p>
+
+                    {t.extractionRunning && (
+                      <p className="ml-0 text-xs text-neutral-500 sm:ml-10">
+                        <span className="mr-1.5 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500 align-middle" />
+                        looking at what to remember…
+                      </p>
+                    )}
+
+                    {t.ephemeral && t.reply && (
+                      <p className="ml-0 text-xs text-neutral-500 sm:ml-10">
+                        Nothing was extracted from this turn.
+                      </p>
+                    )}
+
+                    {t.extraction?.status === "failed" && (
+                      <p role="alert" className="ml-0 text-xs text-red-700 sm:ml-10 dark:text-red-400">
+                        Extraction failed: {t.extraction.error}
+                      </p>
+                    )}
+
+                    {t.extraction && (
+                      <ReviewCard
+                        pending={t.extraction.candidates}
+                        autoAccepted={t.extraction.auto_accepted}
+                        onResolved={(itemId) => resolveItem(t.id, itemId)}
+                      />
+                    )}
+                  </article>
+                ))}
+                <div ref={bottom} />
               </div>
 
-              {t.error && (
-                <p
-                  role="alert"
-                  className="rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200"
-                >
-                  {t.error}
-                </p>
-              )}
-
-              {t.reply === null && !t.error && (
-                <p className="text-sm text-neutral-400">thinking…</p>
-              )}
-
-              {t.reply && (
-                <div>
-                  <p className="max-w-[85%] whitespace-pre-wrap rounded-lg rounded-bl-sm border border-neutral-200 px-3 py-2 text-sm dark:border-neutral-800">
-                    {t.reply}
-                  </p>
-                  {t.used.length > 0 && (
-                    <details className="mt-1.5 max-w-[85%] text-xs">
-                      <summary className="cursor-pointer text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200">
-                        Shaped by {t.used.length}{" "}
-                        {t.used.length === 1 ? "memory" : "memories"}
-                      </summary>
-                      <ul className="mt-1.5 space-y-1 border-l-2 border-neutral-200 pl-2.5 dark:border-neutral-800">
-                        {t.used.map((m) => (
-                          <li key={m.id} className="text-neutral-600 dark:text-neutral-400">
-                            {m.content}{" "}
-                            <span className="text-neutral-400">
-                              ({STATUS_LABEL[m.status]}, {SCOPE_LABEL[m.scope]})
-                            </span>
-                          </li>
-                        ))}
-                      </ul>
-                    </details>
-                  )}
+              {/* Selected Nodes Grounding Indicator */}
+              {selectedMemoryIdsForChat.length > 0 && (
+                <div className="mt-2 p-2 rounded-lg bg-indigo-950/80 border border-indigo-500/50 flex items-center justify-between text-xs text-indigo-200">
+                  <span>
+                    🎯 Question targeted to <strong>{selectedMemoryIdsForChat.length} selected memory nodes</strong>
+                  </span>
+                  <button
+                    onClick={() => setSelectedMemoryIdsForChat([])}
+                    className="text-xs font-mono underline hover:text-white"
+                  >
+                    Clear selection
+                  </button>
                 </div>
               )}
 
-              <p aria-live="polite" className="sr-only">
-                {t.extractionRunning ? "Reviewing new memories" : ""}
-              </p>
-
-              {t.extractionRunning && (
-                <p className="ml-0 text-xs text-neutral-500 sm:ml-10">
-                  <span className="mr-1.5 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500 align-middle" />
-                  looking at what to remember…
-                </p>
-              )}
-
-              {t.ephemeral && t.reply && (
-                <p className="ml-0 text-xs text-neutral-500 sm:ml-10">
-                  Nothing was extracted from this turn.
-                </p>
-              )}
-
-              {t.extraction?.status === "failed" && (
-                <p role="alert" className="ml-0 text-xs text-red-700 sm:ml-10 dark:text-red-400">
-                  Extraction failed: {t.extraction.error}
-                </p>
-              )}
-
-              {t.extraction && (
-                <ReviewCard
-                  pending={t.extraction.candidates}
-                  autoAccepted={t.extraction.auto_accepted}
-                  onResolved={(itemId) => resolveItem(t.id, itemId)}
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void send();
+                }}
+                className="sticky bottom-0 mt-3 bg-[var(--background)] pt-1"
+              >
+                <label htmlFor="composer" className="sr-only">
+                  Message
+                </label>
+                <textarea
+                  id="composer"
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      void send();
+                    }
+                  }}
+                  rows={2}
+                  placeholder="Say something…"
+                  disabled={!chatId || sending}
+                  className="w-full resize-none rounded-lg border border-neutral-300 bg-transparent p-2.5 text-sm outline-none focus:border-neutral-500 disabled:opacity-50 dark:border-neutral-700"
                 />
-              )}
-            </article>
-          ))}
-          <div ref={bottom} />
-        </div>
+                <div className="mt-1.5 flex items-center gap-3">
+                  <label className="flex items-center gap-1.5 text-xs text-neutral-600 dark:text-neutral-400">
+                    <input
+                      type="checkbox"
+                      checked={ephemeral}
+                      onChange={(e) => setEphemeral(e.target.checked)}
+                      className="accent-amber-600"
+                    />
+                    Off the record
+                  </label>
+                  <span className="text-xs text-neutral-400">
+                    {ephemeral
+                      ? "this turn is never sent to the extractor"
+                      : "Enter to send, Shift+Enter for a new line"}
+                  </span>
+                  <button
+                    type="submit"
+                    disabled={!chatId || sending || !input.trim()}
+                    className="ml-auto rounded bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-40 dark:bg-neutral-100 dark:text-neutral-900"
+                  >
+                    Send
+                  </button>
+                </div>
+              </form>
+            </div>
 
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            void send();
-          }}
-          className="sticky bottom-0 mt-4 bg-[var(--background)] pt-2"
-        >
-          <label htmlFor="composer" className="sr-only">
-            Message
-          </label>
-          <textarea
-            id="composer"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                void send();
-              }
-            }}
-            rows={2}
-            placeholder="Say something…"
-            disabled={!chatId || sending}
-            className="w-full resize-none rounded-lg border border-neutral-300 bg-transparent p-2.5 text-sm outline-none focus:border-neutral-500 disabled:opacity-50 dark:border-neutral-700"
-          />
-          <div className="mt-1.5 flex items-center gap-3">
-            <label className="flex items-center gap-1.5 text-xs text-neutral-600 dark:text-neutral-400">
-              <input
-                type="checkbox"
-                checked={ephemeral}
-                onChange={(e) => setEphemeral(e.target.checked)}
-                className="accent-amber-600"
-              />
-              Off the record
-            </label>
-            <span className="text-xs text-neutral-400">
-              {ephemeral
-                ? "this turn is never sent to the extractor"
-                : "Enter to send, Shift+Enter for a new line"}
-            </span>
-            <button
-              type="submit"
-              disabled={!chatId || sending || !input.trim()}
-              className="ml-auto rounded bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-40 dark:bg-neutral-100 dark:text-neutral-900"
-            >
-              Send
-            </button>
+            {/* Embedded Memory Graph in Split View */}
+            {viewMode === "split" && (
+              <div className="w-full xl:w-[500px] h-[580px] shrink-0">
+                <MemoryGraph
+                  memories={memories}
+                  relevanceScores={relevanceScores}
+                  onSelectMemoryForChat={handleSelectMemoryForChat}
+                  onSelectMultipleMemoriesForChat={handleSelectMultipleMemoriesForChat}
+                  onRedirectToChat={(id) => void switchTo(id)}
+                  onRefreshMemories={() => refreshSidebar(chatId)}
+                />
+              </div>
+            )}
           </div>
-        </form>
+        )}
       </main>
 
       <aside className="mt-8 w-full shrink-0 lg:mt-0 lg:w-72">
