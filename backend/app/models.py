@@ -155,6 +155,57 @@ class TurnRequest(BaseModel):
     content: str = Field(min_length=1)
     # P3: excludes this turn from extraction entirely, not from the UI.
     session_ephemeral: bool = False
+    selected_memory_ids: list[UUID] | None = None
+
+
+# ------------------------------------------------------------------ Subnodes & Graph UI
+
+class MemorySubnode(BaseModel):
+    id: UUID
+    memory_item_id: UUID
+    content: str
+    confidence: float = 0.9
+    category: str | None = None
+    created_at: datetime
+
+
+class SubnodeCreate(BaseModel):
+    content: str = Field(min_length=1)
+    confidence: float = Field(default=0.9, ge=0.0, le=1.0)
+    category: str | None = None
+
+
+class SubnodeEdit(BaseModel):
+    content: str | None = None
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    category: str | None = None
+
+
+class PruneResponse(BaseModel):
+    pruned_count: int
+    message: str
+
+
+class NodeSummaryResponse(BaseModel):
+    memory_item_id: UUID
+    title: str
+    summary: str
+    key_points: list[str]
+    subnode_count: int
+
+
+class RelevanceScore(BaseModel):
+    memory_item_id: UUID
+    relevance: float  # 0.0 to 1.0
+
+
+class RelevanceRequest(BaseModel):
+    prompt: str = Field(min_length=1)
+
+
+class RelevanceResponse(BaseModel):
+    scores: dict[str, float]
+
 
 
 class UsedMemory(BaseModel):

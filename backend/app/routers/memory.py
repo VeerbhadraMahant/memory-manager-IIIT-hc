@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from uuid import UUID
+from datetime import datetime, timezone
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -13,14 +14,25 @@ from app.models import (
     MemoryItem,
     MemoryItemCreate,
     MemoryItemEdit,
+    MemorySubnode,
+    NodeSummaryResponse,
+    PruneResponse,
+    RelevanceRequest,
+    RelevanceResponse,
     RescopeRequest,
     ReviewState,
     Scope,
     Sensitivity,
+    SubnodeCreate,
+    SubnodeEdit,
 )
 from app.services import gemini
 
 router = APIRouter(prefix="/memory", tags=["memory"])
+
+# In-memory backing store for interactive subnodes (persists during backend runtime)
+SUBNODES_STORE: dict[str, list[dict]] = {}
+
 
 # Joined so the API never makes the client resolve a block id to a human label.
 ITEM_SELECT = """
@@ -318,3 +330,189 @@ def item_graph(item_id: UUID):
 @router.delete("/items/{item_id}")
 def delete_item(item_id: UUID):
     _todo("P5", "tombstone + cascade per SYSTEM_DESIGN §3")
+
+
+# --------------------------------------------------------------------------
+# Hierarchical Subnodes & Graph Endpoints
+# --------------------------------------------------------------------------
+
+def _seed_subnodes_for_item(item_id_str: str, item_content: str, block_name: str | None) -> list[dict]:
+    """Auto-seeds initial granular subnodes for a memory node if not already present."""
+    if item_id_str in SUBNODES_STORE:
+        return SUBNODES_STORE[item_id_str]
+
+    now = datetime.now(timezone.utc)
+    category = block_name or "General"
+    
+    # Generate 3 default contextual subnodes based on content
+    words = item_content.split()
+    first_part = " ".join(words[:min(5, len(words))])
+    second_part = " ".join(words[min(5, len(words)):min(10, len(words))]) if len(words) > 5 else "Context details"
+
+    seeds = [
+        {
+            "id": str(uuid4()),
+            "memory_item_id": item_id_str,
+            "content": f"Core Fact: {first_part}",
+            "confidence": 0.95,
+            "category": category,
+            "created_at": now.isoformat(),
+        },
+        {
+            "id": str(uuid4()),
+            "memory_item_id": item_id_str,
+            "content": f"Supporting Evidence: {second_part}",
+            "confidence": 0.88,
+            "category": category,
+            "created_at": now.isoformat(),
+        },
+        {
+            "id": str(uuid4()),
+            "memory_item_id": item_id_str,
+            "content": f"Classification: Categorized under {category}",
+            "confidence": 0.92,
+            "category": category,
+            "created_at": now.isoformat(),
+        },
+    ]
+    SUBNODES_STORE[item_id_str] = seeds
+    return seeds
+
+
+@router.get("/items/{item_id}/subnodes", response_model=list[MemorySubnode])
+def get_subnodes(item_id: UUID, cur=Depends(db_cursor)):
+    item_id_str = str(item_id)
+    cur.execute("select mi.content, b.name as block_name from memory_items mi left join blocks b on b.id = mi.block_id where mi.id = %s", (item_id,))
+    row = cur.fetchone()
+    content = row["content"] if row else "Memory node detail"
+    block_name = row["block_name"] if row else None
+    
+    subnodes = _seed_subnodes_for_item(item_id_str, content, block_name)
+    return subnodes
+
+
+@router.post("/items/{item_id}/subnodes", response_model=MemorySubnode, status_code=201)
+def create_subnode(item_id: UUID, payload: SubnodeCreate, cur=Depends(db_cursor)):
+    item_id_str = str(item_id)
+    cur.execute("select mi.content, b.name as block_name from memory_items mi left join blocks b on b.id = mi.block_id where mi.id = %s", (item_id,))
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(404, "memory item not found")
+
+    _seed_subnodes_for_item(item_id_str, row["content"], row["block_name"])
+    
+    new_subnode = {
+        "id": str(uuid4()),
+        "memory_item_id": item_id_str,
+        "content": payload.content,
+        "confidence": payload.confidence,
+        "category": payload.category or row["block_name"] or "General",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    SUBNODES_STORE[item_id_str].append(new_subnode)
+    return new_subnode
+
+
+@router.patch("/subnodes/{subnode_id}", response_model=MemorySubnode)
+def edit_subnode(subnode_id: UUID, payload: SubnodeEdit):
+    sub_id_str = str(subnode_id)
+    for item_id_str, sublist in SUBNODES_STORE.items():
+        for subnode in sublist:
+            if subnode["id"] == sub_id_str:
+                if payload.content is not None:
+                    subnode["content"] = payload.content
+                if payload.confidence is not None:
+                    subnode["confidence"] = payload.confidence
+                if payload.category is not None:
+                    subnode["category"] = payload.category
+                return subnode
+    raise HTTPException(404, "subnode not found")
+
+
+@router.delete("/subnodes/{subnode_id}")
+def delete_subnode(subnode_id: UUID):
+    sub_id_str = str(subnode_id)
+    for item_id_str, sublist in SUBNODES_STORE.items():
+        for idx, subnode in enumerate(sublist):
+            if subnode["id"] == sub_id_str:
+                sublist.pop(idx)
+                return {"status": "deleted", "id": sub_id_str}
+    raise HTTPException(404, "subnode not found")
+
+
+@router.post("/items/{item_id}/prune", response_model=PruneResponse)
+def prune_subnodes(item_id: UUID, cur=Depends(db_cursor)):
+    item_id_str = str(item_id)
+    subnodes = SUBNODES_STORE.get(item_id_str, [])
+    
+    # Prune low confidence (< 0.7) or duplicate subnodes
+    initial_count = len(subnodes)
+    seen_contents = set()
+    kept = []
+    for sub in subnodes:
+        if sub["confidence"] >= 0.7 and sub["content"].lower() not in seen_contents:
+            seen_contents.add(sub["content"].lower())
+            kept.append(sub)
+            
+    pruned_count = initial_count - len(kept)
+    SUBNODES_STORE[item_id_str] = kept
+    return PruneResponse(
+        pruned_count=pruned_count,
+        message=f"Pruned {pruned_count} redundant or low-confidence subnodes." if pruned_count > 0 else "All subnodes passed confidence threshold."
+    )
+
+
+@router.get("/items/{item_id}/summary", response_model=NodeSummaryResponse)
+def get_node_summary(item_id: UUID, cur=Depends(db_cursor)):
+    item_id_str = str(item_id)
+    cur.execute("select mi.*, b.name as block_name from memory_items mi left join blocks b on b.id = mi.block_id where mi.id = %s", (item_id,))
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(404, "memory item not found")
+
+    content = row["content"]
+    category = row["block_name"] or "General"
+    subnodes = SUBNODES_STORE.get(item_id_str, _seed_subnodes_for_item(item_id_str, content, category))
+
+    sub_texts = [s["content"] for s in subnodes]
+    key_points = sub_texts if sub_texts else [content]
+    
+    summary_text = f"Node '{category}': {content}. Context is composed of {len(subnodes)} active subnodes covering core facts, supporting evidence, and category metadata."
+    
+    return NodeSummaryResponse(
+        memory_item_id=item_id,
+        title=f"Summary of {category} Node",
+        summary=summary_text,
+        key_points=key_points,
+        subnode_count=len(subnodes),
+    )
+
+
+@router.post("/relevance", response_model=RelevanceResponse)
+def compute_prompt_relevance(payload: RelevanceRequest, cur=Depends(db_cursor)):
+    prompt = payload.prompt.lower().strip()
+    cur.execute("select id, content from memory_items where deleted_at is null")
+    items = cur.fetchall()
+
+    prompt_words = set(w for w in prompt.split() if len(w) > 2)
+    scores: dict[str, float] = {}
+
+    for item in items:
+        item_id_str = str(item["id"])
+        item_text = item["content"].lower()
+        subnodes = SUBNODES_STORE.get(item_id_str, [])
+        combined_text = item_text + " " + " ".join(s["content"].lower() for s in subnodes)
+
+        if not prompt_words:
+            scores[item_id_str] = 0.0
+            continue
+
+        match_count = sum(1 for w in prompt_words if w in combined_text)
+        # Substring exact match bonus
+        bonus = 0.3 if prompt in combined_text else 0.0
+        
+        score = min(1.0, (match_count / len(prompt_words)) * 0.8 + bonus)
+        scores[item_id_str] = round(score, 3)
+
+    return RelevanceResponse(scores=scores)
+

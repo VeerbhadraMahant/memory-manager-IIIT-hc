@@ -96,7 +96,18 @@ def chat_turn(
     user_msg = cur.fetchone()
     cur.connection.commit()
 
-    used = retrieve(cur, str(settings.demo_user_id), str(chat_id), payload.content)
+    if payload.selected_memory_ids:
+        cur.execute(
+            """select mi.id, mi.content, mi.status, mi.scope, mi.sensitivity, b.name as block_name, 0.0 as distance
+               from memory_items mi
+               left join blocks b on b.id = mi.block_id
+               where mi.id = any(%s)""",
+            ([str(i) for i in payload.selected_memory_ids],),
+        )
+        selected_rows = cur.fetchall()
+        used = selected_rows if selected_rows else retrieve(cur, str(settings.demo_user_id), str(chat_id), payload.content)
+    else:
+        used = retrieve(cur, str(settings.demo_user_id), str(chat_id), payload.content)
 
     cur.execute(
         """select role, content from messages
