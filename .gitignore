@@ -84,5 +84,16 @@ scratch/
 *.rej
 *.bak
 
+# --- working docs, kept out of the published repo ---
+# These stay on disk and keep being maintained; they are just not part of what
+# gets published. CLAUDE.md is unanchored so it also covers frontend/CLAUDE.md;
+# the rest are anchored to the root so a future docs/PHASES.md is a fresh choice
+# rather than something silently swallowed by a stale rule.
+CLAUDE.md
+/DECISION_LOG.md
+/PHASES.md
+/SYSTEM_DESIGN.md
+
+
 # -------miscellaneous--------
 gemini_quickstarts.md

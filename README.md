@@ -4,21 +4,17 @@ A chat interface where AI memory is **negotiated by the user rather than accumul
 Users see what is being remembered as it forms, correct it, scope it to a session, and see which
 memories shaped each response.
 
-HCI hackathon project (SIGCHI-supported). Design rationale is a first-class deliverable —
-`DECISION_LOG.md` is judging evidence, not bookkeeping.
-
-| Document | What's in it |
-|---|---|
-| `CLAUDE.md` | Core concepts, design principles, stack rules |
-| `SYSTEM_DESIGN.md` | Architecture, data model, endpoints, trade-offs |
-| `PHASES.md` | Build phases, current status, **and what is stubbed** |
-| `DECISION_LOG.md` | Decisions with their rejected alternatives |
+HCI hackathon project (SIGCHI-supported). Design rationale is a first-class deliverable; the
+architecture notes, phase plan and decision log are kept alongside this repo rather than in it.
 
 **Current phase: P0, P1, P2, P3 and P6 complete** — the whole demo spine. Say something, get a reply
 that shows which memories shaped it, correct the classification in one tap, drop a memory and watch
 the answer change, and ask for a high-stakes draft that refuses to write up unfinished work as
 finished. Remaining: P4 (complete list view), P7 (pre-send PII), P5 (deletion-preview graph),
-P8 (accessibility pass). See `PHASES.md` for exactly what is and is not built.
+P8 (accessibility pass).
+
+The design principles this is judged on are enforced in code, not just described — the table under
+[Layout](#where-the-design-principles-actually-live) names the file each one lives in.
 
 > **Read this before you demo.** Chat and extraction run on OpenRouter `:free` model slugs, which
 > are rate-limited per day and are **retired without notice** — three `:free` slugs 404'd during the
