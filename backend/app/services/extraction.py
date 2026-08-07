@@ -13,8 +13,8 @@ from __future__ import annotations
 import logging
 
 from app.db import pool
-from app.models import Scope, Sensitivity, SourceType
-from app.services import llm
+from app.models import AssertionStatus, ReviewState, Scope, Sensitivity, SourceType
+from app.services import classify, llm
 from app.services.policy import decide
 
 log = logging.getLogger(__name__)
@@ -57,23 +57,39 @@ def run_extraction(message_id: str, chat_id: str, user_id: str) -> None:
             # The schema gives back plain strings; policy reasons in enums so an
             # unrecognised value fails here rather than silently falling through a
             # comparison that is never true.
+            status = AssertionStatus(c.status)
+            evidence = c.evidence or c.content
+
+            # P2 cross-check. Sensitivity can only move up; a status disagreement does
+            # not overrule the model but does buy the item a human glance.
+            sensitivity, bump_note = classify.raise_sensitivity(
+                Sensitivity(c.sensitivity), evidence
+            )
+            status_note = classify.status_disagreement(status, evidence)
+
             d = decide(
                 source_type=SourceType(c.source_type),
-                sensitivity=Sensitivity(c.sensitivity),
-                confidence=c.confidence,
+                sensitivity=sensitivity,
+                # A contradicted status is not a confident one, whatever the model said.
+                confidence=min(c.confidence, 0.5) if status_note else c.confidence,
                 proposed_block=c.block,
                 known_blocks=known,
                 fallback_block=fallback,
             )
-            rows.append((c, d))
+            extra = [n for n in (status_note, bump_note) if n]
+            if extra:
+                d.reason = "; ".join([*extra, d.reason])
+                d.needs_review = True
+                d.review_state = ReviewState.pending
+            rows.append((c, d, sensitivity))
 
         # One embedding call for the whole turn's candidates rather than one per item.
-        vectors = llm.embed([c.content for c, _ in rows]) if rows else []
+        vectors = llm.embed([c.content for c, _, _ in rows]) if rows else []
 
         with pool.connection() as conn, conn.cursor() as cur:
             # strict=True: a length mismatch here means candidates get dropped without
             # a trace. llm.embed() already guarantees this, and this is the backstop.
-            for (c, d), vec in zip(rows, vectors, strict=True):
+            for (c, d, sensitivity), vec in zip(rows, vectors, strict=True):
                 cur.execute(
                     """
                     insert into memory_items (
@@ -88,7 +104,7 @@ def run_extraction(message_id: str, chat_id: str, user_id: str) -> None:
                     """,
                     (
                         user_id, c.content, c.evidence, c.source_type, c.status,
-                        c.sensitivity, d.scope.value, c.confidence, message_id,
+                        sensitivity.value, d.scope.value, c.confidence, message_id,
                         chat_id if d.scope is Scope.session else None,
                         d.review_state.value, d.needs_review, d.reason, str(vec),
                         user_id, d.block_name,

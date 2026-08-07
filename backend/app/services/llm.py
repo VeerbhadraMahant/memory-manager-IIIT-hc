@@ -283,6 +283,11 @@ Each carries a status. Honour it exactly:
   hypothetical - was raised as a possibility only.
   third_party  - about someone else, not the user.
 
+An item marked UNCONFIRMED FOR A WHILE was true when recorded but has not been checked
+since. Use it, but do not state it as the current situation — say when it was last
+known and invite a correction. "Last I knew you were still writing it, is that where
+things are?" rather than "You are writing it."
+
 If a memory is relevant, use it naturally. If none are, answer normally and do not
 mention that you have a memory system. Never invent memories that are not listed.
 
@@ -313,6 +318,24 @@ here is only a way of turning (history + memory) into text.
 # but the pattern is general enough to apply to any provider's output — showing a
 # user the model's internal monologue is never the intent.
 _THINK_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL | re.IGNORECASE)
+
+
+def _memory_block(memory_items: list[dict]) -> str:
+    """Render retrieved memories for the prompt, flagging the stale ones (P6).
+
+    Staleness is computed in SQL at retrieval, not here — this only has to make the
+    distinction legible to the model, which is why it is a word in the line rather
+    than a separate section. A stale item still gets used; it just gets used with
+    a date attached instead of as the present tense.
+    """
+    if not memory_items:
+        return "MEMORY\n(nothing relevant)"
+    lines = "\n".join(
+        f"- [{m['status']}]{' [UNCONFIRMED FOR A WHILE]' if m.get('is_stale') else ''}"
+        f" {m['content']}"
+        for m in memory_items
+    )
+    return f"MEMORY\n{lines}"
 
 
 def _strip_reasoning(text: str) -> str:
@@ -433,13 +456,7 @@ def chat_response(
     """Answer one turn. Returns (reply, provider_id, model) so the caller can record
     and display which model actually spoke — necessary because `provider` is a
     request, not a guarantee (see resolve_provider)."""
-    if memory_items:
-        lines = "\n".join(f"- [{m['status']}] {m['content']}" for m in memory_items)
-        block = f"MEMORY\n{lines}"
-    else:
-        block = "MEMORY\n(nothing relevant)"
-
-    system = CHAT_SYSTEM.format(memory_block=block)
+    system = CHAT_SYSTEM.format(memory_block=_memory_block(memory_items))
     chosen = resolve_provider(provider)
 
     if chosen == "gemini":
@@ -492,6 +509,98 @@ def chat_response(
         "openrouter",
         settings.llm_chat_model,
     )
+
+
+# ----------------------------------------------------------------- P6 verified draft
+
+
+class DraftClaim(BaseModel):
+    text: str = Field(description="The sentence or clause from the draft.")
+    memory_labels: list[str] = Field(
+        description="Labels like M1, M3 for the memories this rests on. Empty if none."
+    )
+    asserted_as: Literal[
+        "completed", "in_progress", "planned", "hypothetical", "abandoned", "none"
+    ] = Field(
+        description="How complete this sentence makes the thing sound, judged from the "
+        "sentence alone. 'published a paper' is completed; 'is writing a paper' is "
+        "in_progress. Use 'none' if the sentence makes no completeness claim."
+    )
+
+
+class DraftResult(BaseModel):
+    draft: str
+    claims: list[DraftClaim]
+
+
+DRAFT_SCHEMA = _strict_schema(DraftResult)
+
+
+# Labels rather than UUIDs: asking a model to echo 36-character identifiers back
+# accurately is a reliability problem with no upside. M1..Mn maps back in Python.
+DRAFT_PROMPT = """\
+Write the requested text using only the memories below. Do not invent facts about the
+person. If a memory does not support something, leave it out.
+
+Then break your own draft into claims. For each sentence that rests on a memory, give
+the sentence, the labels of the memories behind it, and — reading only that sentence —
+how finished it makes the thing sound.
+
+One claim per distinct fact. If a sentence covers two things at different stages —
+something underway and something merely planned — split it into two claims so each
+carries its own completeness. A claim that blends stages cannot be checked.
+
+Judge `asserted_as` from your wording, not from the memory. If you wrote "published a
+paper", that is completed even if the memory says otherwise. Report what the sentence
+says. A separate check compares your answer against the memory, and it only works if
+you describe your own wording honestly.
+
+MEMORIES
+{memory_block}
+
+REQUEST
+{instruction}
+"""
+
+
+def verified_draft(instruction: str, memories: list[dict]) -> DraftResult | None:
+    """Draft a high-stakes artifact and label its own claims for checking.
+
+    The model is *not* asked whether it is overstating anything — that comparison is
+    done in Python against the stored status, because a model grading its own accuracy
+    is exactly the check that fails silently. All this call provides is the mapping
+    from sentence to memory plus an honest description of its own phrasing.
+
+    Pinned to the extraction model rather than the chat provider (D33). Two reasons:
+    this is a structured-output call, which is what the stronger model is for (D29);
+    and its output feeds the overstatement check, so letting a dropdown decide it
+    would mean the P6 guarantee holds or fails depending on the UI.
+    """
+    block = "\n".join(
+        f"[M{i + 1}] ({m['status']}) {m['content']}" for i, m in enumerate(memories)
+    ) or "(no memories available)"
+
+    data = _post("/chat/completions", {
+        "model": settings.llm_extract_model,
+        "messages": [{
+            "role": "user",
+            "content": DRAFT_PROMPT.format(memory_block=block, instruction=instruction),
+        }],
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {"name": "draft", "strict": True, "schema": DRAFT_SCHEMA},
+        },
+        "temperature": 0.2,
+    })
+
+    text = _content(data)
+    if not text:
+        return None
+    try:
+        return DraftResult.model_validate_json(text)
+    except Exception:
+        log.warning("verified_draft returned unparseable JSON: %s", text[:400])
+        return None
 
 
 # ----------------------------------------------------------------- embeddings

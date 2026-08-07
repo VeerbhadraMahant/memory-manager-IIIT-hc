@@ -73,6 +73,12 @@ class Settings(BaseSettings):
 
     cors_origins: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
 
+    # P6 decay. An in_progress item unconfirmed for longer than this is treated as
+    # stale: still usable, but never asserted as current without a re-check. Two weeks
+    # is a guess tuned for a demo, not a finding — say so if asked. Set it to 0 to make
+    # everything stale, which is how the decay path gets demonstrated without waiting.
+    stale_after_days: int = 14
+
     # Embedding dimension is duplicated in migrations/001_init.sql as vector(768).
     # If you change one, the other breaks loudly at insert time — which is the point.
     embedding_dim: int = 768

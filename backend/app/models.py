@@ -174,6 +174,9 @@ class UsedMemory(BaseModel):
     sensitivity: Sensitivity
     block_name: str | None
     distance: float
+    # P6 decay: in_progress and unconfirmed past the threshold. Still usable, but never
+    # asserted as current without a re-check.
+    is_stale: bool = False
 
 
 class TurnResponse(BaseModel):
@@ -197,6 +200,54 @@ class CandidatesResponse(BaseModel):
 
 
 # ------------------------------------------------------------------ P1 edits
+
+# ------------------------------------------------------------------ P6
+
+class RegenerateRequest(BaseModel):
+    message_id: UUID
+    revoke_item_ids: list[UUID] = Field(default_factory=list)
+    # Same switchable-chat rule as a normal turn (D32). Regenerating on a different
+    # model than answered originally is legitimate — the revoked memory is the
+    # variable under test, and holding the model fixed is not required for that.
+    provider: str | None = None
+
+
+class RegenerateResponse(BaseModel):
+    previous: str
+    regenerated: str
+    revoked: list[UsedMemory]
+    used_memories: list[UsedMemory]
+    assistant_message: Message
+
+
+class DraftRequest(BaseModel):
+    instruction: str = Field(min_length=1)
+    # Deliberately no `provider`, unlike a chat turn (D32/D33). The draft's claim
+    # decomposition is the input to the overstatement check, so which model produces
+    # it must not be a dropdown — that would make the P6 guarantee non-reproducible.
+
+
+class DraftClaim(BaseModel):
+    """One assertion in a high-stakes draft, checked against its sources."""
+    text: str
+    asserted_as: AssertionStatus | None
+    sources: list[UsedMemory]
+    # True when the sentence claims more completeness than the memory supports —
+    # the CV failure case, detected in Python rather than by asking the model.
+    overstates: bool
+    # True when a source is stale, even if the phrasing is accurate.
+    stale_source: bool
+    problem: str | None
+
+
+class VerifiedDraft(BaseModel):
+    instruction: str
+    draft: str
+    claims: list[DraftClaim]
+    # True when at least one claim needs confirmation. The draft is still returned —
+    # withholding it would just make the user re-ask — but it is not clean to ship.
+    needs_confirmation: bool
+
 
 class HiddenItem(BaseModel):
     """A memory that exists but is unreachable from the current chat."""

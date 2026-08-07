@@ -124,12 +124,21 @@ def create_item(payload: MemoryItemCreate, cur=Depends(db_cursor)):
                     (settings.demo_user_id,))
         block_id = cur.fetchone()["id"]
 
+    # Embed on create. Without this the item exists but is invisible to retrieval,
+    # which is a confusing half-state: it shows in the list and never influences a
+    # response. Extraction has always embedded; this path had not.
+    try:
+        vec = str(llm.embed([payload.content])[0])
+    except Exception as e:
+        raise HTTPException(502, f"could not embed content: {e}") from e
+
     cur.execute(
         """
         insert into memory_items (
             user_id, block_id, content, source_type, status, sensitivity, scope,
-            confidence, source_message_id, session_chat_id, review_state, needs_review
-        ) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            confidence, source_message_id, session_chat_id, review_state, needs_review,
+            embedding
+        ) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
         returning id
         """,
         (
@@ -137,7 +146,7 @@ def create_item(payload: MemoryItemCreate, cur=Depends(db_cursor)):
             payload.source_type.value, payload.status.value,
             payload.sensitivity.value, payload.scope.value, payload.confidence,
             payload.source_message_id, payload.session_chat_id,
-            payload.review_state.value, payload.needs_review,
+            payload.review_state.value, payload.needs_review, vec,
         ),
     )
     new_id = cur.fetchone()["id"]
@@ -305,9 +314,23 @@ def _todo(phase: str, what: str):
     raise HTTPException(501, f"{what} — implemented in {phase}")
 
 
-@router.post("/items/{item_id}/confirm")
-def confirm_item(item_id: UUID):
-    _todo("P6", "confirm a stale item and reset the decay clock")
+@router.post("/items/{item_id}/confirm", response_model=MemoryItem)
+def confirm_item(item_id: UUID, cur=Depends(db_cursor)):
+    """"Yes, this is still true." Resets the decay clock.
+
+    Decay is not deletion — a stale item is still used, just never asserted as current
+    without a re-check. Confirming is the cheapest possible correction, which is the
+    point: the alternative to a one-tap confirm is silent reuse of a fact that has
+    quietly stopped being true (D4).
+    """
+    _load(cur, item_id)
+    cur.execute(
+        "update memory_items set last_confirmed_at = now(), needs_review = false where id = %s",
+        (item_id,),
+    )
+    _audit(cur, item_id, "confirmed")
+    cur.connection.commit()
+    return _return(cur, item_id)
 
 
 @router.get("/items/{item_id}/graph")

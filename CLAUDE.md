@@ -49,11 +49,13 @@ Chat runs on one of three providers — OpenRouter, Gemini or Groq — selectabl
 (D32). Everything lives in `backend/app/services/llm.py` (see D29–D31 for the port off Gemini).
 `LLM_BASE_URL` can point at any OpenAI-compatible gateway; no other code changes.
 
-- **Only chat is switchable.** Extraction and embeddings are pinned regardless of which model
-  answers, and this is load-bearing rather than incidental: switching the embedder fragments the
-  vector space silently (D31), and routing extraction through a dropdown makes status classification
-  non-reproducible. **The memory must be provider-independent** — that portability is the demo, so
-  do not "simplify" by letting the selector drive the whole pipeline.
+- **Only chat is switchable.** Extraction, embeddings and the high-stakes draft are pinned regardless
+  of which model answers, and this is load-bearing rather than incidental: switching the embedder
+  fragments the vector space silently (D31), and routing extraction or the draft's claim
+  decomposition through a dropdown makes status classification and the overstatement check
+  non-reproducible (D33). **The memory must be provider-independent** — that portability is the demo,
+  so do not "simplify" by letting the selector drive the whole pipeline. Where a pinned path is
+  reachable from the UI, disable the selector visibly rather than ignoring it.
 - **Report which model answered, not which was requested.** An unknown or unconfigured provider
   falls back rather than failing the turn, so the response carries the provider/model that actually
   ran and the UI labels each turn with it.
@@ -93,6 +95,18 @@ Chat runs on one of three providers — OpenRouter, Gemini or Groq — selectabl
   Tombstone + flag-for-review is the acceptable fallback; say so plainly.
 - Do not overclaim the PII detector. Regex + Luhn is a fine MVP. Name it as such.
 - If a phase ships partial, record what is stubbed in `PHASES.md` rather than papering over it.
+
+## Test constraints — both of these have already cost a real bug
+A check that passes for the wrong reason is worse than a missing one, because it is counted as
+covered. Two ways that has happened here, both recorded (D24, D34):
+
+- **Do not probe with words that could already be in the store.** Use an invented token seeded by
+  the test itself. Otherwise a legitimate recall is indistinguishable from a leak, and a *passing*
+  run means nothing either.
+- **Do not let the model decide whether a guard gets exercised.** A model asked to overstate will
+  often decline, so an end-to-end test of a safety check can pass without the check ever running.
+  Keep such checks as pure functions and walk their failing rows directly; `--no-llm` modes exist
+  for exactly this and also make the evidence demoable without spending quota.
 
 ## Working style
 - Concise, copy-pasteable output. No long explanations unless asked.

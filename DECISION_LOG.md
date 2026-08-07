@@ -328,6 +328,96 @@ returns no candidates at all rather than an error.
 
 ---
 
+<!-- D25–D28 are P2 and P6. Same caveat: substance is right, voice is not yours yet. -->
+
+### D25 — Heuristics cross-check the model rather than running before it
+**Chose:** regex and tense heuristics that run *after* the extraction call and adjust its answer —
+sensitivity upward only, status disagreement into forced review.
+**Considered:** the literal design in SYSTEM_DESIGN §3 — cheap heuristics first, LLM only as fallback.
+**Rejected because:** extraction and classification are one batched call (D16, carried forward by
+D29), so there is no
+earlier slot to occupy without adding a request per turn, which the 20/day quota cannot absorb.
+Running them afterwards keeps the same safety property and costs nothing.
+**The asymmetry is the design, not a detail:** sensitivity can only be raised, never lowered, so a
+disagreement between regex and model always resolves toward the more restrictive answer (principle 1).
+Status is treated differently — a regex genuinely cannot out-classify an LLM on tense, so it does not
+overrule, it just buys the item a human glance.
+
+### D26 — The overstatement check runs in Python, not in the model
+**Chose:** the model returns claims labelled with how complete its own wording sounds; code compares
+that against the stored `assertion_status`.
+**Considered:** asking the model directly whether the draft overstates any memory — one call, less
+plumbing, and it reads well in a demo.
+**Rejected because:** a model grading its own accuracy is exactly the check that fails silently, and
+silent failure of a status claim *is* the originating incident. Self-assessment would have been a
+more impressive-sounding implementation of the same bug. The model is only asked to describe its own
+phrasing, which it has no incentive to get wrong; the judgement is deterministic and inspectable.
+
+### D27 — A claim is compared against its most complete source, not all of them
+**Chose:** a claim overstates only when it asserts more than *any* of its sources support.
+**Considered:** flagging whenever any source is less complete than the assertion — the first
+implementation, and the stricter-sounding one.
+**Rejected because:** it fired on "Currently drafting a paper… for submission next month", which is
+accurate — it rests on an `in_progress` fact and a `planned` one and describes both correctly. A
+verifier that flags correct sentences trains the user to dismiss it, which is the habituation failure
+principle 4 exists to prevent. A warning that is right 60% of the time is worse than no warning.
+**Known cost, recorded rather than hidden:** a single claim blending two stages is checked against
+its most complete source, so a blend could hide an overstatement. Mitigated by asking the model for
+one claim per distinct fact, which held under test. Not guaranteed.
+
+### D28 — Revoking a memory rejects it, rather than hiding it from one answer
+**Chose:** "drop this and redo" tombstones the item, clears its attributions, and re-answers.
+**Considered:** excluding it from this one response only, leaving the memory intact.
+**Rejected because:** a user who removes a memory from an answer is telling you the memory is wrong
+or unwanted, not that this particular sentence was awkward. Suppressing it once and quietly reusing
+it next turn is the silent-accumulation behaviour the whole project objects to. Both answers are kept
+and shown side by side, because "here is what I would have said without that" only means something
+if the user can see the difference rather than take it on trust.
+
+<!-- D33–D34 come from merging P2/P6 into the multi-provider branch. Same caveat. -->
+
+### D33 — The high-stakes draft is the one generation that is *not* switchable
+**Chose:** `/verified-draft` always runs on the pinned extraction model. The composer's model
+selector is disabled — visibly, with a reason — while "High-stakes draft" is ticked.
+**Considered:** letting the draft honour the selector like an ordinary turn (D32), since it is
+user-facing text and a user might reasonably want to choose who writes their CV line.
+**Rejected because:** the draft's claim decomposition is not output, it is *input to a check*. The
+model labels how complete each of its own sentences sounds, and Python compares that against the
+stored status (D26). Route that labelling through a dropdown and whether the CV failure case gets
+caught depends on which provider was selected — the guarantee becomes a property of the UI. That is
+D32's argument for extraction, applied to the other place a model's output is load-bearing rather
+than merely read.
+**On disabling rather than ignoring:** the selector could have stayed enabled and been quietly
+overridden. A control that silently does nothing is worse than one that says it cannot — it teaches
+the user their choices are decorative, which is precisely the complaint this project makes about
+memory.
+
+### D34 — The overstatement check is tested at the function, because the model will not fail on demand
+**Chose:** extract the comparison out of the route into a pure `classify.check_claim()`, and walk its
+whole truth table in a `--no-llm` mode.
+**Considered:** leaving it inline and testing it end to end, which is how it arrived.
+**Rejected because:** the end-to-end test could not reach the case that matters. Asked plainly to
+write "I published the paper" against an `in_progress` memory, the model *declines to overstate* — so
+the check named "the guard fires when the draft does overstate" passed every run without the guard
+ever firing, and honestly said so in a note. A guarantee whose test only passes when nothing goes
+wrong is not tested. The detector is a rank comparison with no I/O, so its failing rows can be walked
+directly, including the row the model refuses to produce.
+**Same lesson as D24, reached from the other side:** there, a test *failed* because the store held
+facts it did not control; here, a test *passed* because the model would not produce the input it
+needed. Both are the same mistake — letting something outside the test decide what the test actually
+exercises.
+**Fixed under this too:** revoke-and-regenerate asserted only that the regenerated string *differed*
+from the original, and revoked whichever memory happened to rank first. Against a store holding
+several runs' overlapping facts, revoking one copy of "writing a paper with Priya" left another
+standing, so the answer was correctly unchanged and the test called that a bug — and a passing run
+would have meant no more, since two sampled strings at temperature 0.7 differ for their own reasons.
+It now seeds a memory containing an invented token that appears nowhere else in the system — never in
+a message, so it cannot reach the model through conversation history — and asserts the *fact*
+disappears rather than that the wording moved. Verified: "You are preparing a talk on the
+Wickersham-Board protocol" becomes "I don't know what you are preparing for the lab retreat."
+
+---
+
 ## To verify before any of this goes in a slide
 Every citation below is reconstructed from memory and must be checked against the actual paper.
 A fabricated reference at a SIGCHI event is unrecoverable.

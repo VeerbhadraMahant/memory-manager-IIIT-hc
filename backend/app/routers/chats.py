@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
@@ -7,18 +8,24 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from app.config import settings
 from app.db import db_cursor
 from app.models import (
+    AssertionStatus,
     CandidatesResponse,
     Chat,
     ChatCreate,
+    DraftRequest,
     ExtractionStatus,
     Message,
     MessageCreate,
+    RegenerateRequest,
+    RegenerateResponse,
     ScopeReport,
     TurnRequest,
     TurnResponse,
+    VerifiedDraft,
 )
 from app.routers.memory import ITEM_SELECT
 from app.services import llm
+from app.services.classify import check_claim
 from app.services.extraction import run_extraction
 from app.services.retrieval import retrieve
 
@@ -187,6 +194,152 @@ def turn_candidates(chat_id: UUID, message_id: UUID, cur=Depends(db_cursor)):
         "error": msg["extraction_error"],
         "candidates": [i for i in items if i["review_state"] == "pending"],
         "auto_accepted": [i for i in items if i["review_state"] == "auto_accepted"],
+    }
+
+
+@router.post("/{chat_id}/regenerate", response_model=RegenerateResponse)
+def regenerate(chat_id: UUID, payload: RegenerateRequest, cur=Depends(db_cursor)):
+    """Answer the same turn again, without the memories the user just revoked.
+
+    Revoking is a memory-level act, not a display filter: the items are rejected and
+    tombstoned, so they will not come back on the next turn either. Returning the old
+    and new answers side by side is the point — "here is what I would have said
+    without that" is the thing that makes the influence legible.
+    """
+    _assert_chat(cur, chat_id)
+
+    cur.execute(
+        "select * from messages where id = %s and chat_id = %s and role = 'assistant'",
+        (payload.message_id, chat_id),
+    )
+    target = cur.fetchone()
+    if not target:
+        raise HTTPException(404, "assistant message not found in this chat")
+
+    revoked: list[dict] = []
+    for item_id in payload.revoke_item_ids:
+        cur.execute(
+            """update memory_items
+               set review_state = 'rejected', deleted_at = now()
+               where id = %s and user_id = %s and deleted_at is null
+               returning id, content, status, scope, sensitivity, block_id""",
+            (item_id, settings.demo_user_id),
+        )
+        row = cur.fetchone()
+        if row:
+            revoked.append({**row, "block_name": None, "distance": 0.0, "is_stale": False})
+            cur.execute(
+                """insert into audit_log (memory_item_id, action, actor, detail)
+                   values (%s, 'revoked_at_use_time', 'user', %s)""",
+                (item_id, json.dumps({"message_id": str(payload.message_id)})),
+            )
+        cur.execute("delete from attributions where memory_item_id = %s", (item_id,))
+    cur.connection.commit()
+
+    # The user turn this reply answered.
+    cur.execute(
+        """select content from messages
+           where chat_id = %s and role = 'user' and created_at < %s
+           order by created_at desc limit 1""",
+        (chat_id, target["created_at"]),
+    )
+    prompt_row = cur.fetchone()
+    if not prompt_row:
+        raise HTTPException(422, "no user turn precedes that reply")
+
+    used = retrieve(
+        cur, str(settings.demo_user_id), str(chat_id), prompt_row["content"],
+        exclude={str(i) for i in payload.revoke_item_ids},
+    )
+
+    cur.execute(
+        """select role, content from messages
+           where chat_id = %s and role in ('user','assistant') and created_at < %s
+           order by created_at desc limit %s""",
+        (chat_id, target["created_at"], HISTORY_TURNS),
+    )
+    history = list(reversed(cur.fetchall()))
+
+    try:
+        reply, _, _ = llm.chat_response(history, used, payload.provider)
+    except Exception as e:
+        raise HTTPException(502, f"chat call failed: {type(e).__name__}: {e}") from e
+
+    cur.execute(
+        "update messages set content = %s where id = %s returning *",
+        (reply, target["id"]),
+    )
+    updated = cur.fetchone()
+    cur.execute("delete from attributions where message_id = %s", (target["id"],))
+    for m in used:
+        cur.execute(
+            """insert into attributions (message_id, memory_item_id) values (%s, %s)
+               on conflict do nothing""",
+            (target["id"], m["id"]),
+        )
+    cur.connection.commit()
+
+    return {
+        "previous": target["content"],
+        "regenerated": reply,
+        "revoked": revoked,
+        "used_memories": used,
+        "assistant_message": updated,
+    }
+
+
+@router.post("/{chat_id}/verified-draft", response_model=VerifiedDraft)
+def verified_draft(chat_id: UUID, payload: DraftRequest, cur=Depends(db_cursor)):
+    """High-stakes output. Every memory-derived claim is checked before it lands.
+
+    The model drafts the text and labels how complete each of its own sentences sounds.
+    The comparison against what the memory actually says happens **here, in Python** —
+    asking a model whether it overstated something is the check that fails quietly, and
+    this is the exact failure the project exists to prevent.
+    """
+    _assert_chat(cur, chat_id)
+
+    memories = retrieve(
+        cur, str(settings.demo_user_id), str(chat_id), payload.instruction
+    )
+    try:
+        result = llm.verified_draft(payload.instruction, memories)
+    except Exception as e:
+        raise HTTPException(502, f"draft call failed: {type(e).__name__}: {e}") from e
+    if result is None:
+        raise HTTPException(502, "draft could not be parsed")
+
+    claims: list[dict] = []
+    for c in result.claims:
+        sources = [
+            memories[int(lbl[1:]) - 1]
+            for lbl in c.memory_labels
+            if lbl[1:].isdigit() and 0 < int(lbl[1:]) <= len(memories)
+        ]
+        asserted = None if c.asserted_as == "none" else AssertionStatus(c.asserted_as)
+
+        # The comparison itself is a pure function in classify.py, so the P6 guarantee
+        # can be tested across its whole truth table without a model call — including
+        # the overstating case the model declines to produce on request.
+        stale = any(s.get("is_stale") for s in sources)
+        overstates, problem = check_claim(
+            asserted, [AssertionStatus(s["status"]) for s in sources], stale
+        )
+
+        claims.append({
+            "text": c.text,
+            "asserted_as": asserted,
+            "sources": sources,
+            "overstates": overstates,
+            "stale_source": stale,
+            "problem": problem,
+        })
+
+    return {
+        "instruction": payload.instruction,
+        "draft": result.draft,
+        "claims": claims,
+        "needs_confirmation": any(c["overstates"] or c["stale_source"] for c in claims),
     }
 
 
