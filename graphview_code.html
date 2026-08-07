@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Synaptic Memory - Graph</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@600;700&amp;family=Inter:wght@400&amp;family=JetBrains+Mono:wght@500&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+  tailwind.config = {
+    darkMode: "class",
+    theme: {
+      extend: {
+        "colors": {
+                "inverse-surface": "#e2e2e2",
+                "on-tertiary-fixed": "#141c25",
+                "surface-container-low": "#1a1c1c",
+                "on-surface-variant": "#dfc0b2",
+                "memory-stated": "#F77A25",
+                "on-background": "#e2e2e2",
+                "primary-container": "#f77a25",
+                "primary-fixed-dim": "#ffb68e",
+                "surface-tint": "#ffb68e",
+                "outline-variant": "#574237",
+                "on-secondary-fixed-variant": "#3a4664",
+                "on-secondary-container": "#a9b5d8",
+                "surface-bright": "#38393a",
+                "primary": "#ffb68e",
+                "inverse-primary": "#9c4500",
+                "tertiary-fixed": "#dbe3ef",
+                "on-secondary": "#24304c",
+                "on-secondary-fixed": "#0e1b36",
+                "surface-container-lowest": "#0c0f0f",
+                "memory-inferred": "#C2CEF2",
+                "surface-variant": "#333535",
+                "on-primary-fixed-variant": "#773300",
+                "warning-pii": "#F77A25",
+                "on-error-container": "#ffdad6",
+                "on-tertiary": "#29313a",
+                "surface": "#121414",
+                "on-primary-fixed": "#331200",
+                "surface-container": "#1e2020",
+                "secondary-container": "#3a4664",
+                "tertiary-container": "#969ea9",
+                "error-container": "#93000a",
+                "primary-fixed": "#ffdbca",
+                "tertiary-fixed-dim": "#bfc7d3",
+                "background": "#121414",
+                "surface-container-highest": "#333535",
+                "on-primary-container": "#5a2500",
+                "tertiary": "#bfc7d3",
+                "on-error": "#690005",
+                "surface-dim": "#121414",
+                "secondary-fixed-dim": "#bac6ea",
+                "outline": "#a68b7e",
+                "surface-container-high": "#282a2b",
+                "secondary-fixed": "#d9e2ff",
+                "on-tertiary-fixed-variant": "#3f4851",
+                "inverse-on-surface": "#2f3131",
+                "on-tertiary-container": "#2d353e",
+                "background-deep": "#303841",
+                "error": "#ffb4ab",
+                "secondary": "#bac6ea",
+                "on-surface": "#e2e2e2",
+                "on-primary": "#542200",
+                "surface-light": "#FAFAFA",
+                "surface-node-bg": "#121414",
+                "surface-active": "#1e2020",
+                "category-work": "#f77a25",
+                "category-personal": "#bac6ea",
+                "category-health": "#bfc7d3",
+        },
+        "borderRadius": {
+                "DEFAULT": "0.5rem",
+                "lg": "0.5rem",
+                "xl": "0.75rem",
+                "full": "9999px"
+        },
+        "spacing": {
+                "gutter-md": "24px",
+                "container-max-width": "1200px",
+                "margin-mobile": "16px",
+                "margin-desktop": "40px",
+                "unit": "4px",
+                "sidebar-width": "320px",
+                "margin-edge": "2rem"
+        },
+        "fontFamily": {
+                "headline-lg-mobile": [
+                        "Hanken Grotesk"
+                ],
+                "headline-lg": [
+                        "Hanken Grotesk"
+                ],
+                "body-lg": [
+                        "Inter"
+                ],
+                "headline-md": [
+                        "Hanken Grotesk"
+                ],
+                "label-sm": [
+                        "JetBrains Mono"
+                ],
+                "label-md": [
+                        "JetBrains Mono"
+                ],
+                "body-md": [
+                        "Inter"
+                ],
+                "label-mono": [
+                        "JetBrains Mono"
+                ],
+                "body-sm": [
+                        "Inter"
+                ]
+        },
+        "fontSize": {
+                "headline-lg-mobile": [
+                        "24px",
+                        {
+                                "lineHeight": "32px",
+                                "fontWeight": "700"
+                        }
+                ],
+                "headline-lg": [
+                        "32px",
+                        {
+                                "lineHeight": "40px",
+                                "letterSpacing": "-0.02em",
+                                "fontWeight": "700"
+                        }
+                ],
+                "body-lg": [
+                        "18px",
+                        {
+                                "lineHeight": "28px",
+                                "fontWeight": "400"
+                        }
+                ],
+                "headline-md": [
+                        "20px",
+                        {
+                                "lineHeight": "28px",
+                                "fontWeight": "600"
+                        }
+                ],
+                "label-sm": [
+                        "12px",
+                        {
+                                "lineHeight": "16px",
+                                "letterSpacing": "0.05em",
+                                "fontWeight": "500"
+                        }
+                ],
+                "label-md": [
+                        "14px",
+                        {
+                                "lineHeight": "20px",
+                                "letterSpacing": "0.05em",
+                                "fontWeight": "500"
+                        }
+                ],
+                "body-md": [
+                        "16px",
+                        {
+                                "lineHeight": "24px",
+                                "fontWeight": "400"
+                        }
+                ],
+                "label-mono": [
+                        "12px",
+                        {
+                                "lineHeight": "16px",
+                                "letterSpacing": "0.05em",
+                                "fontWeight": "500"
+                        }
+                ],
+                "body-sm": [
+                        "14px",
+                        {
+                                "lineHeight": "20px",
+                                "fontWeight": "400"
+                        }
+                ]
+        }
+},
+    },
+  }
+</script>
+<style>
+        .node-glow-work { box-shadow: 0 0 15px 5px rgba(247, 122, 37, 0.4); }
+        .node-glow-personal { box-shadow: 0 0 15px 5px rgba(186, 198, 234, 0.4); }
+        .node-glow-health { box-shadow: 0 0 15px 5px rgba(191, 199, 211, 0.4); }
+        
+        .edge-solid { stroke-width: 1.5px; stroke: #a68b7e; stroke-opacity: 0.8; }
+        .edge-dashed { stroke-width: 1px; stroke: #a68b7e; stroke-opacity: 0.6; stroke-dasharray: 4 4; }
+        .edge-active { stroke-width: 2px; stroke: #f77a25; stroke-opacity: 1; }
+
+        .bg-grid-pattern {
+            background-image: radial-gradient(#333535 1px, transparent 1px);
+            background-size: 20px 20px;
+        }
+    </style>
+</head>
+<body class="bg-background text-on-background h-screen overflow-hidden flex flex-col md:flex-row font-body-md selection:bg-primary-container selection:text-on-primary-container">
+<!-- SideNavBar (Desktop) -->
+<nav class="hidden lg:flex flex-col h-screen fixed left-0 top-0 z-40 bg-surface-container w-sidebar-width border-r border-outline-variant shadow-sm transition-all duration-300">
+<div class="p-gutter-md flex items-center gap-4">
+<div class="w-10 h-10 rounded-full bg-primary-container flex items-center justify-center text-on-primary-container">
+<span class="material-symbols-outlined">memory</span>
+</div>
+<div>
+<h1 class="font-headline-md text-headline-md text-primary">Memory Engine</h1>
+<p class="font-label-mono text-label-mono text-on-surface-variant">v2.4 active</p>
+</div>
+</div>
+<div class="px-gutter-md mb-6">
+<button class="w-full flex items-center justify-center gap-2 bg-primary text-on-primary py-2 px-4 rounded font-label-mono text-label-mono hover:bg-primary-fixed-dim transition-colors">
+<span class="material-symbols-outlined" style="font-size: 16px;">add</span>
+                New Memory
+            </button>
+</div>
+<ul class="flex-1 flex flex-col gap-1 px-4">
+<li>
+<a class="flex items-center gap-3 px-4 py-3 rounded bg-surface-active text-primary border-r-4 border-primary scale-95 transition-transform" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">hub</span>
+<span class="font-label-mono text-label-mono">Nodes</span>
+</a>
+</li>
+<li>
+<a class="flex items-center gap-3 px-4 py-3 rounded text-on-surface-variant hover:bg-surface-variant/50 hover:bg-surface-variant transition-all hover:text-primary transition-colors duration-200" href="#">
+<span class="material-symbols-outlined">chat_bubble</span>
+<span class="font-label-mono text-label-mono">Chat</span>
+</a>
+</li>
+<li>
+<a class="flex items-center gap-3 px-4 py-3 rounded text-on-surface-variant hover:bg-surface-variant/50 hover:bg-surface-variant transition-all hover:text-primary transition-colors duration-200" href="#">
+<span class="material-symbols-outlined">edit_note</span>
+<span class="font-label-mono text-label-mono">Management</span>
+</a>
+</li>
+<li>
+<a class="flex items-center gap-3 px-4 py-3 rounded text-on-surface-variant hover:bg-surface-variant/50 hover:bg-surface-variant transition-all hover:text-primary transition-colors duration-200" href="#">
+<span class="material-symbols-outlined">security</span>
+<span class="font-label-mono text-label-mono">Privacy</span>
+</a>
+</li>
+</ul>
+<div class="mt-auto p-4 border-t border-outline-variant">
+<ul class="flex flex-col gap-1">
+<li>
+<a class="flex items-center gap-3 px-4 py-2 rounded text-on-surface-variant hover:bg-surface-variant transition-all hover:text-primary transition-colors duration-200" href="#">
+<span class="material-symbols-outlined">help_outline</span>
+<span class="font-label-mono text-label-mono">Help</span>
+</a>
+</li>
+<li>
+<a class="flex items-center gap-3 px-4 py-2 rounded text-on-surface-variant hover:bg-surface-variant transition-all hover:text-primary transition-colors duration-200" href="#">
+<span class="material-symbols-outlined">history_edu</span>
+<span class="font-label-mono text-label-mono">Logs</span>
+</a>
+</li>
+</ul>
+</div>
+</nav>
+<!-- Main Content Area -->
+<div class="flex-1 flex flex-col lg:ml-sidebar-width h-screen relative">
+<!-- TopNavBar (Web & Mobile Hybrid, adapts based on screen) -->
+<header class="flex justify-between items-center px-margin-edge w-full h-16 bg-surface-container-low border-b border-outline-variant z-30 docked full-width top-0">
+<div class="flex items-center gap-4">
+<span class="text-headline-md font-headline-md font-bold text-primary lg:hidden">Synaptic Memory</span>
+<span class="text-headline-md font-headline-md font-bold text-primary hidden lg:block">Graph View</span>
+</div>
+<!-- Top Nav Links (Hidden on Mobile, handled by BottomNav) -->
+<nav class="hidden md:flex gap-6">
+<a class="text-primary border-b-2 border-primary pb-1 font-label-mono text-label-mono scale-95 transition-transform" href="#">Graph</a>
+<a class="text-on-surface-variant hover:text-primary transition-colors duration-200 font-label-mono text-label-mono" href="#">Summary</a>
+<a class="text-on-surface-variant hover:text-primary transition-colors duration-200 font-label-mono text-label-mono" href="#">History</a>
+</nav>
+<div class="flex items-center gap-4">
+<!-- Search (on right) -->
+<div class="relative hidden sm:block">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant" style="font-size: 20px;">search</span>
+<input class="bg-surface-container-highest border border-outline-variant rounded-full py-1.5 pl-9 pr-4 text-body-sm text-on-surface focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary w-48 lg:w-64 transition-all" placeholder="Search nodes..." type="text"/>
+</div>
+<button class="text-on-surface-variant hover:text-primary transition-colors duration-200">
+<span class="material-symbols-outlined">settings</span>
+</button>
+<button class="text-on-surface-variant hover:text-primary transition-colors duration-200">
+<span class="material-symbols-outlined">account_circle</span>
+</button>
+</div>
+</header>
+<!-- Canvas Area (Node Graph) -->
+<main class="flex-1 relative overflow-hidden bg-grid-pattern cursor-move">
+<!-- SVG Graph Layer -->
+<svg class="absolute inset-0 w-full h-full" xmlns="http://www.w3.org/2000/svg">
+<!-- Edges -->
+<line class="edge-solid" x1="50%" x2="30%" y1="50%" y2="30%"></line>
+<line class="edge-dashed" x1="50%" x2="70%" y1="50%" y2="25%"></line>
+<line class="edge-solid edge-active" x1="50%" x2="75%" y1="50%" y2="60%"></line>
+<line class="edge-solid" x1="50%" x2="35%" y1="50%" y2="70%"></line>
+<!-- Sub-edges (Work) -->
+<line class="edge-solid edge-active" x1="75%" x2="85%" y1="60%" y2="50%"></line>
+<line class="edge-solid" x1="75%" x2="80%" y1="60%" y2="75%"></line>
+<line class="edge-solid" x1="75%" x2="65%" y1="60%" y2="80%"></line>
+</svg>
+<!-- Nodes (HTML Overlays for better typography/interactivity) -->
+<div class="absolute inset-0 pointer-events-none">
+<!-- Center Node -->
+<div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 flex flex-col items-center justify-center w-24 h-24 bg-surface-container-highest border-2 border-outline-variant rounded-full shadow-lg pointer-events-auto hover:scale-105 transition-transform cursor-pointer">
+<span class="font-headline-md text-headline-md text-on-surface">Core</span>
+</div>
+<!-- Primary: Personal -->
+<div class="absolute top-[30%] left-[30%] -translate-x-1/2 -translate-y-1/2 flex flex-col items-center justify-center w-20 h-20 bg-surface-node-bg border-2 border-category-personal rounded-full pointer-events-auto hover:scale-105 transition-transform cursor-pointer node-glow-personal opacity-90">
+<span class="font-label-mono text-label-mono text-category-personal">Personal</span>
+</div>
+<!-- Primary: Travel -->
+<div class="absolute top-[25%] left-[70%] -translate-x-1/2 -translate-y-1/2 flex flex-col items-center justify-center w-16 h-16 bg-surface-node-bg border-2 border-tertiary-container rounded-full pointer-events-auto hover:scale-105 transition-transform cursor-pointer opacity-80">
+<span class="font-label-mono text-[10px] text-tertiary-container">Travel</span>
+</div>
+<!-- Primary: Health -->
+<div class="absolute top-[70%] left-[35%] -translate-x-1/2 -translate-y-1/2 flex flex-col items-center justify-center w-18 h-18 bg-surface-node-bg border-2 border-category-health rounded-full pointer-events-auto hover:scale-105 transition-transform cursor-pointer node-glow-health opacity-85">
+<span class="font-label-mono text-label-mono text-category-health">Health</span>
+</div>
+<!-- Primary: Work (Active Branch) -->
+<div class="absolute top-[60%] left-[75%] -translate-x-1/2 -translate-y-1/2 flex flex-col items-center justify-center w-24 h-24 bg-surface-active border-2 border-category-work rounded-full shadow-lg pointer-events-auto scale-110 transition-transform cursor-pointer node-glow-work z-10">
+<span class="font-label-mono text-label-mono text-category-work font-bold">Work</span>
+<button class="absolute -top-2 -right-2 bg-surface-container-high rounded-full p-1 hover:bg-surface-variant transition-colors" title="Trace History">
+<span class="material-symbols-outlined text-outline" style="font-size: 14px;">history</span>
+</button>
+</div>
+<!-- Sub-node: Project X (Highlighted) -->
+<div class="absolute top-[50%] left-[85%] -translate-x-1/2 -translate-y-1/2 flex flex-col items-center justify-center w-20 h-20 bg-surface-bright border-2 border-white rounded-full shadow-lg pointer-events-auto scale-110 transition-transform cursor-pointer z-20">
+<span class="font-label-mono text-label-mono text-white text-center leading-tight">Project X</span>
+<div class="absolute -bottom-6 bg-category-work text-black px-2 py-0.5 rounded font-label-mono text-[10px] whitespace-nowrap shadow-md">85% Match</div>
+</div>
+<!-- Sub-node: Deadline -->
+<div class="absolute top-[75%] left-[80%] -translate-x-1/2 -translate-y-1/2 flex flex-col items-center justify-center w-14 h-14 bg-surface-node-bg border border-category-work rounded-full pointer-events-auto hover:scale-105 transition-transform cursor-pointer opacity-70">
+<span class="font-label-mono text-[9px] text-on-surface-variant">Deadline</span>
+</div>
+<!-- Sub-node: Feedback -->
+<div class="absolute top-[80%] left-[65%] -translate-x-1/2 -translate-y-1/2 flex flex-col items-center justify-center w-16 h-16 bg-surface-node-bg border border-category-work rounded-full pointer-events-auto hover:scale-105 transition-transform cursor-pointer opacity-70">
+<span class="font-label-mono text-[9px] text-on-surface-variant">Feedback</span>
+</div>
+</div>
+<!-- Contextual Overlay / Inspector (Simulating active selection) -->
+<div class="absolute right-margin-edge top-margin-edge w-80 bg-surface-container/95 backdrop-blur-xl border border-outline-variant rounded shadow-[0_8px_32px_rgba(0,0,0,0.4)] flex flex-col pointer-events-auto z-30">
+<div class="p-4 border-b border-outline-variant flex justify-between items-center bg-category-work/10 rounded-t">
+<div class="flex items-center gap-2">
+<div class="w-3 h-3 rounded-full bg-category-work"></div>
+<h3 class="font-headline-md text-body-md font-semibold text-on-surface">Project X</h3>
+</div>
+<button class="text-on-surface-variant hover:text-on-surface transition-colors">
+<span class="material-symbols-outlined" style="font-size: 20px;">close</span>
+</button>
+</div>
+<div class="p-4 flex-1 overflow-y-auto">
+<p class="font-body-sm text-on-surface-variant mb-4">Memory context active for current query negotiation. Contains high-relevance architectural decisions.</p>
+<div class="space-y-2">
+<div class="flex items-center justify-between p-2 rounded bg-surface-container-highest border border-outline-variant/50">
+<span class="font-label-mono text-[11px] text-outline">Persistence</span>
+<!-- Toggle switch mockup -->
+<div class="w-8 h-4 bg-primary-container rounded-full relative cursor-pointer">
+<div class="w-3 h-3 bg-on-primary-container rounded-full absolute top-0.5 right-0.5"></div>
+</div>
+</div>
+<div class="flex items-center justify-between p-2 rounded bg-surface-container-highest border border-outline-variant/50">
+<span class="font-label-mono text-[11px] text-outline">Traceability</span>
+<span class="font-label-mono text-[11px] text-primary">Chat #8492</span>
+</div>
+</div>
+</div>
+<div class="p-4 border-t border-outline-variant flex flex-col gap-2">
+<button class="w-full flex items-center justify-center gap-2 bg-surface-container-highest border border-outline-variant text-on-surface py-2 rounded font-label-mono text-label-mono hover:bg-surface-variant transition-colors">
+<span class="material-symbols-outlined" style="font-size: 16px;">edit</span>
+                        Edit Content
+                    </button>
+<div class="grid grid-cols-2 gap-2">
+<button class="flex items-center justify-center gap-1 bg-surface-container-highest border border-outline-variant text-on-surface py-2 rounded font-label-mono text-label-mono hover:bg-surface-variant transition-colors">
+<span class="material-symbols-outlined" style="font-size: 14px;">account_tree</span>
+                            Sub-node
+                        </button>
+<button class="flex items-center justify-center gap-1 bg-surface-container-highest border border-outline-variant text-on-surface py-2 rounded font-label-mono text-label-mono hover:bg-surface-variant transition-colors">
+<span class="material-symbols-outlined" style="font-size: 14px;">summarize</span>
+                            Summary
+                        </button>
+</div>
+<button class="w-full flex items-center justify-center gap-2 bg-error-container/20 border border-error-container/50 text-error py-2 rounded font-label-mono text-label-mono hover:bg-error-container/30 transition-colors mt-2">
+<span class="material-symbols-outlined" style="font-size: 16px;">delete_sweep</span>
+                        Prune Branch
+                    </button>
+</div>
+</div>
+<!-- Reference Image Placeholder as requested (using as a subtle background element if needed, but styling per prompt) -->
+<!-- <img src="https://lh3.googleusercontent.com/aida-public/AB6AXuDcPM9CfrfHXSLPhxzKFIeOD07v-jqXIst18PDuBN7700wj-jA1YtA8l4Y7wQWUfm9TaBT4LMSYxKbABlv_knFxj03p2Acnjol8mQmExT5TKY2vachq0eUFjPMmWbJRp0uJwGWuiGCHhG3sQh3vKkb3Q5P6TTi1MR4Ghjf9Z48K3JS7otzvI7YdyV0Xj8p8-jRAUMt5HREYPL_XAhPOg193gz70IIAeVlIqGU1C_ZsiPSoRZV1g8eNMR8dKMgp_W9YH72U" data-alt="A highly detailed 50-100 word prompt describing a complex, organic network graph visualization in deep space. Glowing connection lines branch out from central colorful nodes representing data clusters. The background is a very dark, deep slate or cosmic black. Nodes have distinct glowing auras in amber, magenta, and cyan, signifying different data categories. The style is modern, technical, yet organic and fluid, resembling a neural network or synaptic map with a premium, professional tech aesthetic." class="hidden"> -->
+</main>
+</div>
+<!-- BottomNavBar (Mobile) -->
+<nav class="lg:hidden fixed bottom-0 left-0 w-full z-50 flex justify-around items-center px-4 py-2 pb-safe bg-surface-container-highest/95 backdrop-blur-xl border-t border-outline-variant shadow-lg rounded-t">
+<button class="flex flex-col items-center justify-center bg-primary-container text-on-primary-container rounded p-2 scale-90">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">visibility</span>
+<span class="font-label-mono text-label-mono mt-1">View</span>
+</button>
+<button class="flex flex-col items-center justify-center text-on-surface-variant p-2 hover:text-primary transition-colors">
+<span class="material-symbols-outlined">edit</span>
+<span class="font-label-mono text-label-mono mt-1">Manage</span>
+</button>
+<button class="flex flex-col items-center justify-center text-on-surface-variant p-2 hover:text-primary transition-colors">
+<span class="material-symbols-outlined">tune</span>
+<span class="font-label-mono text-label-mono mt-1">Control</span>
+</button>
+<button class="flex flex-col items-center justify-center text-on-surface-variant p-2 hover:text-primary transition-colors relative">
+<span class="material-symbols-outlined">notifications</span>
+<span class="font-label-mono text-label-mono mt-1">Alerts</span>
+<span class="absolute top-1 right-2 w-2 h-2 bg-error rounded-full"></span>
+</button>
+</nav>
+</body></html>
