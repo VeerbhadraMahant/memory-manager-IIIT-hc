@@ -2,21 +2,28 @@
 
 // P6 stake-proportional verification.
 //
-// The draft is shown, but every claim that rests on a memory is broken out with the
-// memory behind it and how complete the sentence made it sound. Claims that say more
-// than the memory supports are marked and must be dealt with before the text is
-// treated as ready.
+// The draft is shown, but every claim that rests on a memory is broken out with
+// the memory behind it and how complete the sentence made it sound. Claims that
+// say more than the memory supports are marked and must be dealt with before the
+// text is treated as ready.
 //
 // The comparison is done server-side in Python against the stored status, not by
-// asking the model whether it overstated — a model grading its own accuracy is the
-// check that fails quietly, and this is the exact failure the project exists to stop.
+// asking the model whether it overstated — a model grading its own accuracy is
+// the check that fails quietly, and this is the exact failure the project exists
+// to stop (D34, and CLAUDE.md's test constraints).
+//
+// Restyled onto the §1 tokens. The two states are distinguished by more than
+// colour: the heading text says which one it is, and flagged claims carry an
+// icon (§7 / WCAG 1.4.1).
 
 import { useState } from "react";
-import {
-  api,
-  STATUS_LABEL,
-  type VerifiedDraft,
-} from "@/lib/api";
+import { AlertTriangle, CheckCircle2, Loader2 } from "lucide-react";
+
+import { STATUS_LABEL, type VerifiedDraft } from "@/lib/api";
+import { useMemoryActions } from "@/lib/memory-store";
+import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Chip } from "@/components/ui/chip";
 
 export function DraftPanel({
   draft,
@@ -33,33 +40,31 @@ export function DraftPanel({
   return (
     <section
       aria-label="Verified draft"
-      className={
-        "my-3 rounded-lg border " +
-        (draft.needs_confirmation
-          ? "border-red-300 bg-red-50/50 dark:border-red-900/60 dark:bg-red-950/20"
-          : "border-emerald-300 bg-emerald-50/40 dark:border-emerald-900/60 dark:bg-emerald-950/20")
-      }
+      className={cn(
+        "on-surface my-3 overflow-hidden rounded-card bg-surface text-ink",
+        draft.needs_confirmation ? "border-t-4 border-t-danger" : "border-t-4 border-t-stated",
+      )}
     >
-      <h3
-        className={
-          "border-b px-4 py-2 text-xs font-semibold uppercase tracking-wide " +
-          (draft.needs_confirmation
-            ? "border-red-300/60 text-red-900 dark:border-red-900/40 dark:text-red-200"
-            : "border-emerald-300/60 text-emerald-900 dark:border-emerald-900/40 dark:text-emerald-200")
-        }
-      >
-        {draft.needs_confirmation
-          ? `High-stakes draft — ${flagged.length} claim${flagged.length === 1 ? "" : "s"} need${flagged.length === 1 ? "s" : ""} checking`
-          : "High-stakes draft — every claim matches its memory"}
+      <h3 className="flex items-center gap-2 border-b border-outline-ink px-4 py-3">
+        {draft.needs_confirmation ? (
+          <AlertTriangle className="size-4 shrink-0 text-danger-ink" aria-hidden="true" />
+        ) : (
+          <CheckCircle2 className="size-4 shrink-0 text-stated-ink" aria-hidden="true" />
+        )}
+        <span className="meta text-ink-muted">
+          {draft.needs_confirmation
+            ? `high-stakes draft — ${flagged.length} claim${flagged.length === 1 ? "" : "s"} to check`
+            : "high-stakes draft — every claim matches its memory"}
+        </span>
       </h3>
 
-      <div className="px-4 py-3">
-        <p className="whitespace-pre-wrap rounded border border-neutral-200 bg-white/70 p-3 text-sm dark:border-neutral-800 dark:bg-neutral-900/40">
+      <div className="px-4 py-4">
+        <p className="measure whitespace-pre-wrap rounded-input border border-outline-ink bg-black/[0.03] p-3 text-body-md text-ink">
           {draft.draft}
         </p>
 
         {flagged.length > 0 && (
-          <ul className="mt-3 space-y-2">
+          <ul className="mt-4 space-y-2">
             {flagged.map((c, i) => (
               <ClaimRow key={i} claim={c} onConfirmed={onConfirmed} flagged />
             ))}
@@ -67,8 +72,8 @@ export function DraftPanel({
         )}
 
         {clean.length > 0 && (
-          <details className="mt-3 text-xs">
-            <summary className="cursor-pointer text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200">
+          <details className="mt-4">
+            <summary className="tap meta cursor-pointer rounded-input text-ink-muted">
               {clean.length} claim{clean.length === 1 ? "" : "s"} checked out
             </summary>
             <ul className="mt-2 space-y-2">
@@ -80,7 +85,7 @@ export function DraftPanel({
         )}
 
         {draft.claims.every((c) => c.sources.length === 0) && (
-          <p className="mt-3 text-xs text-neutral-500">
+          <p className="mt-4 text-body-sm text-ink-muted">
             Nothing in this draft rests on a stored memory.
           </p>
         )}
@@ -98,73 +103,79 @@ function ClaimRow({
   onConfirmed: () => void;
   flagged?: boolean;
 }) {
+  const actions = useMemoryActions();
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
 
   return (
     <li
-      className={
-        "rounded border p-2.5 text-xs " +
-        (flagged
-          ? "border-red-300 bg-white/60 dark:border-red-900/50 dark:bg-neutral-900/40"
-          : "border-neutral-200 dark:border-neutral-800")
-      }
+      className={cn(
+        "rounded-input border p-3",
+        flagged ? "border-danger bg-danger-dim" : "border-outline-ink",
+      )}
     >
-      <p className="text-neutral-800 dark:text-neutral-200">
-        &ldquo;{claim.text}&rdquo;
-      </p>
+      <p className="measure text-body-sm text-ink">&ldquo;{claim.text}&rdquo;</p>
 
       {claim.problem && (
-        <p className="mt-1 font-medium text-red-800 dark:text-red-300">
+        <p className="mt-1.5 flex items-start gap-1.5 text-body-sm font-medium text-danger-ink">
+          <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
           {claim.problem}
         </p>
       )}
 
-      <ul className="mt-1.5 space-y-0.5">
+      <ul className="mt-2 space-y-1.5">
         {claim.sources.map((s) => (
-          <li key={s.id} className="text-neutral-500">
-            <span className="text-neutral-400">from memory:</span> {s.content}{" "}
-            <span className="text-neutral-400">({STATUS_LABEL[s.status]})</span>
-            {s.is_stale && (
-              <span className="ml-1 text-amber-700 dark:text-amber-400">
-                not confirmed recently
-              </span>
-            )}
+          <li key={s.id} className="text-body-sm text-ink-muted">
+            <span className="meta mr-1.5">from memory</span>
+            {s.content}
+            <span className="ml-1.5 inline-flex flex-wrap items-center gap-1.5 align-middle">
+              <Chip onLight>{STATUS_LABEL[s.status]}</Chip>
+              {s.is_stale && (
+                <Chip tone="danger" onLight>
+                  not confirmed recently
+                </Chip>
+              )}
+            </span>
           </li>
         ))}
       </ul>
 
       {flagged && !done && (
-        <div className="mt-2 flex flex-wrap gap-2">
-          {claim.sources.filter((s) => s.is_stale).map((s) => (
-            <button
-              key={s.id}
-              disabled={busy}
-              onClick={async () => {
-                setBusy(true);
-                try {
-                  await api.confirm(s.id);
-                  setDone(true);
-                  onConfirmed();
-                } finally {
-                  setBusy(false);
-                }
-              }}
-              className="rounded border border-neutral-300 px-2 py-1 text-[11px] hover:bg-neutral-100 disabled:opacity-40 dark:border-neutral-700 dark:hover:bg-neutral-800"
-            >
-              Still true — confirm it
-            </button>
-          ))}
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          {claim.sources
+            .filter((s) => s.is_stale)
+            .map((s) => (
+              <Button
+                key={s.id}
+                variant="outlineInk"
+                size="sm"
+                disabled={busy}
+                onClick={async () => {
+                  setBusy(true);
+                  try {
+                    await actions.confirm(s.id);
+                    setDone(true);
+                    onConfirmed();
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                {busy && <Loader2 className="size-4 animate-spin" aria-hidden="true" />}
+                Still true — confirm it
+              </Button>
+            ))}
           {claim.overstates && (
-            <p className="text-[11px] text-neutral-600 dark:text-neutral-400">
-              Fix the wording, or correct the memory&rsquo;s status if the draft is right.
+            <p className="text-body-sm text-ink-muted">
+              Fix the wording, or correct the memory&rsquo;s status if the draft
+              is right.
             </p>
           )}
         </div>
       )}
 
       {done && (
-        <p role="status" className="mt-1.5 text-[11px] text-neutral-500">
+        <p role="status" className="mt-2 text-body-sm text-ink-muted">
           Confirmed. Ask for the draft again to re-check it.
         </p>
       )}

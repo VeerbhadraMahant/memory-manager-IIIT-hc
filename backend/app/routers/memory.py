@@ -10,9 +10,11 @@ from app.db import db_cursor
 from app.models import (
     AssertionStatus,
     Block,
+    CascadePreview,
     MemoryItem,
     MemoryItemCreate,
     MemoryItemEdit,
+    ProvenanceGraph,
     RescopeRequest,
     ReviewState,
     Scope,
@@ -306,13 +308,9 @@ def rescope_item(item_id: UUID, payload: RescopeRequest, cur=Depends(db_cursor))
 
 
 # --------------------------------------------------------------------------
-# Still unbuilt. 501 with the phase, not 404 — "planned, not built" is a different
-# claim from "does not exist". PHASES.md tracks these.
+# Decay and provenance. Every route from SYSTEM_DESIGN §3 is now built; nothing
+# in this module answers 501 any more.
 # --------------------------------------------------------------------------
-
-def _todo(phase: str, what: str):
-    raise HTTPException(501, f"{what} — implemented in {phase}")
-
 
 @router.post("/items/{item_id}/confirm", response_model=MemoryItem)
 def confirm_item(item_id: UUID, cur=Depends(db_cursor)):
@@ -333,11 +331,205 @@ def confirm_item(item_id: UUID, cur=Depends(db_cursor)):
     return _return(cur, item_id)
 
 
-@router.get("/items/{item_id}/graph")
-def item_graph(item_id: UUID):
-    _todo("P5", "provenance subgraph for deletion preview")
+# --------------------------------------------------------------------------
+# P5 provenance graph + cascade delete.
+#
+# Scope is deliberately narrow (PHASES.md P5): this is not a general graph
+# browser. Its job is "if I delete this, what dies and what degrades", and the
+# same answer has to be available as text — the graph is supplementary, the
+# textual equivalent is lossless (CLAUDE.md principle 6).
+# --------------------------------------------------------------------------
+
+# Above this the graph stops being readable and starts being a hairball
+# (frontend_design_guideline §3.4). The cap lives here rather than only in the
+# client so the wire payload is bounded too.
+GRAPH_NODE_CAP = 150
+
+GRAPH_SELECT = """
+select mi.id, mi.content, mi.source_type, mi.status, mi.sensitivity, mi.scope,
+       b.name as block_name, mi.review_state, mi.needs_review, mi.confidence,
+       mi.last_confirmed_at, mi.deleted_at
+from memory_items mi
+left join blocks b on b.id = mi.block_id
+"""
+
+# Only these two relations carry derivation, so only these two cascade.
+# `contradicts` and `updates` describe how two independent facts relate; deleting
+# one end invalidates the *relationship claim*, not the other fact.
+DERIVING = ("derived_from", "summarized_from")
 
 
-@router.delete("/items/{item_id}")
-def delete_item(item_id: UUID):
-    _todo("P5", "tombstone + cascade per SYSTEM_DESIGN §3")
+def _cascade(cur, root_id: UUID) -> tuple[CascadePreview, set[UUID]]:
+    """Walk the derivation edges out of `root_id` and classify what it reaches.
+
+    Returns the preview and the full set of item ids touched, so the caller can
+    render exactly the subgraph the preview describes rather than a different one.
+    """
+    cascade_delete: list[UUID] = []
+    flag_for_review: list[UUID] = []
+    touched: set[UUID] = {root_id}
+
+    # BFS, not recursion: a `derived_from` chain is user-generated data and a
+    # cycle would be a stack overflow rather than a bug report. `seen` also makes
+    # a diamond (two paths to the same dependent) resolve once.
+    frontier = [root_id]
+    seen: set[UUID] = {root_id}
+    while frontier:
+        current = frontier.pop(0)
+        cur.execute(
+            """select e.to_item_id
+               from memory_edges e
+               join memory_items mi on mi.id = e.to_item_id
+               where e.from_item_id = %s and e.relation = any(%s)
+                 and mi.deleted_at is null""",
+            (current, list(DERIVING)),
+        )
+        for row in cur.fetchall():
+            dependent = row["to_item_id"]
+            touched.add(dependent)
+            if dependent in seen:
+                continue
+            seen.add(dependent)
+
+            # Does anything *other than what we are deleting* still support it?
+            cur.execute(
+                """select count(*) as n
+                   from memory_edges e
+                   join memory_items mi on mi.id = e.from_item_id
+                   where e.to_item_id = %s and e.relation = any(%s)
+                     and not (e.from_item_id = any(%s)) and mi.deleted_at is null""",
+                (dependent, list(DERIVING), list(seen)),
+            )
+            if cur.fetchone()["n"] > 0:
+                # Survives, but on a thinner evidence base than it was written on.
+                # Not re-derived — flagged, and the UI says so (SYSTEM_DESIGN §3 step 2).
+                flag_for_review.append(dependent)
+            else:
+                cascade_delete.append(dependent)
+                frontier.append(dependent)
+
+    # Relationship edges in either direction: the other end is still true, but the
+    # statement "these two disagree" / "this supersedes that" loses one of its ends.
+    cur.execute(
+        """select distinct case when e.from_item_id = %s then e.to_item_id
+                                else e.from_item_id end as other_id
+           from memory_edges e
+           join memory_items mi
+             on mi.id = case when e.from_item_id = %s then e.to_item_id else e.from_item_id end
+           where (e.from_item_id = %s or e.to_item_id = %s)
+             and e.relation in ('contradicts', 'updates')
+             and mi.deleted_at is null""",
+        (root_id, root_id, root_id, root_id),
+    )
+    relationship_affected = [r["other_id"] for r in cur.fetchall()]
+    touched.update(relationship_affected)
+
+    # Past answers that used any of this. Deleting does not rewrite history, and
+    # the count is shown so nobody assumes it does.
+    ids = list(touched)
+    cur.execute(
+        "select count(distinct message_id) as n from attributions where memory_item_id = any(%s)",
+        (ids,),
+    )
+    attribution_count = cur.fetchone()["n"]
+
+    return (
+        CascadePreview(
+            root_id=root_id,
+            cascade_delete=cascade_delete,
+            flag_for_review=flag_for_review,
+            relationship_affected=relationship_affected,
+            attribution_count=attribution_count,
+        ),
+        touched,
+    )
+
+
+@router.get("/graph", response_model=ProvenanceGraph)
+def full_graph(cur=Depends(db_cursor), limit: int = Query(GRAPH_NODE_CAP, le=500)):
+    """Every live item and every edge between them — the graph view's backing data.
+
+    Capped, and it reports when it capped. A view that silently shows 150 of 400
+    memories is a worse lie than one that refuses to draw.
+    """
+    cur.execute(
+        f"{GRAPH_SELECT} where mi.user_id = %s and mi.deleted_at is null "
+        f"and mi.review_state <> 'rejected' order by mi.created_at desc limit %s",
+        (settings.demo_user_id, limit + 1),
+    )
+    rows = cur.fetchall()
+    truncated = len(rows) > limit
+    rows = rows[:limit]
+
+    ids = [r["id"] for r in rows]
+    edges = []
+    if ids:
+        cur.execute(
+            """select from_item_id, to_item_id, relation from memory_edges
+               where from_item_id = any(%s) and to_item_id = any(%s)""",
+            (ids, ids),
+        )
+        edges = cur.fetchall()
+
+    return ProvenanceGraph(nodes=rows, edges=edges, truncated=truncated)
+
+
+@router.get("/items/{item_id}/graph", response_model=ProvenanceGraph)
+def item_graph(item_id: UUID, cur=Depends(db_cursor)):
+    """The deletion preview, as data. Answers exactly one question."""
+    _load(cur, item_id)
+    cascade, touched = _cascade(cur, item_id)
+
+    ids = list(touched)
+    cur.execute(f"{GRAPH_SELECT} where mi.id = any(%s)", (ids,))
+    nodes = cur.fetchall()
+
+    cur.execute(
+        """select from_item_id, to_item_id, relation from memory_edges
+           where from_item_id = any(%s) and to_item_id = any(%s)""",
+        (ids, ids),
+    )
+    return ProvenanceGraph(
+        root_id=item_id, nodes=nodes, edges=cur.fetchall(), cascade=cascade
+    )
+
+
+@router.delete("/items/{item_id}", response_model=CascadePreview)
+def delete_item(item_id: UUID, cur=Depends(db_cursor)):
+    """Tombstone + cascade per SYSTEM_DESIGN §3.
+
+    Deliberately *not* re-derivation. Dependents that still have another source
+    are marked `needs_review` and left alone; dependents that had only this one
+    are tombstoned with them. Returning the preview means the confirmation the
+    user saw and the action the server took are the same object.
+    """
+    _load(cur, item_id)
+    cascade, _ = _cascade(cur, item_id)
+
+    doomed = [item_id, *cascade.cascade_delete]
+    # Tombstone, never DELETE: the audit trail is the product here, and step 4's
+    # index drop falls out of it because every retrieval path filters deleted_at.
+    cur.execute(
+        "update memory_items set deleted_at = now(), embedding = null where id = any(%s)",
+        (doomed,),
+    )
+    for dead in doomed:
+        _audit(
+            cur,
+            dead,
+            "deleted" if dead == item_id else "cascade_deleted",
+            {"root": str(item_id)},
+        )
+
+    degraded = cascade.flag_for_review + cascade.relationship_affected
+    if degraded:
+        cur.execute(
+            "update memory_items set needs_review = true where id = any(%s)",
+            (degraded,),
+        )
+        for item in degraded:
+            _audit(cur, item, "flagged_for_review", {"reason": "source deleted",
+                                                     "root": str(item_id)})
+
+    cur.connection.commit()
+    return cascade

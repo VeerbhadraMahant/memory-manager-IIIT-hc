@@ -1,41 +1,41 @@
 "use client";
 
-// The review card. Memory formation is an in-conversation event (D1), so this
-// renders inline in the transcript, directly under the turn it came from.
+// §4.2 — the candidate review card. The core loop (P1).
 //
-// Two groups, deliberately styled differently:
-//   - auto-accepted: reported, collapsed, no action required. The interruption
-//     budget (principle 2) is about not *asking*, not about hiding.
-//   - pending: asked about, one card each, with the reason stated.
+// Inline in the conversation, attached below the turn it came from (D1: memory
+// formation is an in-conversation event, not a settings page). On mobile the
+// same card becomes a sticky bottom sheet, because a card below the fold on a
+// phone is a card nobody answers.
 //
-// Wording follows principle 5 — consequence, not caution. "Kept for this chat only"
-// states what happens. "Are you sure?" would just transfer anxiety.
+// The design decision that matters most here is what does NOT render:
+//
+//   "Auto-accepted items do not render a card. They log quietly with a small
+//    mono line ('3 remembered') that expands on click. This is the interruption
+//    budget — if every extraction shows a card, the design has failed regardless
+//    of how good the card looks."
+//
+// So the auto-accepted group is one line of mono text with a disclosure, and the
+// pending group is the only thing that asks for anything. Reversing that ratio
+// would be the failure mode CLAUDE.md principle 2 is written against.
+//
+// Wording follows principle 5 throughout: consequence, not caution. "Kept for
+// this chat only" says what happens. "Are you sure?" only transfers anxiety.
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { Check, ChevronRight, Pencil, Undo2, X } from "lucide-react";
+
 import {
-  api,
   SCOPE_LABEL,
   SENSITIVITY_LABEL,
-  STATUS_LABEL,
   type AssertionStatus,
   type MemoryItem,
   type Sensitivity,
 } from "@/lib/api";
-
-const STATUSES: AssertionStatus[] = [
-  "in_progress",
-  "completed",
-  "planned",
-  "abandoned",
-  "hypothetical",
-  "third_party",
-];
-
-const SENSITIVITIES: Sensitivity[] = ["low", "medium", "high", "special_category"];
-
-// Mirrors migration 002. Fetching these would be more correct; hardcoding keeps the
-// review card synchronous, which matters because it renders mid-conversation.
-const blocks = ["unclassified", "health", "family", "learning", "work"];
+import { useMemoryActions, useMemoryStore } from "@/lib/memory-store";
+import { FALLBACK_BLOCKS, STATUSES, STATUS_CHIP } from "@/lib/semantics";
+import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Chip, SelectChip, SourceChip } from "@/components/ui/chip";
 
 export function ReviewCard({
   pending,
@@ -46,65 +46,107 @@ export function ReviewCard({
   autoAccepted: MemoryItem[];
   onResolved: (id: string) => void;
 }) {
+  const actions = useMemoryActions();
   const [showAuto, setShowAuto] = useState(false);
+  const card = useRef<HTMLElement>(null);
+  const announced = useRef(false);
+
+  // §4.2: "On appear: focus moves to the card, aria-live='polite' announces
+  // '1 new memory to review.'"
+  //
+  // Focus moves to the card container, not to the Keep button. Landing on a
+  // destructive-adjacent control the user has not read yet is how a
+  // "just press Enter" habit turns into an accidental accept.
+  useEffect(() => {
+    if (pending.length > 0 && !announced.current) {
+      announced.current = true;
+      card.current?.focus();
+    }
+  }, [pending.length]);
 
   if (pending.length === 0 && autoAccepted.length === 0) return null;
 
   return (
     <section
-      aria-label="New memories from this turn"
-      className="my-3 ml-0 sm:ml-10 rounded-lg border border-amber-300/70 bg-amber-50/60 dark:border-amber-500/30 dark:bg-amber-500/5"
+      ref={card}
+      tabIndex={-1}
+      aria-label={
+        pending.length > 0
+          ? `${pending.length} new ${pending.length === 1 ? "memory" : "memories"} to review`
+          : "What was remembered from this turn"
+      }
+      className={cn(
+        "on-surface anim-enter rounded-card bg-surface text-ink",
+        // Desktop: attached below the turn, indented to read as belonging to it.
+        "my-3 sm:ml-10",
+        // Mobile: sticky bottom sheet. Sticky rather than fixed so it cannot
+        // cover the transcript permanently or fight the composer for the
+        // bottom edge.
+        "sticky bottom-2 z-20 shadow-xl sm:static sm:z-auto sm:shadow-none",
+        pending.length > 0 && "ring-2 ring-[color:var(--stated)]",
+      )}
     >
-      <h3 className="border-b border-amber-300/50 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-amber-900 dark:border-amber-500/20 dark:text-amber-200">
-        From this turn
+      <h3 className="meta border-b border-outline-ink px-4 py-3 text-ink-muted">
+        {pending.length > 0
+          ? `${pending.length} to review`
+          : "remembered from this turn"}
       </h3>
 
+      {/* ------------------------------------------- the interruption budget */}
       {autoAccepted.length > 0 && (
-        <div className="border-b border-amber-300/40 px-4 py-2.5 dark:border-amber-500/20">
+        <div className="border-b border-outline-ink px-4 py-2">
           <button
             onClick={() => setShowAuto((v) => !v)}
             aria-expanded={showAuto}
-            className="flex w-full items-center gap-2 text-left text-sm text-neutral-700 hover:text-neutral-950 dark:text-neutral-300 dark:hover:text-neutral-50"
+            className="on-surface tap flex w-full items-center gap-2 rounded-input text-left"
           >
-            <span aria-hidden="true" className="text-xs">
-              {showAuto ? "▾" : "▸"}
+            <ChevronRight
+              aria-hidden="true"
+              className={cn(
+                "size-4 text-ink-muted transition-transform duration-[var(--motion-micro)]",
+                showAuto && "rotate-90",
+              )}
+            />
+            <span className="meta tnum text-ink-muted">
+              {autoAccepted.length} remembered
             </span>
-            <span>
-              {autoAccepted.length} remembered without asking
-            </span>
-            <span className="ml-auto text-xs text-neutral-500">
-              {showAuto ? "hide" : "show"}
+            <span className="text-body-sm text-ink-muted">
+              — high confidence, nothing sensitive
             </span>
           </button>
 
           {showAuto && (
-            <ul className="mt-2 space-y-2">
+            <ul className="mb-2 mt-2 space-y-2">
               {autoAccepted.map((it) => (
                 <li
                   key={it.id}
-                  className="rounded border border-neutral-200 bg-white/70 p-2.5 text-sm dark:border-neutral-800 dark:bg-neutral-900/50"
+                  className="rounded-input border border-outline-ink p-3"
                 >
-                  <p>{it.content}</p>
-                  <p className="mt-1 text-xs text-neutral-500">
+                  <p className="text-body-sm text-ink">{it.content}</p>
+                  <p className="mt-1 text-body-sm text-ink-muted">
                     {it.review_reason}
                   </p>
-                  <div className="mt-1.5 flex gap-3">
-                    <button
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <Button
+                      variant="outlineInk"
+                      size="sm"
                       onClick={() =>
-                        api.reject(it.id).then(() => onResolved(it.id))
+                        void actions.reject(it.id).then(() => onResolved(it.id))
                       }
-                      className="text-xs text-neutral-600 underline underline-offset-2 hover:text-red-700 dark:text-neutral-400 dark:hover:text-red-400"
                     >
                       Forget this
-                    </button>
-                    <button
+                    </Button>
+                    <Button
+                      variant="outlineInk"
+                      size="sm"
                       onClick={() =>
-                        api.rescope(it.id, "session").then(() => onResolved(it.id))
+                        void actions
+                          .rescope(it.id, "session")
+                          .then(() => onResolved(it.id))
                       }
-                      className="text-xs text-neutral-600 underline underline-offset-2 hover:text-neutral-950 dark:text-neutral-400 dark:hover:text-neutral-100"
                     >
                       Only this chat
-                    </button>
+                    </Button>
                   </div>
                 </li>
               ))}
@@ -114,7 +156,7 @@ export function ReviewCard({
       )}
 
       {pending.length > 0 && (
-        <ul className="divide-y divide-amber-300/40 dark:divide-amber-500/20">
+        <ul className="divide-y divide-[color:var(--outline-ink)]">
           {pending.map((it) => (
             <PendingItem key={it.id} item={it} onResolved={onResolved} />
           ))}
@@ -131,15 +173,23 @@ function PendingItem({
   item: MemoryItem;
   onResolved: (id: string) => void;
 }) {
+  const actions = useMemoryActions();
+  const { blocks } = useMemoryStore();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(item.content);
   const [status, setStatus] = useState<AssertionStatus>(item.status);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [corrected, setCorrected] = useState<string | null>(null);
+  const [corrected, setCorrected] = useState(false);
+  const textarea = useRef<HTMLTextAreaElement>(null);
 
-  /** `resolve` false keeps the card open — a reclassification is a correction, not a
-   *  decision to keep, and dismissing the card would rob the user of the accept step. */
+  useEffect(() => {
+    if (editing) textarea.current?.focus();
+  }, [editing]);
+
+  /** `resolve: false` keeps the card open — a reclassification is a correction,
+   *  not a decision to keep, and dismissing the card would rob the user of the
+   *  accept step they have not taken yet. */
   const run = async (fn: () => Promise<unknown>, resolve = true) => {
     setBusy(true);
     setError(null);
@@ -148,39 +198,45 @@ function PendingItem({
       if (resolve) {
         onResolved(item.id);
       } else {
-        setCorrected("corrected");
+        setCorrected(true);
         setBusy(false);
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "something went wrong");
+      setError(e instanceof Error ? e.message : "that did not go through");
       setBusy(false);
     }
   };
 
+  // The review card cannot wait on a blocks fetch mid-conversation, so it uses
+  // whatever the store has and falls back to the seeded names.
+  const blockOptions = (blocks.length ? blocks : FALLBACK_BLOCKS).map(
+    (b) => [b, b] as const,
+  );
+
   return (
-    <li className="px-4 py-3">
+    <li className="px-4 py-4">
       {editing ? (
-        <div className="space-y-2">
+        <div className="space-y-3">
           <label className="block">
-            <span className="sr-only">Memory text</span>
+            <span className="meta mb-1 block text-ink-muted">Memory text</span>
             <textarea
+              ref={textarea}
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               rows={2}
-              autoFocus
-              className="w-full rounded border border-neutral-300 bg-white p-2 text-sm dark:border-neutral-700 dark:bg-neutral-900"
+              className="w-full rounded-input border border-outline-ink bg-white p-3 text-body-md text-ink"
             />
           </label>
-          <label className="flex items-center gap-2 text-xs">
-            <span className="text-neutral-600 dark:text-neutral-400">Status</span>
+          <label className="flex flex-wrap items-center gap-2">
+            <span className="meta text-ink-muted">Status</span>
             <select
               value={status}
               onChange={(e) => setStatus(e.target.value as AssertionStatus)}
-              className="rounded border border-neutral-300 bg-white px-1.5 py-1 dark:border-neutral-700 dark:bg-neutral-900"
+              className="min-h-11 rounded-input border border-outline-ink bg-white px-3 text-body-sm text-ink"
             >
               {STATUSES.map((s) => (
                 <option key={s} value={s}>
-                  {STATUS_LABEL[s]}
+                  {STATUS_CHIP[s]}
                 </option>
               ))}
             </select>
@@ -188,113 +244,149 @@ function PendingItem({
         </div>
       ) : (
         <>
-          <p className="text-sm">{item.content}</p>
+          <p className="measure text-body-md text-ink">{item.content}</p>
           {item.evidence && (
-            <p className="mt-1 border-l-2 border-neutral-300 pl-2 text-xs italic text-neutral-500 dark:border-neutral-700">
+            // Principle 7, made visible: the item is traceable to what you said,
+            // so the card shows the phrase rather than asking for trust.
+            <p className="mt-2 border-l-2 border-stated pl-3 text-body-sm italic text-ink-muted">
               &ldquo;{item.evidence}&rdquo;
             </p>
           )}
         </>
       )}
 
-      <p className="mt-2 text-xs text-amber-900/80 dark:text-amber-200/70">
-        {item.review_reason}
-      </p>
+      {item.review_reason && (
+        <p className="mt-2 text-body-sm text-ink-muted">{item.review_reason}</p>
+      )}
 
-      {/* P2 one-tap correction. Misclassification has to be fixable where it is
-          visible, not in a separate view — so the chips that *show* the
-          classification are the controls that change it. Native selects: one
-          interaction, keyboard-operable, and screen-reader labelled for free. */}
-      <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px]">
+      {/* P2 one-tap correction: the chips that *show* the classification are the
+          controls that change it. Native selects — one interaction, keyboard
+          operable, screen-reader labelled without a line of ARIA. */}
+      <div className="mt-3 flex flex-wrap items-center gap-1.5">
+        <SourceChip source={item.source_type} onLight />
         <SelectChip
           label="Block"
           value={item.block_name ?? "unclassified"}
-          options={blocks.map((b) => [b, b])}
+          options={blockOptions}
           disabled={busy}
-          onChange={(v) => run(() => api.edit(item.id, { block_name: v }), false)}
+          onLight
+          onChange={(v) => void run(() => actions.reclassify(item.id, { block_name: v }), false)}
         />
         <SelectChip
           label="Status"
           value={item.status}
-          options={STATUSES.map((s) => [s, STATUS_LABEL[s]])}
+          options={STATUSES.map((s) => [s, STATUS_CHIP[s]] as const)}
           disabled={busy}
+          onLight
           onChange={(v) =>
-            run(() => api.edit(item.id, { status: v as AssertionStatus }), false)
+            void run(() => actions.reclassify(item.id, { status: v as AssertionStatus }), false)
           }
         />
         <SelectChip
           label="Sensitivity"
           value={item.sensitivity}
-          options={SENSITIVITIES.map((s) => [s, SENSITIVITY_LABEL[s]])}
+          options={SENSITIVITIES_OPTIONS}
           disabled={busy}
+          onLight
           onChange={(v) =>
-            run(() => api.edit(item.id, { sensitivity: v as Sensitivity }), false)
+            void run(() => actions.reclassify(item.id, { sensitivity: v as Sensitivity }), false)
           }
         />
-        <Chip>{item.source_type}</Chip>
-        <Chip highlight={item.scope === "session"}>{SCOPE_LABEL[item.scope]}</Chip>
+        <Chip tone={item.scope === "session" ? "alert" : "neutral"} onLight>
+          {SCOPE_LABEL[item.scope]}
+        </Chip>
+        <Chip onLight className="tnum">
+          {Math.round(item.confidence * 100)}% conf
+        </Chip>
       </div>
 
       {error && (
-        <p role="alert" className="mt-2 text-xs text-red-700 dark:text-red-400">
+        <p role="alert" className="mt-2 text-body-sm text-danger-ink">
           {error}
         </p>
       )}
       {corrected && (
-        <p role="status" className="mt-1.5 text-[11px] text-neutral-500">
+        <p role="status" className="mt-2 text-body-sm text-ink-muted">
           Reclassified. Still yours to keep or discard.
         </p>
       )}
 
-      <div className="mt-2.5 flex flex-wrap gap-2">
+      {/* All four actions at ≥44px (§4.2). Keep is the only primary. */}
+      <div className="mt-4 flex flex-wrap gap-2">
         {editing ? (
           <>
-            <Action
-              primary
-              disabled={busy}
+            <Button
+              variant="primary"
+              disabled={busy || !draft.trim()}
               onClick={() =>
-                run(() =>
-                  api.edit(item.id, {
-                    content: draft,
-                    ...(status !== item.status ? { status } : {}),
-                  }),
-                )
+                run(async () => {
+                  // Two calls rather than one PATCH, because the hook exposes
+                  // the two operations the vocabulary names — correcting the
+                  // wording and correcting the status are different acts, and
+                  // each gets its own announcement.
+                  if (status !== item.status) {
+                    await actions.reclassify(item.id, { status });
+                  }
+                  await actions.editContent(item.id, draft.trim());
+                })
               }
             >
+              <Check className="size-4" aria-hidden="true" />
               Save and keep
-            </Action>
-            <Action disabled={busy} onClick={() => setEditing(false)}>
+            </Button>
+            <Button
+              variant="outlineInk"
+              disabled={busy}
+              onClick={() => {
+                setDraft(item.content);
+                setStatus(item.status);
+                setEditing(false);
+              }}
+            >
+              <Undo2 className="size-4" aria-hidden="true" />
               Cancel
-            </Action>
+            </Button>
           </>
         ) : (
           <>
-            <Action
-              primary
+            <Button
+              variant="primary"
               disabled={busy}
-              onClick={() => run(() => api.accept(item.id))}
+              onClick={() => run(() => actions.accept(item.id))}
             >
+              <Check className="size-4" aria-hidden="true" />
               Keep
-            </Action>
-            <Action disabled={busy} onClick={() => run(() => api.reject(item.id))}>
+            </Button>
+            <Button
+              variant="outlineInk"
+              disabled={busy}
+              onClick={() => run(() => actions.reject(item.id))}
+            >
+              <X className="size-4" aria-hidden="true" />
               Discard
-            </Action>
-            <Action disabled={busy} onClick={() => setEditing(true)}>
+            </Button>
+            <Button
+              variant="outlineInk"
+              disabled={busy}
+              onClick={() => setEditing(true)}
+            >
+              <Pencil className="size-4" aria-hidden="true" />
               Edit
-            </Action>
-            <Action
+            </Button>
+            <Button
+              variant="outlineInk"
               disabled={busy}
               onClick={() =>
                 run(() =>
-                  api.rescope(
+                  actions.rescope(
                     item.id,
                     item.scope === "session" ? "persistent" : "session",
                   ),
                 )
               }
             >
-              {item.scope === "session" ? "Keep beyond this chat" : "Only this chat"}
-            </Action>
+              {item.scope === "session" ? "Keep beyond this chat" : "Session only"}
+            </Button>
           </>
         )}
       </div>
@@ -302,81 +394,6 @@ function PendingItem({
   );
 }
 
-function SelectChip({
-  label,
-  value,
-  options,
-  onChange,
-  disabled,
-}: {
-  label: string;
-  value: string;
-  options: [string, string][];
-  onChange: (v: string) => void;
-  disabled?: boolean;
-}) {
-  return (
-    <label className="inline-flex items-center rounded bg-neutral-200/70 dark:bg-neutral-800">
-      <span className="sr-only">{label}</span>
-      <select
-        value={value}
-        disabled={disabled}
-        onChange={(e) => onChange(e.target.value)}
-        className="cursor-pointer appearance-none bg-transparent px-1.5 py-0.5 text-[11px] text-neutral-700 outline-none focus:ring-1 focus:ring-neutral-500 disabled:opacity-40 dark:text-neutral-300"
-      >
-        {options.map(([v, l]) => (
-          <option key={v} value={v}>
-            {l}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
-}
-
-function Chip({
-  children,
-  highlight,
-}: {
-  children: React.ReactNode;
-  highlight?: boolean;
-}) {
-  return (
-    <span
-      className={
-        highlight
-          ? "rounded bg-amber-200/80 px-1.5 py-0.5 font-medium text-amber-950 dark:bg-amber-400/20 dark:text-amber-100"
-          : "rounded bg-neutral-200/70 px-1.5 py-0.5 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300"
-      }
-    >
-      {children}
-    </span>
-  );
-}
-
-function Action({
-  children,
-  onClick,
-  disabled,
-  primary,
-}: {
-  children: React.ReactNode;
-  onClick: () => void;
-  disabled?: boolean;
-  primary?: boolean;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      className={
-        "rounded px-2.5 py-1 text-xs font-medium transition disabled:opacity-40 " +
-        (primary
-          ? "bg-neutral-900 text-white hover:bg-neutral-700 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-white"
-          : "border border-neutral-300 hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800")
-      }
-    >
-      {children}
-    </button>
-  );
-}
+const SENSITIVITIES_OPTIONS = (
+  ["low", "medium", "high", "special_category"] as Sensitivity[]
+).map((s) => [s, SENSITIVITY_LABEL[s]] as const);

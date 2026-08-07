@@ -151,6 +151,58 @@ export interface ScopeReport {
   items_from_ephemeral_turns_global: number;
 }
 
+// ------------------------------------------------------- P5 provenance graph
+
+export type EdgeRelation =
+  | "derived_from"
+  | "summarized_from"
+  | "contradicts"
+  | "updates";
+
+/** Deliberately narrower than MemoryItem — see the backend's GraphNode. */
+export interface GraphNode {
+  id: string;
+  content: string;
+  source_type: SourceType;
+  status: AssertionStatus;
+  sensitivity: Sensitivity;
+  scope: Scope;
+  block_name: string | null;
+  review_state: ReviewState;
+  needs_review: boolean;
+  confidence: number;
+  last_confirmed_at: string | null;
+  deleted_at: string | null;
+}
+
+/** `from` is the source, `to` is derived from it. Inverting this inverts the
+ *  cascade, so the direction is restated here rather than inferred from a name. */
+export interface GraphEdge {
+  from_item_id: string;
+  to_item_id: string;
+  relation: EdgeRelation;
+}
+
+export interface CascadePreview {
+  root_id: string;
+  /** No other source. These die with the root. */
+  cascade_delete: string[];
+  /** Another source survives. Flagged for review — NOT re-derived (§4.5). */
+  flag_for_review: string[];
+  /** The other end of a contradicts/updates edge. The fact survives; the claim
+   *  that the two relate loses one of its ends. */
+  relationship_affected: string[];
+  attribution_count: number;
+}
+
+export interface ProvenanceGraph {
+  root_id: string | null;
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  cascade: CascadePreview | null;
+  truncated: boolean;
+}
+
 export interface Health {
   status: string;
   pgvector: string | null;
@@ -224,6 +276,16 @@ export const api = {
 
   verifiedDraft: (chatId: string, instruction: string) =>
     post<VerifiedDraft>(`/chats/${chatId}/verified-draft`, { instruction }),
+
+  /** Every live item plus every edge between them. Backs the graph view. */
+  graph: () => req<ProvenanceGraph>("/memory/graph"),
+
+  /** The deletion preview for one item, as data. Same object the DELETE returns,
+   *  so what the user was shown and what the server did cannot diverge. */
+  itemGraph: (id: string) => req<ProvenanceGraph>(`/memory/items/${id}/graph`),
+
+  remove: (id: string) =>
+    req<CascadePreview>(`/memory/items/${id}`, { method: "DELETE" }),
 
   accept: (id: string) => post<MemoryItem>(`/memory/items/${id}/accept`),
   confirm: (id: string) => post<MemoryItem>(`/memory/items/${id}/confirm`),

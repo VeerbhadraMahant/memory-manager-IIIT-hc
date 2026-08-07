@@ -149,6 +149,62 @@ class Block(BaseModel):
     is_fallback: bool
 
 
+# ------------------------------------------------------- P5 provenance graph
+
+class GraphNode(BaseModel):
+    """A memory item reduced to what the graph and its text equivalent need.
+
+    Not `MemoryItem`: the graph renders every node it returns, and shipping
+    embeddings-adjacent bulk down the wire for a view that shows five fields is
+    waste the node cap (guideline §3.4) exists to avoid.
+    """
+    id: UUID
+    content: str
+    source_type: SourceType
+    status: AssertionStatus
+    sensitivity: Sensitivity
+    scope: Scope
+    block_name: str | None
+    review_state: ReviewState
+    needs_review: bool
+    confidence: float
+    last_confirmed_at: datetime | None
+    deleted_at: datetime | None
+
+
+class GraphEdge(BaseModel):
+    """Direction follows SYSTEM_DESIGN §3: `from` is the source, `to` is derived
+    from it. Reversing this silently inverts the cascade, so it is stated here."""
+    from_item_id: UUID
+    to_item_id: UUID
+    relation: EdgeRelation
+
+
+class CascadePreview(BaseModel):
+    """What deleting the root would actually do — computed, not asserted.
+
+    `flag_for_review` is the honest half of SYSTEM_DESIGN §3 step 2: dependents
+    with another independent source are *not* re-derived. They are tombstoned
+    nowhere and marked for the user to look at. The UI must say that plainly
+    rather than implying re-derivation happened (CLAUDE.md honesty constraints).
+    """
+    root_id: UUID
+    cascade_delete: list[UUID]
+    flag_for_review: list[UUID]
+    relationship_affected: list[UUID]
+    attribution_count: int
+
+
+class ProvenanceGraph(BaseModel):
+    root_id: UUID | None = None
+    nodes: list[GraphNode]
+    edges: list[GraphEdge]
+    cascade: CascadePreview | None = None
+    # True when the graph was clipped by the node cap, so the UI can say it is
+    # showing a subset instead of implying it is showing everything.
+    truncated: bool = False
+
+
 # ------------------------------------------------------------------ P1 turn
 
 class TurnRequest(BaseModel):

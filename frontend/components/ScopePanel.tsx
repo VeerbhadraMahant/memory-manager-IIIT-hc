@@ -2,14 +2,22 @@
 
 // What this session can and cannot reach.
 //
-// "Session-only" is otherwise an invisible promise — the user is told something is
-// confined and has no way to see it. This panel makes the boundary countable, and
-// names what is out of reach rather than just omitting it. Showing the *titles* of
-// hidden memories to their own owner is not a leak: they are the user's memories.
-// The point is that this session cannot use them, not that they are secret from you.
+// "Session-only" is otherwise an invisible promise — the user is told something
+// is confined and has no way to see it. This panel makes the boundary countable,
+// and names what is out of reach rather than just omitting it. Showing the
+// titles of hidden memories to their own owner is not a leak: they are the
+// user's memories. The point is that this session cannot use them, not that they
+// are secret from you.
+//
+// Restyled onto the §1 tokens; the numbers are .tnum so a count changing does
+// not reflow the row it sits in.
 
 import { useState } from "react";
+import { EyeOff, Loader2 } from "lucide-react";
+
 import { api, type ScopeReport } from "@/lib/api";
+import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 
 export function ScopePanel({
   report,
@@ -28,64 +36,79 @@ export function ScopePanel({
   return (
     <section
       aria-label="What this session can see"
-      className="mb-4 rounded border border-neutral-200 p-2.5 dark:border-neutral-800"
+      className="rounded-card border border-outline bg-raised p-4"
     >
-      <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-600 dark:text-neutral-400">
-        This session
-      </h2>
+      <h2 className="meta mb-3 text-ink-invert-muted">This session</h2>
 
-      <dl className="space-y-1 text-xs">
-        <Row label="Can use" value={`${report.visible_persistent + report.visible_session}`} />
-        <Row label="— remembered" value={`${report.visible_persistent}`} dim />
-        <Row label="— this chat only" value={`${report.visible_session}`} dim />
+      <dl className="space-y-1.5">
+        <Row
+          label="Can use"
+          value={report.visible_persistent + report.visible_session}
+        />
+        <Row label="— remembered" value={report.visible_persistent} dim />
+        <Row label="— this chat only" value={report.visible_session} dim />
         <Row
           label="Out of reach here"
-          value={`${report.hidden_session_items.length}`}
+          value={report.hidden_session_items.length}
           highlight={report.hidden_session_items.length > 0}
         />
       </dl>
 
       {report.hidden_session_items.length > 0 && (
-        <ul className="mt-2 space-y-1 border-t border-neutral-200 pt-2 dark:border-neutral-800">
+        <ul className="mt-3 space-y-2 border-t border-outline pt-3">
           {report.hidden_session_items.slice(0, 5).map((h) => (
-            <li key={h.id} className="text-[11px] text-neutral-500">
-              <span className="line-through decoration-neutral-400">{h.content}</span>
-              <span className="mt-0.5 block text-neutral-400">
-                confined to &ldquo;{h.origin_chat_title ?? "another chat"}&rdquo;
+            <li key={h.id} className="flex items-start gap-2">
+              <EyeOff
+                aria-hidden="true"
+                className="mt-0.5 size-3.5 shrink-0 text-ink-invert-muted"
+              />
+              <span>
+                <span className="block text-body-sm text-ink-invert-muted line-through">
+                  {h.content}
+                </span>
+                <span className="meta text-ink-invert-muted">
+                  confined to {h.origin_chat_title ?? "another chat"}
+                </span>
               </span>
             </li>
           ))}
           {report.hidden_session_items.length > 5 && (
-            <li className="text-[11px] text-neutral-400">
+            <li className="meta tnum text-ink-invert-muted">
               +{report.hidden_session_items.length - 5} more
             </li>
           )}
         </ul>
       )}
 
+      {/* The leak counter. It is on screen rather than in a test log because a
+          number that is supposed to be zero is only reassuring if you can watch
+          it stay zero (P3). */}
       <p
-        className={
-          "mt-2 border-t pt-2 text-[11px] " +
-          (clean
-            ? "border-neutral-200 text-neutral-500 dark:border-neutral-800"
-            : "border-red-300 text-red-700 dark:border-red-900 dark:text-red-400")
-        }
+        className={cn(
+          "mt-3 border-t pt-3 text-body-sm",
+          clean
+            ? "border-outline text-ink-invert-muted"
+            : "border-danger text-danger-on-dark",
+        )}
       >
-        <strong className="font-mono">
+        <span className="meta tnum">
           {report.items_from_ephemeral_turns_global}
-        </strong>{" "}
+        </span>{" "}
         memories derived from off-the-record turns, database-wide.
         {!clean && " This should be 0 — something is wrong."}
       </p>
 
       {report.ephemeral_turns > 0 && (
-        <div className="mt-2 border-t border-neutral-200 pt-2 dark:border-neutral-800">
-          <p className="text-[11px] text-neutral-500">
-            {report.ephemeral_turns} off-the-record{" "}
-            {report.ephemeral_turns === 1 ? "turn" : "turns"} in this chat. Nothing was
-            extracted from them, but the text is still in this transcript.
+        <div className="mt-3 border-t border-outline pt-3">
+          <p className="text-body-sm text-ink-invert-muted">
+            <span className="tnum">{report.ephemeral_turns}</span> off-the-record{" "}
+            {report.ephemeral_turns === 1 ? "turn" : "turns"} in this chat. Nothing
+            was extracted from them, but the text is still in this transcript.
           </p>
-          <button
+          <Button
+            variant="outline"
+            size="sm"
+            className="mt-2"
             disabled={busy}
             onClick={async () => {
               setBusy(true);
@@ -97,13 +120,13 @@ export function ScopePanel({
                 setBusy(false);
               }
             }}
-            className="mt-1.5 rounded border border-neutral-300 px-2 py-1 text-[11px] hover:bg-neutral-100 disabled:opacity-40 dark:border-neutral-700 dark:hover:bg-neutral-800"
           >
+            {busy && <Loader2 className="size-4 animate-spin" aria-hidden="true" />}
             Redact them from the transcript too
-          </button>
+          </Button>
           {purged !== null && (
-            <p role="status" className="mt-1 text-[11px] text-neutral-500">
-              Redacted {purged}.
+            <p role="status" className="mt-2 text-body-sm text-ink-invert-muted">
+              Redacted <span className="tnum">{purged}</span>.
             </p>
           )}
         </div>
@@ -119,20 +142,25 @@ function Row({
   highlight,
 }: {
   label: string;
-  value: string;
+  value: number;
   dim?: boolean;
   highlight?: boolean;
 }) {
   return (
-    <div className="flex justify-between gap-2">
-      <dt className={dim ? "text-neutral-400" : "text-neutral-600 dark:text-neutral-400"}>
+    <div className="flex items-baseline justify-between gap-2">
+      <dt
+        className={cn(
+          "text-body-sm",
+          dim ? "text-ink-invert-muted opacity-70" : "text-ink-invert-muted",
+        )}
+      >
         {label}
       </dt>
       <dd
-        className={
-          "font-mono tabular-nums " +
-          (highlight ? "text-amber-700 dark:text-amber-400" : "")
-        }
+        className={cn(
+          "meta tnum",
+          highlight ? "text-stated-on-dark" : "text-ink-invert",
+        )}
       >
         {value}
       </dd>

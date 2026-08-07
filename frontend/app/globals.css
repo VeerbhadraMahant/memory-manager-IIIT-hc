@@ -1,26 +1,288 @@
 @import "tailwindcss";
+@import "@xyflow/react/dist/style.css";
+
+/* ============================================================ §1 Tokens
+ * frontend_design_guideline.md §1, regenerated per the conflict table: the
+ * generator's `background: #121414` is dropped, Dark Slate `#303841` wins.
+ *
+ * Measured, not eyeballed. Every pair below was run through a WCAG contrast
+ * calculation before it landed here; the ratios in the comments are that output,
+ * and three of the guideline's hand-derived starting points did not survive it:
+ *
+ *   --ink-invert-muted  #A3ABB5  passed on --bg (5.12) but failed on
+ *                                --surface-raised (4.32). Lightened.
+ *   --stated  #F77A25 as text    4.39 on --bg. Under AA. It is a fill colour,
+ *                                so a separate text token was added rather than
+ *                                nudging the brand orange.
+ *   --danger  #FF6B5E as text    4.25 on --bg. Same treatment.
+ *
+ * Then a second pass, run against the DOM of the *running* app rather than
+ * against the palette, caught what the first pass could not: those replacement
+ * text tokens are used inside `-dim` chips, and a 12% orange wash over
+ * --surface-raised is a lighter background than --surface-raised. Every
+ * -on-dark value below is now sized against that composite. The lesson is in
+ * the method, not the hex — measuring tokens in pairs misses what happens when
+ * they are stacked.
+ *
+ * The rule from §1 holds and is now enforceable by naming: --stated and
+ * --inferred are FILL AND STROKE. Text uses an -ink (on light) or -on-dark
+ * variant. There is deliberately no token that puts #F77A25 on #FAFAFA.
+ */
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Surfaces */
+  --bg:                #303841;  /* Dark Slate — app background */
+  --surface:           #FAFAFA;  /* Off White — cards, panels, floating surfaces */
+  --surface-raised:    #3A434E;  /* dark-mode container one step up from bg */
+  --surface-sunken:    #262D35;
+
+  /* Memory semantics — fills and strokes */
+  --stated:            #F77A25;
+  --inferred:          #C2CEF2;
+
+  /* Memory semantics — text. Never use the fill tokens for type.
+   *
+   * The -on-dark values are sized against the WORST dark surface they can land
+   * on, which is not --surface-raised: it is a *-dim chip sitting on
+   * --surface-raised (#514A49 for stated). A DOM contrast audit of the running
+   * app caught that — the first pass measured these against the raw surfaces,
+   * passed, and still shipped 4.38:1 chips. Ratios below are worst-case. */
+  --stated-ink:        #8A3A00;  /* on --surface                     — 7.49  AAA */
+  --stated-on-dark:    #FAAF7C;  /* worst: stated-dim on raised      — 4.76  AA  */
+  --inferred-ink:      #2E3F63;  /* on --surface                     — 10.02 AAA */
+  --inferred-on-dark:  #C3CFF2;  /* worst: inferred-dim on raised    — 4.75  AA  */
+
+  /* Tinted backgrounds. Alpha, so they compose over either surface. */
+  --stated-dim:        rgb(247 122 37 / 0.12);
+  --inferred-dim:      rgb(194 206 242 / 0.14);
+
+  /* Text */
+  --ink:               #0F1419;  /* on --surface                     — 17.74 AAA */
+  --ink-muted:         #4A5560;  /* on --surface                     — 7.29  AAA */
+  --ink-invert:        #E8EAED;  /* on --bg                          — 9.86  AAA */
+  --ink-invert-muted:  #C4C9D0;  /* worst: white/8 chip on raised    — 4.76  AA  */
+
+  /* Lines */
+  --outline:           rgb(250 250 250 / 0.14);
+  --outline-strong:    rgb(250 250 250 / 0.28);
+  --outline-ink:       rgb(15 20 25 / 0.14);  /* the same idea on a light card */
+
+  /* Status */
+  --danger:            #FF6B5E;  /* fill/stroke only  — 4.25 on --bg, ≥3 graphical */
+  --danger-ink:        #93000A;  /* on --surface                     — 8.96  AAA */
+  --danger-on-dark:    #FFA8A1;  /* worst: danger-dim on raised      — 4.76  AA  */
+  --danger-dim:        rgb(255 107 94 / 0.12);
+
+  /* Radius (§1) */
+  --radius-card:  0.5rem;
+  --radius-input: 0.5rem;
+  --radius-pill:  999px;
+
+  /* Motion (§5). One place, so the reduced-motion override below is total. */
+  --motion-micro: 180ms;
+  --motion-state: 240ms;
+  --motion-expand: 380ms;
+  --ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-exit:  cubic-bezier(0.4, 0, 1, 1);
 }
 
+/* Mapped into Tailwind so components spend tokens, never hex (§7). `inline`
+ * keeps the :root vars above as the single source — utilities resolve through
+ * them rather than copying their values. */
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-bg:              var(--bg);
+  --color-surface:         var(--surface);
+  --color-raised:          var(--surface-raised);
+  --color-sunken:          var(--surface-sunken);
+
+  --color-stated:          var(--stated);
+  --color-stated-ink:      var(--stated-ink);
+  --color-stated-on-dark:  var(--stated-on-dark);
+  --color-stated-dim:      var(--stated-dim);
+  --color-inferred:        var(--inferred);
+  --color-inferred-ink:    var(--inferred-ink);
+  --color-inferred-on-dark: var(--inferred-on-dark);
+  --color-inferred-dim:    var(--inferred-dim);
+
+  --color-ink:             var(--ink);
+  --color-ink-muted:       var(--ink-muted);
+  --color-ink-invert:      var(--ink-invert);
+  --color-ink-invert-muted: var(--ink-invert-muted);
+
+  --color-outline:         var(--outline);
+  --color-outline-strong:  var(--outline-strong);
+  --color-outline-ink:     var(--outline-ink);
+
+  --color-danger:          var(--danger);
+  --color-danger-ink:      var(--danger-ink);
+  --color-danger-on-dark:  var(--danger-on-dark);
+  --color-danger-dim:      var(--danger-dim);
+
+  /* Type (§1). Hanken for headings, Inter for body, JetBrains strictly for
+   * machine-generated metadata — that last one is semantic, not decorative. */
+  --font-display: var(--font-hanken), ui-sans-serif, system-ui, sans-serif;
+  --font-sans:    var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono:    var(--font-jetbrains), ui-monospace, monospace;
+
+  --text-headline-lg: 2rem;       /* 32/40 */
+  --text-headline-lg--line-height: 2.5rem;
+  --text-headline-md: 1.25rem;    /* 20/28 */
+  --text-headline-md--line-height: 1.75rem;
+  --text-body-lg: 1.125rem;       /* 18/28 */
+  --text-body-lg--line-height: 1.75rem;
+  --text-body-md: 1rem;           /* 16/24 — floor for body text (§6) */
+  --text-body-md--line-height: 1.5rem;
+  --text-body-sm: 0.875rem;       /* 14/20 — supporting text, never prose */
+  --text-body-sm--line-height: 1.25rem;
+  --text-label-sm: 0.75rem;       /* 12/16 — mono chips only */
+  --text-label-sm--line-height: 1rem;
+
+  --radius-card: var(--radius-card);
+  --radius-input: var(--radius-input);
+
+  --container-shell: 1200px;      /* §1 container max */
+  --container-conversation: 800px;/* §1 conversation column max */
 }
 
-@media (prefers-color-scheme: dark) {
+/* headline-lg drops to 24/32 on mobile (§1). */
+@media (max-width: 767px) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --text-headline-lg: 1.5rem;
+    --text-headline-lg--line-height: 2rem;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* ---------------------------------------------------------------- base */
+
+html {
+  background: var(--bg);
+  /* §6: 200% zoom without loss. Nothing here fixes a px viewport width. */
+  -webkit-text-size-adjust: 100%;
 }
+
+body {
+  background: var(--bg);
+  color: var(--ink-invert);
+  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+  font-size: var(--text-body-md);
+  line-height: 1.5;
+}
+
+h1, h2, h3, h4 {
+  font-family: var(--font-display), ui-sans-serif, system-ui, sans-serif;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* §6: focus visible everywhere, 2px minimum, never removed. Set globally so an
+ * individual component cannot quietly opt out by forgetting it. */
+:focus-visible {
+  outline: 2px solid var(--stated-on-dark);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+/* On the off-white cards the bright orange ring is the one place the fill colour
+ * legitimately touches light — as a 2px stroke, which is a graphical object at
+ * 3:1, not text. */
+.on-surface :focus-visible,
+.on-surface:focus-visible {
+  outline-color: var(--stated-ink);
+}
+
+/* Body copy measure (§1: 65ch). Applied by class, because a chat transcript and
+ * a chip row want different things from the same page. */
+.measure { max-width: 65ch; }
+
+/* Tabular figures for anything countable (§6 number-tabular): counts and
+ * confidence values must not reflow the row as they change. */
+.tnum { font-variant-numeric: tabular-nums; }
+
+/* The mono metadata treatment, in one place so "mono means the machine wrote
+ * this" stays a rule rather than a habit. */
+.meta {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: var(--text-label-sm);
+  line-height: 1rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  font-variant-numeric: tabular-nums;
+}
+
+/* §4.1 / §6: touch target floor. Applied to controls whose visible box is
+ * smaller than the target — the hit area grows, the layout does not shift.
+ *
+ * Deliberately no `position` here. An unlayered rule like this one beats
+ * Tailwind's layered utilities regardless of source order, so a `position:
+ * relative` in this block silently overrode `absolute` at every call site that
+ * combined the two — which is how the modal's close button ended up in the
+ * bottom-left corner. Positioning is the caller's business. */
+.tap {
+  min-height: 44px;
+  min-width: 44px;
+}
+/* For controls that must keep their visual size: grows the hit area outward
+ * without affecting layout. Owns its own stacking context, so it is opt-in. */
+.tap-inline {
+  position: relative;
+}
+.tap-inline::after {
+  content: "";
+  position: absolute;
+  inset: 50% 0 0 50%;
+  translate: -50% -50%;
+  min-width: 44px;
+  min-height: 44px;
+}
+
+/* ------------------------------------------------- §5 motion + reduced motion */
+
+@keyframes nam-fade-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes nam-pulse-ring {
+  0%, 100% { opacity: 0.35; transform: scale(1); }
+  50%      { opacity: 0.9;  transform: scale(1.06); }
+}
+@keyframes nam-dash {
+  to { stroke-dashoffset: -16; }
+}
+
+.anim-enter {
+  animation: nam-fade-up var(--motion-state) var(--ease-enter) both;
+}
+
+/* Full reduced-motion path (§5): static positions, instant state changes, no
+ * idle drift, no pulse. Written as a blanket override rather than per-component
+ * so a new animation cannot ship without being covered by it. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+  .react-flow__edge-path { stroke-dasharray: none !important; }
+}
+
+/* ---------------------------------------------------------- React Flow skin
+ * The library's default light chrome is replaced wholesale — its own palette
+ * would be the one place raw hex re-entered the app through the back door. */
+
+/* React Flow sets `pointer-events: none` on a node when it is not draggable,
+ * selectable or connectable — which all three are false here, because selection
+ * is this app's own state and dragging would wreck the deterministic layout.
+ * Without this the nodes render perfectly and cannot be clicked. */
+.react-flow__node {
+  font-family: inherit;
+  pointer-events: auto !important;
+}
+.react-flow__handle { opacity: 0; pointer-events: none; }
+.react-flow__attribution { display: none; }
+.react-flow__controls-button {
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--outline);
+  fill: var(--ink-invert);
+}
+.react-flow__controls-button:hover { background: var(--surface-sunken); }
+.react-flow__panel { margin: 12px; }
