@@ -7,7 +7,7 @@ and change it without leaving the chat. This exercises that loop and the policy
 decisions underneath it — the interruption budget, the session-by-default rule for
 sensitive categories, and the extractor's refusal to store credentials.
 
-Makes real Gemini calls, so it costs quota and takes ~40s.
+Makes real LLM calls, so it draws against the daily allowance and takes ~40s.
 """
 
 from __future__ import annotations

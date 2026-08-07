@@ -149,63 +149,68 @@ class Block(BaseModel):
     is_fallback: bool
 
 
+# ------------------------------------------------------- P5 provenance graph
+
+class GraphNode(BaseModel):
+    """A memory item reduced to what the graph and its text equivalent need.
+
+    Not `MemoryItem`: the graph renders every node it returns, and shipping
+    embeddings-adjacent bulk down the wire for a view that shows five fields is
+    waste the node cap (guideline §3.4) exists to avoid.
+    """
+    id: UUID
+    content: str
+    source_type: SourceType
+    status: AssertionStatus
+    sensitivity: Sensitivity
+    scope: Scope
+    block_name: str | None
+    review_state: ReviewState
+    needs_review: bool
+    confidence: float
+    last_confirmed_at: datetime | None
+    deleted_at: datetime | None
+
+
+class GraphEdge(BaseModel):
+    """Direction follows SYSTEM_DESIGN §3: `from` is the source, `to` is derived
+    from it. Reversing this silently inverts the cascade, so it is stated here."""
+    from_item_id: UUID
+    to_item_id: UUID
+    relation: EdgeRelation
+
+
+class CascadePreview(BaseModel):
+    """What deleting the root would actually do — computed, not asserted.
+
+    `flag_for_review` is the honest half of SYSTEM_DESIGN §3 step 2: dependents
+    with another independent source are *not* re-derived. They are tombstoned
+    nowhere and marked for the user to look at. The UI must say that plainly
+    rather than implying re-derivation happened (CLAUDE.md honesty constraints).
+    """
+    root_id: UUID
+    cascade_delete: list[UUID]
+    flag_for_review: list[UUID]
+    relationship_affected: list[UUID]
+    attribution_count: int
+
+
+class ProvenanceGraph(BaseModel):
+    root_id: UUID | None = None
+    nodes: list[GraphNode]
+    edges: list[GraphEdge]
+    cascade: CascadePreview | None = None
+    # True when the graph was clipped by the node cap, so the UI can say it is
+    # showing a subset instead of implying it is showing everything.
+    truncated: bool = False
+
+
 # ------------------------------------------------------------------ P1 turn
 
 class TurnRequest(BaseModel):
     content: str = Field(min_length=1)
     # P3: excludes this turn from extraction entirely, not from the UI.
     session_ephemeral: bool = False
-    selected_memory_ids: list[UUID] | None = None
-
-
-# ------------------------------------------------------------------ Subnodes & Graph UI
-
-class MemorySubnode(BaseModel):
-    id: UUID
-    memory_item_id: UUID
-    content: str
-    confidence: float = 0.9
-    category: str | None = None
-    created_at: datetime
-
-
-class SubnodeCreate(BaseModel):
-    content: str = Field(min_length=1)
-    confidence: float = Field(default=0.9, ge=0.0, le=1.0)
-    category: str | None = None
-
-
-class SubnodeEdit(BaseModel):
-    content: str | None = None
-    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
-    category: str | None = None
-
-
-class PruneResponse(BaseModel):
-    pruned_count: int
-    message: str
-
-
-class NodeSummaryResponse(BaseModel):
-    memory_item_id: UUID
-    title: str
-    summary: str
-    key_points: list[str]
-    subnode_count: int
-
-
-class RelevanceScore(BaseModel):
-    memory_item_id: UUID
-    relevance: float  # 0.0 to 1.0
-
-
-class RelevanceRequest(BaseModel):
-    prompt: str = Field(min_length=1)
-
-
-class RelevanceResponse(BaseModel):
-    scores: dict[str, float]
-
 
 
 class UsedMemory(BaseModel):
@@ -221,6 +226,9 @@ class UsedMemory(BaseModel):
     sensitivity: Sensitivity
     block_name: str | None
     distance: float
+    # P6 decay: in_progress and unconfirmed past the threshold. Still usable, but never
+    # asserted as current without a re-check.
+    is_stale: bool = False
 
 
 class TurnResponse(BaseModel):
@@ -230,6 +238,10 @@ class TurnResponse(BaseModel):
     # False when the turn was ephemeral, so the UI can say "nothing was extracted"
     # rather than spinning on an indicator that will never resolve.
     extraction_running: bool
+    # Which provider/model actually answered. Reported rather than assumed, because
+    # a stale or unconfigured selection falls back silently otherwise.
+    provider: str | None = None
+    model: str | None = None
 
 
 class CandidatesResponse(BaseModel):
@@ -240,6 +252,54 @@ class CandidatesResponse(BaseModel):
 
 
 # ------------------------------------------------------------------ P1 edits
+
+# ------------------------------------------------------------------ P6
+
+class RegenerateRequest(BaseModel):
+    message_id: UUID
+    revoke_item_ids: list[UUID] = Field(default_factory=list)
+    # Same switchable-chat rule as a normal turn (D32). Regenerating on a different
+    # model than answered originally is legitimate — the revoked memory is the
+    # variable under test, and holding the model fixed is not required for that.
+    provider: str | None = None
+
+
+class RegenerateResponse(BaseModel):
+    previous: str
+    regenerated: str
+    revoked: list[UsedMemory]
+    used_memories: list[UsedMemory]
+    assistant_message: Message
+
+
+class DraftRequest(BaseModel):
+    instruction: str = Field(min_length=1)
+    # Deliberately no `provider`, unlike a chat turn (D32/D33). The draft's claim
+    # decomposition is the input to the overstatement check, so which model produces
+    # it must not be a dropdown — that would make the P6 guarantee non-reproducible.
+
+
+class DraftClaim(BaseModel):
+    """One assertion in a high-stakes draft, checked against its sources."""
+    text: str
+    asserted_as: AssertionStatus | None
+    sources: list[UsedMemory]
+    # True when the sentence claims more completeness than the memory supports —
+    # the CV failure case, detected in Python rather than by asking the model.
+    overstates: bool
+    # True when a source is stale, even if the phrasing is accurate.
+    stale_source: bool
+    problem: str | None
+
+
+class VerifiedDraft(BaseModel):
+    instruction: str
+    draft: str
+    claims: list[DraftClaim]
+    # True when at least one claim needs confirmation. The draft is still returned —
+    # withholding it would just make the user re-ask — but it is not clean to ship.
+    needs_confirmation: bool
+
 
 class HiddenItem(BaseModel):
     """A memory that exists but is unreachable from the current chat."""
@@ -262,7 +322,7 @@ class ScopeReport(BaseModel):
     hidden_session_items: list[HiddenItem]
     ephemeral_turns: int
     # Database-wide, not per chat. Structurally always 0: extraction returns before
-    # calling Gemini when a turn is ephemeral, so no row can reference one. Reported
+    # calling the LLM when a turn is ephemeral, so no row can reference one. Reported
     # rather than asserted because a number a judge can watch beats a promise.
     items_from_ephemeral_turns_global: int
 

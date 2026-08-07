@@ -50,5 +50,5 @@ def health():
         "pgvector": row["extversion"] if row else None,
         "embedding_dim": settings.embedding_dim,
         "live_memory_items": n,
-        "gemini_key_loaded": settings.gemini_api_key is not None,
+        "llm_key_loaded": settings.llm_api_key is not None,
     }

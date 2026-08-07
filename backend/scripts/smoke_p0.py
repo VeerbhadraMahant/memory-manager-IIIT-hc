@@ -103,11 +103,22 @@ def main() -> int:
     })
     check("invalid status rejected", r.status_code, 422)
 
+    # What P0 actually promised was that a planned route says "planned", not "absent" —
+    # 501 with the phase, never 404. It did not promise any particular route stays
+    # unbuilt. `accept` shipped in P1 and `confirm` in P6, so asserting 501 on them
+    # was asserting the project had not progressed, which is a test that fails on
+    # success. Only genuinely unbuilt routes belong below.
+    print("\nBuilt routes are built")
+    check("accept -> 200, built in P1",
+          c.post(f"{BASE}/memory/items/{item['id']}/accept").status_code, 200)
+    check("confirm -> 200, built in P6",
+          c.post(f"{BASE}/memory/items/{item['id']}/confirm").status_code, 200)
+
     print("\nUnbuilt routes announce themselves")
-    check("accept -> 501 not 404",
-          c.post(f"{BASE}/memory/items/{item['id']}/accept").status_code, 501)
     check("delete -> 501 not 404",
           c.delete(f"{BASE}/memory/items/{item['id']}").status_code, 501)
+    check("graph -> 501 not 404",
+          c.get(f"{BASE}/memory/items/{item['id']}/graph").status_code, 501)
 
     if failures:
         print(f"\n{len(failures)} FAILED: {', '.join(failures)}")

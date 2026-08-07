@@ -70,6 +70,7 @@ export interface UsedMemory {
   sensitivity: Sensitivity;
   block_name: string | null;
   distance: number;
+  is_stale: boolean;
 }
 
 export interface TurnResponse {
@@ -77,6 +78,23 @@ export interface TurnResponse {
   assistant_message: Message;
   used_memories: UsedMemory[];
   extraction_running: boolean;
+  // Which model actually answered — not necessarily the one requested, since an
+  // unconfigured or stale selection falls back on the server (D32).
+  provider: string | null;
+  model: string | null;
+}
+
+/** A chat provider the server has a key for. Memory is shared across all of them. */
+export interface Provider {
+  id: string;
+  label: string;
+  model: string;
+  configured: boolean;
+}
+
+export interface ProvidersResponse {
+  providers: Provider[];
+  default: string;
 }
 
 export interface CandidatesResponse {
@@ -84,6 +102,30 @@ export interface CandidatesResponse {
   error: string | null;
   candidates: MemoryItem[];
   auto_accepted: MemoryItem[];
+}
+
+export interface RegenerateResponse {
+  previous: string;
+  regenerated: string;
+  revoked: UsedMemory[];
+  used_memories: UsedMemory[];
+  assistant_message: Message;
+}
+
+export interface DraftClaim {
+  text: string;
+  asserted_as: AssertionStatus | null;
+  sources: UsedMemory[];
+  overstates: boolean;
+  stale_source: boolean;
+  problem: string | null;
+}
+
+export interface VerifiedDraft {
+  instruction: string;
+  draft: string;
+  claims: DraftClaim[];
+  needs_confirmation: boolean;
 }
 
 export interface Chat {
@@ -109,12 +151,64 @@ export interface ScopeReport {
   items_from_ephemeral_turns_global: number;
 }
 
+// ------------------------------------------------------- P5 provenance graph
+
+export type EdgeRelation =
+  | "derived_from"
+  | "summarized_from"
+  | "contradicts"
+  | "updates";
+
+/** Deliberately narrower than MemoryItem — see the backend's GraphNode. */
+export interface GraphNode {
+  id: string;
+  content: string;
+  source_type: SourceType;
+  status: AssertionStatus;
+  sensitivity: Sensitivity;
+  scope: Scope;
+  block_name: string | null;
+  review_state: ReviewState;
+  needs_review: boolean;
+  confidence: number;
+  last_confirmed_at: string | null;
+  deleted_at: string | null;
+}
+
+/** `from` is the source, `to` is derived from it. Inverting this inverts the
+ *  cascade, so the direction is restated here rather than inferred from a name. */
+export interface GraphEdge {
+  from_item_id: string;
+  to_item_id: string;
+  relation: EdgeRelation;
+}
+
+export interface CascadePreview {
+  root_id: string;
+  /** No other source. These die with the root. */
+  cascade_delete: string[];
+  /** Another source survives. Flagged for review — NOT re-derived (§4.5). */
+  flag_for_review: string[];
+  /** The other end of a contradicts/updates edge. The fact survives; the claim
+   *  that the two relate loses one of its ends. */
+  relationship_affected: string[];
+  attribution_count: number;
+}
+
+export interface ProvenanceGraph {
+  root_id: string | null;
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  cascade: CascadePreview | null;
+  truncated: boolean;
+}
+
 export interface Health {
   status: string;
   pgvector: string | null;
   embedding_dim: number;
   live_memory_items: number;
-  gemini_key_loaded: boolean;
+  llm_key_loaded: boolean;
 }
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
@@ -181,16 +275,10 @@ export const api = {
   purgeEphemeral: (chatId: string) =>
     post<{ redacted_turns: number }>(`/chats/${chatId}/purge-ephemeral`),
 
-  sendTurn: (
-    chatId: string,
-    content: string,
-    sessionEphemeral: boolean,
-    selectedMemoryIds?: string[],
-  ) =>
+  sendTurn: (chatId: string, content: string, sessionEphemeral: boolean) =>
     post<TurnResponse>(`/chats/${chatId}/message`, {
       content,
       session_ephemeral: sessionEphemeral,
-      selected_memory_ids: selectedMemoryIds && selectedMemoryIds.length > 0 ? selectedMemoryIds : undefined,
     }),
 
   candidates: (chatId: string, messageId: string) =>
@@ -198,7 +286,27 @@ export const api = {
       `/chats/${chatId}/candidates?message_id=${messageId}`,
     ),
 
+  regenerate: (chatId: string, messageId: string, revokeItemIds: string[]) =>
+    post<RegenerateResponse>(`/chats/${chatId}/regenerate`, {
+      message_id: messageId,
+      revoke_item_ids: revokeItemIds,
+    }),
+
+  verifiedDraft: (chatId: string, instruction: string) =>
+    post<VerifiedDraft>(`/chats/${chatId}/verified-draft`, { instruction }),
+
+  /** Every live item plus every edge between them. Backs the graph view. */
+  graph: () => req<ProvenanceGraph>("/memory/graph"),
+
+  /** The deletion preview for one item, as data. Same object the DELETE returns,
+   *  so what the user was shown and what the server did cannot diverge. */
+  itemGraph: (id: string) => req<ProvenanceGraph>(`/memory/items/${id}/graph`),
+
+  remove: (id: string) =>
+    req<CascadePreview>(`/memory/items/${id}`, { method: "DELETE" }),
+
   accept: (id: string) => post<MemoryItem>(`/memory/items/${id}/accept`),
+  confirm: (id: string) => post<MemoryItem>(`/memory/items/${id}/confirm`),
   reject: (id: string) => post<MemoryItem>(`/memory/items/${id}/reject`),
   rescope: (id: string, scope: Scope) =>
     post<MemoryItem>(`/memory/items/${id}/rescope`, { scope }),

@@ -1,692 +1,451 @@
 "use client";
 
-import React, { useEffect, useState, useMemo } from "react";
+// §3 — the graph view.
+//
+// Coequal with the list, not a decoration on it (§2). The task split is the
+// honest way to think about what it is *for*: the list answers "what does it
+// know about me", the graph answers "what is connected to what". Everything
+// actionable is reachable in both, because the detail panel below mounts the
+// same <MemoryActionBar> the list rows mount.
+//
+// The four non-negotiables from §3, and where each one lives:
+//   1. Deterministic layout        → lib/graph-layout.ts (dagre, sorted input)
+//   2. Focusable, labelled nodes   → components/MemoryNode.tsx
+//   3. No hover-only actions       → nothing here has an onMouseEnter handler
+//   4. Node cap at ~150            → NODE_CAP, plus the backend's own cap
+//   5. prefers-reduced-motion      → globals.css blanket override + fitView flag
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  api,
-  type MemoryItem,
-  type MemorySubnode,
-  type NodeSummaryResponse,
-} from "@/lib/api";
+  Background,
+  BackgroundVariant,
+  Controls,
+  MarkerType,
+  ReactFlow,
+  ReactFlowProvider,
+  useReactFlow,
+  type Edge,
+  type Node,
+} from "@xyflow/react";
+import { Info, Network } from "lucide-react";
 
-interface MemoryGraphProps {
-  memories: MemoryItem[];
-  relevanceScores?: Record<string, number>;
-  onSelectMemoryForChat?: (memory: MemoryItem) => void;
-  onSelectMultipleMemoriesForChat?: (memories: MemoryItem[]) => void;
-  onRedirectToChat?: (chatId: string) => void;
-  onRefreshMemories?: () => void;
+import type { GraphNode, MemoryItem, ProvenanceGraph } from "@/lib/api";
+import { useMemoryStore } from "@/lib/memory-store";
+import { NODE_CAP, NODE_H, NODE_W, adjacency, layoutGraph } from "@/lib/graph-layout";
+import { RELATION_LABEL, describeMemory } from "@/lib/semantics";
+import { MemoryActionBar, MemorySummary } from "@/components/MemoryActionBar";
+import { MemoryNode, type MemoryNodeData } from "@/components/MemoryNode";
+import { Chip } from "@/components/ui/chip";
+
+const nodeTypes = { memory: MemoryNode };
+
+/** Matched against the CSS media query rather than assumed — §5's reduced-motion
+ *  path has to turn off fitView's animation too, which is JS, not CSS. */
+function usePrefersReducedMotion() {
+  const [reduced, setReduced] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const apply = () => setReduced(mq.matches);
+    apply();
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, []);
+  return reduced;
 }
 
-interface NodePosition {
-  x: number;
-  y: number;
+export function MemoryGraph(props: {
+  selectedId: string | null;
+  onSelect: (id: string | null) => void;
+  preview: ProvenanceGraph | null;
+  relevance: Map<string, number> | null;
+  onRequestDelete: (item: MemoryItem) => void;
+}) {
+  return (
+    <ReactFlowProvider>
+      <GraphInner {...props} />
+    </ReactFlowProvider>
+  );
 }
 
-const CATEGORY_COLORS: Record<string, { bg: string; border: string; glow: string; text: string }> = {
-  Work: { bg: "#78350F", border: "#F59E0B", glow: "rgba(245, 158, 11, 0.6)", text: "#FDE68A" },
-  Personal: { bg: "#831843", border: "#EC4899", glow: "rgba(236, 72, 153, 0.6)", text: "#FBCFE8" },
-  Health: { bg: "#7F1D1D", border: "#EF4444", glow: "rgba(239, 68, 68, 0.6)", text: "#FCA5A5" },
-  Technical: { bg: "#1E3A8A", border: "#3B82F6", glow: "rgba(59, 130, 246, 0.6)", text: "#BFDBFE" },
-  General: { bg: "#312E81", border: "#6366F1", glow: "rgba(99, 102, 241, 0.6)", text: "#C7D2FE" },
-  Session: { bg: "#334155", border: "#94A3B8", glow: "rgba(148, 163, 184, 0.6)", text: "#E2E8F0" },
-};
+function GraphInner({
+  selectedId,
+  onSelect,
+  preview,
+  relevance,
+  onRequestDelete,
+}: {
+  selectedId: string | null;
+  onSelect: (id: string | null) => void;
+  preview: ProvenanceGraph | null;
+  relevance: Map<string, number> | null;
+  onRequestDelete: (item: MemoryItem) => void;
+}) {
+  const { graph, items } = useMemoryStore();
+  const reduced = usePrefersReducedMotion();
+  const { setViewport } = useReactFlow();
+  const canvas = useRef<HTMLDivElement>(null);
 
-function getCategoryColor(blockName: string | null, scope: string) {
-  if (scope === "session") return CATEGORY_COLORS.Session;
-  if (!blockName) return CATEGORY_COLORS.General;
-  return CATEGORY_COLORS[blockName] || CATEGORY_COLORS.General;
-}
+  // Memoised rather than defaulted inline: `graph?.nodes ?? []` produces a new
+  // array identity on every render, which would re-run the layout — and the
+  // layout is the thing §3.1 requires to be stable.
+  const source = useMemo(() => graph?.nodes ?? [], [graph]);
+  const rawEdges = useMemo(() => graph?.edges ?? [], [graph]);
+  const capped = source.length > NODE_CAP;
+  const visible = useMemo(() => source.slice(0, NODE_CAP), [source]);
 
-export function MemoryGraph({
-  memories,
-  relevanceScores = {},
-  onSelectMemoryForChat,
-  onSelectMultipleMemoriesForChat,
-  onRedirectToChat,
-  onRefreshMemories,
-}: MemoryGraphProps) {
-  // Graph state
-  const [expandedNodeIds, setExpandedNodeIds] = useState<Set<string>>(new Set());
-  const [subnodesMap, setSubnodesMap] = useState<Record<string, MemorySubnode[]>>({});
-  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
-  
-  // Multi-selection state
-  const [multiSelectMode, setMultiSelectMode] = useState(false);
-  const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
+  const layout = useMemo(() => layoutGraph(visible, rawEdges), [visible, rawEdges]);
+  const neighbours = useMemo(() => adjacency(layout.edges), [layout.edges]);
 
-  // Editing & Summary Modals
-  const [activeItemForEdit, setActiveItemForEdit] = useState<MemoryItem | null>(null);
-  const [subnodeInputContent, setSubnodeInputContent] = useState("");
-  const [editingSubnodeId, setEditingSubnodeId] = useState<string | null>(null);
-  const [editSubnodeText, setEditSubnodeText] = useState("");
-  const [pruneMessage, setPruneMessage] = useState<string | null>(null);
+  const doomed = useMemo(
+    () => new Set(preview?.cascade ? [preview.cascade.root_id, ...preview.cascade.cascade_delete] : []),
+    [preview],
+  );
+  const degraded = useMemo(
+    () =>
+      new Set(
+        preview?.cascade
+          ? [...preview.cascade.flag_for_review, ...preview.cascade.relationship_affected]
+          : [],
+      ),
+    [preview],
+  );
 
-  const [activeItemForSummary, setActiveItemForSummary] = useState<MemoryItem | null>(null);
-  const [summaryData, setSummaryData] = useState<NodeSummaryResponse | null>(null);
-  const [summaryLoading, setSummaryLoading] = useState(false);
+  /** Move focus to a node's DOM element. The graph's keyboard model is "focus is
+   *  the cursor", so navigation *is* focus movement — nothing tracks a separate
+   *  highlighted-node state that could drift out of sync with the focus ring. */
+  const focusNode = useCallback((id: string) => {
+    canvas.current
+      ?.querySelector<HTMLElement>(`[data-id="${CSS.escape(id)}"] [role="button"]`)
+      ?.focus();
+  }, []);
 
-  // Compute layout positions for nodes
-  const nodePositions = useMemo(() => {
-    const positions: Record<string, NodePosition> = {};
-    const total = memories.length;
-    if (total === 0) return positions;
-
-    const width = 720;
-    const height = 480;
-    const centerX = width / 2;
-    const centerY = height / 2;
-    const radius = Math.min(width, height) * 0.32;
-
-    memories.forEach((mem, index) => {
-      const angle = (index / total) * 2 * Math.PI - Math.PI / 2;
-      positions[mem.id] = {
-        x: centerX + radius * Math.cos(angle),
-        y: centerY + radius * Math.sin(angle),
-      };
-    });
-
-    return positions;
-  }, [memories]);
-
-  // Load subnodes when node is expanded
-  const toggleNodeExpansion = async (itemId: string) => {
-    const next = new Set(expandedNodeIds);
-    if (next.has(itemId)) {
-      next.delete(itemId);
-    } else {
-      next.add(itemId);
-      if (!subnodesMap[itemId]) {
-        try {
-          const subs = await api.getSubnodes(itemId);
-          setSubnodesMap((prev) => ({ ...prev, [itemId]: subs }));
-        } catch {
-          // Ignore transient error
-        }
+  /**
+   * §3.2 arrow-key navigation between connected nodes.
+   *
+   * Left/Right walk the neighbour list of the current node; Up/Down do the same
+   * in the other direction. Deliberately list-walking rather than geometric:
+   * "the nearest node 30° up and to the left" is unpredictable to a user who
+   * cannot see the canvas, and the whole point of this being real DOM is that
+   * the blind path and the sighted path are the same path.
+   */
+  const onArrow = useCallback(
+    (id: string, key: string) => {
+      const linked = neighbours.get(id);
+      if (linked?.length) {
+        const step = key === "ArrowRight" || key === "ArrowDown" ? 1 : -1;
+        focusNode(linked[(linked.length + step) % linked.length]);
+        return;
       }
-    }
-    setExpandedNodeIds(next);
-  };
+      // Isolated node: fall back to walking the stable layout order, so the
+      // arrow keys still do something sensible on a graph with no edges.
+      const order = layout.nodes.map((p) => p.node.id);
+      const at = order.indexOf(id);
+      if (at === -1) return;
+      const step = key === "ArrowRight" || key === "ArrowDown" ? 1 : -1;
+      focusNode(order[(at + step + order.length) % order.length]);
+    },
+    [neighbours, layout.nodes, focusNode],
+  );
 
-  // Node selection handler
-  const handleNodeClick = (mem: MemoryItem, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (multiSelectMode) {
-      const next = new Set(selectedNodeIds);
-      if (next.has(mem.id)) next.delete(mem.id);
-      else next.add(mem.id);
-      setSelectedNodeIds(next);
-    } else {
-      toggleNodeExpansion(mem.id);
-    }
-  };
+  const nodes: Node<MemoryNodeData>[] = useMemo(
+    () =>
+      layout.nodes.map((p) => ({
+        id: p.node.id,
+        type: "memory",
+        position: { x: p.x, y: p.y },
+        // Declared, not measured. A node whose height depends on how its text
+        // wrapped is a node whose position depends on it too, and §3.1 does not
+        // survive that.
+        width: NODE_W,
+        height: NODE_H,
+        // Dragging would let the user destroy the deterministic layout the whole
+        // section exists to protect, and there is nothing to gain by moving a
+        // node whose position is meaningful (§3.1).
+        draggable: false,
+        // Focus is managed on the inner element, which carries the label; a
+        // second focusable wrapper would make every node two tab stops.
+        focusable: false,
+        data: {
+          memory: p.node,
+          selected: p.node.id === selectedId,
+          doomed: doomed.has(p.node.id),
+          degraded: degraded.has(p.node.id),
+          relevance: relevance?.get(p.node.id) ?? (relevance ? 0 : null),
+          unconnected: p.unconnected,
+          onActivate: (id: string) => onSelect(id === selectedId ? null : id),
+          onArrow,
+        },
+      })),
+    [layout.nodes, selectedId, doomed, degraded, relevance, onSelect, onArrow],
+  );
 
-  // Open Edit Modal
-  const openEditModal = async (mem: MemoryItem, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setActiveItemForEdit(mem);
-    setPruneMessage(null);
-    try {
-      const subs = await api.getSubnodes(mem.id);
-      setSubnodesMap((prev) => ({ ...prev, [mem.id]: subs }));
-    } catch {
-      // Ignore
-    }
-  };
+  const edges: Edge[] = useMemo(
+    () =>
+      layout.edges.map((e) => {
+        const dying = doomed.has(e.from_item_id) || doomed.has(e.to_item_id);
+        // Persistence encoding from §4.1: a permanent link is a solid line, a
+        // temporary one is dashed. `contradicts` is dashed too — it is a claim
+        // about disagreement, not a derivation.
+        const provisional = e.relation === "contradicts";
+        return {
+          id: `${e.from_item_id}-${e.to_item_id}-${e.relation}`,
+          source: e.from_item_id,
+          target: e.to_item_id,
+          label: RELATION_LABEL[e.relation] ?? e.relation,
+          labelShowBg: true,
+          labelBgStyle: { fill: "var(--surface-sunken)" },
+          labelStyle: {
+            fill: "var(--ink-invert-muted)",
+            fontSize: 11,
+            fontFamily: "var(--font-jetbrains), monospace",
+          },
+          markerEnd: {
+            type: MarkerType.ArrowClosed,
+            color: dying ? "var(--danger)" : "var(--outline-strong)",
+          },
+          style: {
+            stroke: dying ? "var(--danger)" : "var(--outline-strong)",
+            strokeWidth: dying ? 2.5 : 1.5,
+            strokeDasharray: provisional ? "6 4" : undefined,
+          },
+        };
+      }),
+    [layout.edges, doomed],
+  );
 
-  // Add Subnode
-  const handleAddSubnode = async () => {
-    if (!activeItemForEdit || !subnodeInputContent.trim()) return;
-    try {
-      const newSub = await api.createSubnode(
-        activeItemForEdit.id,
-        subnodeInputContent.trim(),
-        0.9,
-        activeItemForEdit.block_name || "General"
-      );
-      setSubnodesMap((prev) => ({
-        ...prev,
-        [activeItemForEdit.id]: [...(prev[activeItemForEdit.id] || []), newSub],
-      }));
-      setSubnodeInputContent("");
-    } catch (err) {
-      alert(err instanceof Error ? err.message : "Failed to add subnode");
-    }
-  };
+  // The initial viewport is computed here rather than delegated to fitView.
+  //
+  // Not a workaround — a consequence of §3.1. fitView measures whatever React
+  // Flow has registered at the moment it happens to run, which on a panel that
+  // mounts on a view switch is a race: it fitted to nothing and the graph opened
+  // at zoom 1 in a corner. The layout already knows its own extent, so the fit
+  // is arithmetic over `layout.width`/`layout.height` and the pane size. Same
+  // data and same pane → same viewport, which is the guarantee §3.1 asks for and
+  // the thing §8.7 checks by reloading five times.
+  const [pane, setPane] = useState({ w: 0, h: 0 });
+  useEffect(() => {
+    const el = canvas.current;
+    if (!el) return;
+    const measure = () => {
+      const { width, height } = el.getBoundingClientRect();
+      setPane((p) => (p.w === width && p.h === height ? p : { w: width, h: height }));
+    };
+    // A timer for the first measurement, not requestAnimationFrame, and a
+    // resize listener alongside the observer. Both fallbacks exist because
+    // Chrome suspends rAF *and* ResizeObserver in a background tab: without
+    // them the graph renders unfitted for any viewer whose tab was not focused
+    // when it mounted, which is the normal case for a second monitor.
+    const t = setTimeout(measure, 0);
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    window.addEventListener("resize", measure);
+    return () => {
+      clearTimeout(t);
+      ro.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, []);
 
-  // Delete Subnode
-  const handleDeleteSubnode = async (subnodeId: string) => {
-    if (!activeItemForEdit) return;
-    try {
-      await api.deleteSubnode(subnodeId);
-      setSubnodesMap((prev) => ({
-        ...prev,
-        [activeItemForEdit.id]: (prev[activeItemForEdit.id] || []).filter((s) => s.id !== subnodeId),
-      }));
-    } catch (err) {
-      alert(err instanceof Error ? err.message : "Failed to delete subnode");
-    }
-  };
+  const fitted = useRef(false);
+  useEffect(() => {
+    if (!pane.w || !pane.h || layout.nodes.length === 0) return;
+    const inset = 0.9; // 5% breathing room each side
+    const zoom = Math.max(
+      0.2,
+      Math.min(
+        (pane.w * inset) / Math.max(layout.width, 1),
+        (pane.h * inset) / Math.max(layout.height, 1),
+        1, // never magnify past 1:1 — a three-node graph should not fill the screen
+      ),
+    );
+    // The first fit is instant. §5: motion has to communicate a relationship or
+    // a state change, and animating the arrival of a view the user has not seen
+    // yet communicates nothing — it is decoration, so it gets cut. It is also
+    // the robust choice: an animated viewport runs on requestAnimationFrame,
+    // which Chrome suspends in a background tab, so an animated first fit never
+    // arrives at all for anyone who opened the page and looked away.
+    // Later re-fits *do* animate, because there the movement is the message.
+    const duration = fitted.current && !reduced ? 300 : 0;
+    fitted.current = true;
+    setViewport(
+      {
+        x: (pane.w - layout.width * zoom) / 2,
+        y: (pane.h - layout.height * zoom) / 2,
+        zoom,
+      },
+      { duration },
+    );
+  }, [pane, layout, setViewport, reduced]);
 
-  // Save edited subnode
-  const handleSaveSubnodeEdit = async (subnodeId: string) => {
-    if (!activeItemForEdit || !editSubnodeText.trim()) return;
-    try {
-      const updated = await api.editSubnode(subnodeId, { content: editSubnodeText.trim() });
-      setSubnodesMap((prev) => ({
-        ...prev,
-        [activeItemForEdit.id]: (prev[activeItemForEdit.id] || []).map((s) =>
-          s.id === subnodeId ? updated : s
-        ),
-      }));
-      setEditingSubnodeId(null);
-      setEditSubnodeText("");
-    } catch (err) {
-      alert(err instanceof Error ? err.message : "Failed to edit subnode");
-    }
-  };
-
-  // Prune Subnodes
-  const handlePruneSubnodes = async () => {
-    if (!activeItemForEdit) return;
-    try {
-      const res = await api.pruneSubnodes(activeItemForEdit.id);
-      setPruneMessage(res.message);
-      const subs = await api.getSubnodes(activeItemForEdit.id);
-      setSubnodesMap((prev) => ({ ...prev, [activeItemForEdit.id]: subs }));
-    } catch (err) {
-      alert(err instanceof Error ? err.message : "Failed to prune subnodes");
-    }
-  };
-
-  // Open Summary Modal
-  const openSummaryModal = async (mem: MemoryItem, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setActiveItemForSummary(mem);
-    setSummaryLoading(true);
-    try {
-      const summary = await api.getNodeSummary(mem.id);
-      setSummaryData(summary);
-    } catch (err) {
-      alert(err instanceof Error ? err.message : "Failed to load node summary");
-    } finally {
-      setSummaryLoading(false);
-    }
-  };
-
-  // Trigger multi-select chat
-  const handleAskSelected = () => {
-    if (!onSelectMultipleMemoriesForChat) return;
-    const selectedMemories = memories.filter((m) => selectedNodeIds.has(m.id));
-    onSelectMultipleMemoriesForChat(selectedMemories);
-  };
+  const selected = items.find((i) => i.id === selectedId) ?? null;
+  const selectedNode = visible.find((n) => n.id === selectedId) ?? null;
 
   return (
-    <div className="relative flex flex-col w-full h-full bg-[#13131b] border border-slate-800 rounded-xl overflow-hidden shadow-2xl text-slate-200 select-none">
-      {/* Visual Header / Controls */}
-      <div className="flex items-center justify-between px-5 py-3 bg-[#191924] border-b border-slate-800/80">
-        <div className="flex items-center gap-3">
-          <div className="w-3 h-3 rounded-full bg-emerald-400 animate-pulse" />
-          <h2 className="font-semibold text-sm tracking-wide text-white uppercase font-mono">
-            Dynamic Synaptic Memory Graph
-          </h2>
+    <div className="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row">
+      {/* 70dvh rather than a pixel height: the graph is the one surface where
+          vertical room is the whole product, and a fixed height that looked
+          right on a laptop is a letterbox on a projector. */}
+      <div className="flex h-[70dvh] min-h-[440px] flex-1 flex-col overflow-hidden rounded-card border border-outline bg-sunken">
+        {(capped || graph?.truncated) && (
+          <p className="border-b border-outline bg-stated-dim px-4 py-2 text-body-sm text-stated-on-dark">
+            Showing {NODE_CAP} of {source.length} memories. Above about 150 nodes
+            the graph stops being readable — filter in the list view to narrow it.
+          </p>
+        )}
+
+        <div ref={canvas} className="relative min-h-0 flex-1">
+          {layout.nodes.length === 0 ? (
+            <EmptyCanvas />
+          ) : (
+            <ReactFlow
+              nodes={nodes}
+              edges={edges}
+              nodeTypes={nodeTypes}
+              // The Controls' fit button stays as a manual escape hatch after
+              // panning; the *initial* viewport is set above, not by fitView.
+              fitViewOptions={{ padding: 0.1 }}
+              // Panning and zooming stay; node dragging does not (see above).
+              nodesDraggable={false}
+              nodesConnectable={false}
+              elementsSelectable={false}
+              proOptions={{ hideAttribution: false }}
+              minZoom={0.2}
+              maxZoom={1.6}
+              onPaneClick={() => onSelect(null)}
+              aria-label="Memory provenance graph"
+            >
+              <Background
+                variant={BackgroundVariant.Dots}
+                gap={24}
+                size={1}
+                color="var(--outline)"
+              />
+              <Controls showInteractive={false} />
+            </ReactFlow>
+          )}
         </div>
 
-        <div className="flex items-center gap-3 text-xs">
-          {/* Multi-select toggle */}
-          <button
-            onClick={() => {
-              setMultiSelectMode(!multiSelectMode);
-              if (multiSelectMode) setSelectedNodeIds(new Set());
-            }}
-            className={`px-3 py-1.5 rounded-lg border transition font-medium flex items-center gap-1.5 ${
-              multiSelectMode
-                ? "bg-indigo-600/30 border-indigo-500 text-indigo-200 shadow-[0_0_12px_rgba(99,102,241,0.4)]"
-                : "bg-slate-800/60 border-slate-700 text-slate-300 hover:bg-slate-800"
-            }`}
-          >
-            <span>{multiSelectMode ? "✓ Multi-Select Active" : "Enable Multi-Select"}</span>
-            {selectedNodeIds.size > 0 && (
-              <span className="px-1.5 py-0.5 rounded-full bg-indigo-500 text-white font-mono text-[10px]">
-                {selectedNodeIds.size}
+        {layout.edges.length === 0 && layout.nodes.length > 0 && (
+          // Said plainly rather than hidden behind a prettier empty state. The
+          // gap is real and PHASES.md records it; a graph that looks connected
+          // when nothing has been connected would be the lie.
+          <p className="flex items-start gap-2 border-t border-outline px-4 py-3 text-body-sm text-ink-invert-muted">
+            <Info className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+            <span>
+              No provenance edges have been written yet. Nothing in the pipeline
+              currently detects that one memory updates, contradicts or was
+              derived from another, so these nodes are genuinely unconnected
+              rather than laid out badly. Deletion preview reads the same edges,
+              so it will report no dependents until that lands.
+            </span>
+          </p>
+        )}
+      </div>
+
+      {/* Detail panel. The graph's actions live here, not on the node, because
+          §3.3 forbids hover-only affordances and a hover popover on a node is
+          exactly that. Click, Enter and tap all arrive at this same panel. */}
+      <aside
+        aria-label="Selected memory"
+        className="on-surface w-full shrink-0 self-start rounded-card bg-surface p-4 lg:w-96"
+      >
+        {selected && selectedNode ? (
+          <div className="space-y-3">
+            <p className="text-body-md text-ink">{selected.content}</p>
+            <MemorySummary item={selected} />
+            {/* The lossless textual equivalent of what the graph is drawing
+                around this node (principle 6). */}
+            <NodeConnections
+              node={selectedNode}
+              graph={graph}
+              onSelect={onSelect}
+            />
+            <div className="border-t border-outline-ink pt-3">
+              <MemoryActionBar item={selected} onRequestDelete={onRequestDelete} />
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <h3 className="text-headline-md text-ink">Nothing selected</h3>
+            <p className="text-body-sm text-ink-muted">
+              Choose a node to see what it is connected to and act on it. Tab
+              reaches every node in a stable order; arrow keys walk between
+              connected ones.
+            </p>
+            <p className="text-body-sm text-ink-muted">
+              Every action here is also in the list view. Neither view is the
+              fallback.
+            </p>
+          </div>
+        )}
+      </aside>
+    </div>
+  );
+}
+
+/** The graph's edges for one node, as sentences. §3/§6: any graph capability
+ *  must have a lossless textual equivalent, and this is that equivalent —
+ *  navigable, not just readable. */
+function NodeConnections({
+  node,
+  graph,
+  onSelect,
+}: {
+  node: GraphNode;
+  graph: ProvenanceGraph | null;
+  onSelect: (id: string) => void;
+}) {
+  const byId = new Map((graph?.nodes ?? []).map((n) => [n.id, n]));
+  const links = (graph?.edges ?? [])
+    .filter((e) => e.from_item_id === node.id || e.to_item_id === node.id)
+    .map((e) => {
+      const outgoing = e.from_item_id === node.id;
+      const other = byId.get(outgoing ? e.to_item_id : e.from_item_id);
+      return other ? { other, relation: e.relation, outgoing } : null;
+    })
+    .filter(Boolean) as { other: GraphNode; relation: string; outgoing: boolean }[];
+
+  if (links.length === 0) {
+    return (
+      <p className="text-body-sm text-ink-muted">
+        Not connected to any other memory.
+      </p>
+    );
+  }
+
+  return (
+    <div>
+      <h4 className="meta text-ink-muted">Connected to {links.length}</h4>
+      <ul className="mt-1.5 space-y-1">
+        {links.map(({ other, relation, outgoing }) => (
+          <li key={`${other.id}-${relation}-${outgoing}`}>
+            <button
+              onClick={() => onSelect(other.id)}
+              className="on-surface w-full rounded-input px-2 py-2 text-left text-body-sm text-ink hover:bg-black/5"
+              aria-label={`${outgoing ? "This" : other.content} ${RELATION_LABEL[relation] ?? relation} ${outgoing ? other.content : "this"}. ${describeMemory(other)}`}
+            >
+              <span className="meta mr-2 text-ink-muted">
+                {outgoing ? "→" : "←"} {RELATION_LABEL[relation] ?? relation}
               </span>
-            )}
-          </button>
+              {other.content}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 
-          {/* Legend */}
-          <div className="hidden sm:flex items-center gap-4 text-[11px] text-slate-400 pl-3 border-l border-slate-700">
-            <span className="flex items-center gap-1.5">
-              <span className="inline-block w-4 h-0.5 bg-slate-300" /> Permanent
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="inline-block w-4 h-0.5 border-b border-dashed border-slate-400" /> Temporary
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* Floating Action Bar for Multi-Select */}
-      {multiSelectMode && selectedNodeIds.size > 0 && (
-        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 flex items-center gap-3 px-4 py-2 bg-indigo-950/90 border border-indigo-500/50 backdrop-blur-md rounded-full shadow-2xl animate-fade-in">
-          <span className="text-xs font-medium text-indigo-200 font-mono">
-            {selectedNodeIds.size} nodes selected
-          </span>
-          <button
-            onClick={handleAskSelected}
-            className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs rounded-full transition shadow-md"
-          >
-            Ask AI on Selected Nodes →
-          </button>
-          <button
-            onClick={() => setSelectedNodeIds(new Set())}
-            className="text-xs text-indigo-300 hover:text-white px-2"
-          >
-            Clear
-          </button>
-        </div>
-      )}
-
-      {/* Graph Visual Canvas */}
-      <div className="relative flex-1 min-h-[480px] w-full bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-slate-900/60 via-[#13131b] to-[#0d0d15] overflow-hidden">
-        {/* SVG Connections Overlay */}
-        <svg className="absolute inset-0 w-full h-full pointer-events-none z-0">
-          <defs>
-            <linearGradient id="gradient-solid" x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" stopColor="#8083ff" stopOpacity="0.8" />
-              <stop offset="100%" stopColor="#4edea3" stopOpacity="0.8" />
-            </linearGradient>
-          </defs>
-
-          {/* Central Connecting Lines between main nodes */}
-          {memories.map((mem, i) => {
-            const posA = nodePositions[mem.id];
-            if (!posA) return null;
-
-            // Connect adjacent nodes to form network ring
-            const nextMem = memories[(i + 1) % memories.length];
-            const posB = nodePositions[nextMem.id];
-            if (!posB || memories.length <= 1) return null;
-
-            const isPersistent = mem.scope === "persistent" && nextMem.scope === "persistent";
-            const isHovered = hoveredNodeId === mem.id || hoveredNodeId === nextMem.id;
-
-            return (
-              <line
-                key={`edge-${mem.id}-${nextMem.id}`}
-                x1={posA.x}
-                y1={posA.y}
-                x2={posB.x}
-                y2={posB.y}
-                stroke={isHovered ? "#c0c1ff" : "#334155"}
-                strokeWidth={isHovered ? 2.5 : 1.2}
-                strokeDasharray={isPersistent ? "none" : "4 4"}
-                opacity={isHovered ? 0.9 : 0.4}
-                className="transition-all duration-300"
-              />
-            );
-          })}
-
-          {/* Expanded Subnodes Burst Connection Paths */}
-          {Array.from(expandedNodeIds).map((mainId) => {
-            const mainPos = nodePositions[mainId];
-            const subnodes = subnodesMap[mainId] || [];
-            if (!mainPos || subnodes.length === 0) return null;
-
-            const subRadius = 85;
-            const subCount = subnodes.length;
-
-            return subnodes.map((sub, sIdx) => {
-              const subAngle = (sIdx / subCount) * 2 * Math.PI;
-              const subX = mainPos.x + subRadius * Math.cos(subAngle);
-              const subY = mainPos.y + subRadius * Math.sin(subAngle);
-
-              return (
-                <g key={`sub-path-group-${sub.id}`}>
-                  <line
-                    x1={mainPos.x}
-                    y1={mainPos.y}
-                    x2={subX}
-                    y2={subY}
-                    stroke="#8083ff"
-                    strokeWidth={1.8}
-                    strokeDasharray="2 2"
-                    opacity={0.8}
-                    className="animate-pulse"
-                  />
-                </g>
-              );
-            });
-          })}
-        </svg>
-
-        {/* Nodes Layer */}
-        <div className="absolute inset-0 z-10 pointer-events-auto">
-          {memories.map((mem) => {
-            const pos = nodePositions[mem.id];
-            if (!pos) return null;
-
-            const colors = getCategoryColor(mem.block_name, mem.scope);
-            const isExpanded = expandedNodeIds.has(mem.id);
-            const isSelected = selectedNodeIds.has(mem.id);
-            const relevance = relevanceScores[mem.id] || 0;
-            const isHovered = hoveredNodeId === mem.id;
-
-            const subnodes = subnodesMap[mem.id] || [];
-
-            return (
-              <div key={mem.id}>
-                {/* Main Memory Node */}
-                <div
-                  style={{
-                    left: `${pos.x}px`,
-                    top: `${pos.y}px`,
-                    borderColor: isSelected ? "#38bdf8" : colors.border,
-                    backgroundColor: colors.bg,
-                    boxShadow:
-                      relevance > 0
-                        ? `0 0 ${12 + relevance * 24}px ${colors.glow}, inset 0 0 10px ${colors.glow}`
-                        : isHovered
-                        ? `0 0 16px ${colors.glow}`
-                        : "0 4px 12px rgba(0,0,0,0.5)",
-                    transform: `translate(-50%, -50%) scale(${isHovered ? 1.12 : isSelected ? 1.08 : 1})`,
-                  }}
-                  onClick={(e) => handleNodeClick(mem, e)}
-                  onMouseEnter={() => setHoveredNodeId(mem.id)}
-                  onMouseLeave={() => setHoveredNodeId(null)}
-                  className={`absolute group cursor-pointer rounded-full flex flex-col items-center justify-center p-3 transition-all duration-300 z-20 border-2 w-28 h-28 text-center`}
-                >
-                  {/* Scope Badge indicator */}
-                  <div
-                    className={`absolute -top-1.5 px-2 py-0.5 rounded-full text-[9px] font-mono uppercase tracking-wider font-bold shadow-sm ${
-                      mem.scope === "persistent"
-                        ? "bg-emerald-500 text-black"
-                        : "bg-slate-700 text-slate-200 border border-slate-500"
-                    }`}
-                  >
-                    {mem.scope === "persistent" ? "PERM" : "TEMP"}
-                  </div>
-
-                  {/* Multi-Select Checkmark */}
-                  {multiSelectMode && (
-                    <div
-                      className={`absolute top-1 right-1 w-5 h-5 rounded-full border flex items-center justify-center text-xs font-bold ${
-                        isSelected
-                          ? "bg-sky-400 border-sky-200 text-slate-950"
-                          : "border-slate-500 bg-slate-900/80 text-transparent"
-                      }`}
-                    >
-                      ✓
-                    </div>
-                  )}
-
-                  {/* Content Preview */}
-                  <span
-                    className="text-[11px] font-semibold line-clamp-2 px-1 leading-snug"
-                    style={{ color: colors.text }}
-                  >
-                    {mem.content}
-                  </span>
-
-                  {/* Category Pill */}
-                  <span className="mt-1 text-[9px] font-mono px-2 py-0.5 rounded bg-black/40 text-slate-300">
-                    {mem.block_name || "General"}
-                  </span>
-
-                  {/* Relevance Indicator Glow Ring */}
-                  {relevance > 0 && (
-                    <div
-                      className="absolute -inset-1.5 rounded-full border-2 border-emerald-400 opacity-60 pointer-events-none animate-pulse"
-                    />
-                  )}
-
-                  {/* Hover Quick Action Card */}
-                  {isHovered && !multiSelectMode && (
-                    <div className="absolute top-full mt-2 left-1/2 -translate-x-1/2 z-40 flex items-center gap-1.5 px-3 py-1.5 bg-slate-900/95 border border-slate-700 backdrop-blur-md rounded-xl shadow-2xl text-[11px] whitespace-nowrap">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (onSelectMemoryForChat) onSelectMemoryForChat(mem);
-                        }}
-                        className="px-2 py-1 bg-indigo-600 hover:bg-indigo-500 text-white font-medium rounded-lg transition"
-                      >
-                        💬 Ask Node
-                      </button>
-
-                      <button
-                        onClick={(e) => openEditModal(mem, e)}
-                        className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg border border-slate-600 transition"
-                      >
-                        ✏️ Edit
-                      </button>
-
-                      <button
-                        onClick={(e) => openSummaryModal(mem, e)}
-                        className="px-2 py-1 bg-amber-600/80 hover:bg-amber-500 text-white rounded-lg transition"
-                      >
-                        ⚡ Summary
-                      </button>
-
-                      {mem.session_chat_id && onRedirectToChat && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onRedirectToChat(mem.session_chat_id!);
-                          }}
-                          className="px-2 py-1 bg-emerald-700/80 hover:bg-emerald-600 text-white rounded-lg transition"
-                        >
-                          🔗 Origin Chat
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                {/* Burst Subnodes */}
-                {isExpanded &&
-                  subnodes.map((sub, sIdx) => {
-                    const subRadius = 85;
-                    const subCount = subnodes.length;
-                    const subAngle = (sIdx / subCount) * 2 * Math.PI;
-                    const subX = pos.x + subRadius * Math.cos(subAngle);
-                    const subY = pos.y + subRadius * Math.sin(subAngle);
-
-                    return (
-                      <div
-                        key={sub.id}
-                        style={{
-                          left: `${subX}px`,
-                          top: `${subY}px`,
-                          transform: "translate(-50%, -50%)",
-                        }}
-                        className="absolute z-30 flex items-center justify-center p-2 rounded-lg bg-slate-900/90 border border-indigo-400/60 shadow-lg w-24 text-center group/sub"
-                      >
-                        <span className="text-[10px] text-slate-200 line-clamp-2 leading-tight">
-                          {sub.content}
-                        </span>
-                        <div className="absolute -bottom-4 hidden group-hover/sub:flex items-center gap-1 bg-slate-950 px-2 py-0.5 rounded text-[9px] font-mono text-indigo-300 border border-slate-700">
-                          conf: {(sub.confidence * 100).toFixed(0)}%
-                        </div>
-                      </div>
-                    );
-                  })}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Node Subnodes Editor Modal */}
-      {activeItemForEdit && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-          <div className="w-full max-w-lg bg-[#191924] border border-slate-700 rounded-2xl p-6 shadow-2xl flex flex-col gap-4 text-slate-200 max-h-[85vh] overflow-y-auto">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <div>
-                <h3 className="font-bold text-base text-white">Node & Subnodes Inspector</h3>
-                <p className="text-xs text-slate-400 font-mono mt-0.5">
-                  Category: {activeItemForEdit.block_name || "General"} | Scope: {activeItemForEdit.scope}
-                </p>
-              </div>
-              <button
-                onClick={() => setActiveItemForEdit(null)}
-                className="text-slate-400 hover:text-white text-lg font-bold"
-              >
-                ✕
-              </button>
-            </div>
-
-            {/* Main Node Content */}
-            <div className="p-3 bg-slate-900/80 rounded-xl border border-slate-800 text-xs">
-              <span className="text-slate-400 font-mono text-[10px] block mb-1">MAIN NODE CONTENT</span>
-              <p className="text-slate-100 font-medium">{activeItemForEdit.content}</p>
-            </div>
-
-            {/* Prune Status Notification */}
-            {pruneMessage && (
-              <div className="p-3 rounded-lg bg-emerald-950/80 border border-emerald-500/50 text-emerald-300 text-xs font-mono">
-                {pruneMessage}
-              </div>
-            )}
-
-            {/* Subnodes List */}
-            <div className="flex flex-col gap-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-slate-300 font-mono">
-                  SUBNODES ({subnodesMap[activeItemForEdit.id]?.length || 0})
-                </span>
-                <button
-                  onClick={handlePruneSubnodes}
-                  className="px-2.5 py-1 text-[11px] bg-red-900/40 hover:bg-red-800/60 text-red-300 border border-red-700/50 rounded-lg transition font-mono"
-                >
-                  ⚡ Prune Subnodes
-                </button>
-              </div>
-
-              {(subnodesMap[activeItemForEdit.id] || []).length === 0 ? (
-                <div className="text-xs text-slate-500 italic py-3 text-center">
-                  No subnodes yet. Add one below.
-                </div>
-              ) : (
-                (subnodesMap[activeItemForEdit.id] || []).map((sub) => (
-                  <div
-                    key={sub.id}
-                    className="flex items-center justify-between p-2.5 bg-slate-900/60 border border-slate-800 rounded-xl text-xs gap-3"
-                  >
-                    {editingSubnodeId === sub.id ? (
-                      <div className="flex items-center gap-2 flex-1">
-                        <input
-                          type="text"
-                          value={editSubnodeText}
-                          onChange={(e) => setEditSubnodeText(e.target.value)}
-                          className="flex-1 px-2 py-1 bg-slate-800 border border-indigo-500 rounded text-xs text-white outline-none"
-                        />
-                        <button
-                          onClick={() => handleSaveSubnodeEdit(sub.id)}
-                          className="px-2 py-1 bg-indigo-600 text-white rounded text-xs font-medium"
-                        >
-                          Save
-                        </button>
-                        <button
-                          onClick={() => setEditingSubnodeId(null)}
-                          className="px-2 py-1 bg-slate-800 text-slate-400 rounded text-xs"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    ) : (
-                      <>
-                        <div className="flex flex-col flex-1">
-                          <span className="text-slate-200">{sub.content}</span>
-                          <span className="text-[10px] text-slate-500 font-mono">
-                            confidence: {(sub.confidence * 100).toFixed(0)}%
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                          <button
-                            onClick={() => {
-                              setEditingSubnodeId(sub.id);
-                              setEditSubnodeText(sub.content);
-                            }}
-                            className="px-2 py-1 text-[11px] bg-slate-800 hover:bg-slate-700 text-slate-300 rounded"
-                          >
-                            Edit
-                          </button>
-                          <button
-                            onClick={() => handleDeleteSubnode(sub.id)}
-                            className="px-2 py-1 text-[11px] bg-red-950 hover:bg-red-900 text-red-400 rounded"
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                ))
-              )}
-            </div>
-
-            {/* Add New Subnode Input */}
-            <div className="flex items-center gap-2 mt-2 pt-3 border-t border-slate-800">
-              <input
-                type="text"
-                placeholder="Type new subnode text..."
-                value={subnodeInputContent}
-                onChange={(e) => setSubnodeInputContent(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleAddSubnode()}
-                className="flex-1 px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:border-indigo-500 outline-none"
-              />
-              <button
-                onClick={handleAddSubnode}
-                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs rounded-xl transition"
-              >
-                Add Subnode
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Node Summary Modal */}
-      {activeItemForSummary && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-          <div className="w-full max-w-md bg-[#191924] border border-slate-700 rounded-2xl p-6 shadow-2xl flex flex-col gap-4 text-slate-200">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <h3 className="font-bold text-base text-amber-400 flex items-center gap-2">
-                <span>⚡</span> AI Node Summary
-              </h3>
-              <button
-                onClick={() => setActiveItemForSummary(null)}
-                className="text-slate-400 hover:text-white text-lg font-bold"
-              >
-                ✕
-              </button>
-            </div>
-
-            {summaryLoading ? (
-              <div className="py-8 text-center text-xs text-slate-400 font-mono animate-pulse">
-                Synthesizing node context & subnodes...
-              </div>
-            ) : summaryData ? (
-              <div className="flex flex-col gap-3">
-                <p className="text-xs text-slate-200 leading-relaxed bg-slate-900/80 p-3 rounded-xl border border-slate-800">
-                  {summaryData.summary}
-                </p>
-
-                <div className="flex flex-col gap-1.5">
-                  <span className="text-[11px] font-mono text-slate-400 uppercase tracking-wider font-semibold">
-                    Key Fact Highlights:
-                  </span>
-                  <ul className="space-y-1 pl-4 list-disc text-xs text-slate-300">
-                    {summaryData.key_points.map((pt, idx) => (
-                      <li key={idx}>{pt}</li>
-                    ))}
-                  </ul>
-                </div>
-              </div>
-            ) : (
-              <div className="text-xs text-slate-500">Failed to load summary.</div>
-            )}
-          </div>
-        </div>
-      )}
+function EmptyCanvas() {
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
+      <Network className="size-8 text-ink-invert-muted" aria-hidden="true" />
+      <p className="text-body-md text-ink-invert">No memories to draw yet.</p>
+      <p className="max-w-sm text-body-sm text-ink-invert-muted">
+        Say something in the conversation and keep what comes back. Both views
+        fill up together.
+      </p>
+      <Chip>graph view</Chip>
     </div>
   );
 }

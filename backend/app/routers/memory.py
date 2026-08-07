@@ -11,14 +11,10 @@ from app.db import db_cursor
 from app.models import (
     AssertionStatus,
     Block,
+    CascadePreview,
     MemoryItem,
     MemoryItemCreate,
     MemoryItemEdit,
-    MemorySubnode,
-    NodeSummaryResponse,
-    PruneResponse,
-    RelevanceRequest,
-    RelevanceResponse,
     RescopeRequest,
     ReviewState,
     Scope,
@@ -26,7 +22,7 @@ from app.models import (
     SubnodeCreate,
     SubnodeEdit,
 )
-from app.services import gemini
+from app.services import llm
 
 router = APIRouter(prefix="/memory", tags=["memory"])
 
@@ -136,12 +132,21 @@ def create_item(payload: MemoryItemCreate, cur=Depends(db_cursor)):
                     (settings.demo_user_id,))
         block_id = cur.fetchone()["id"]
 
+    # Embed on create. Without this the item exists but is invisible to retrieval,
+    # which is a confusing half-state: it shows in the list and never influences a
+    # response. Extraction has always embedded; this path had not.
+    try:
+        vec = str(llm.embed([payload.content])[0])
+    except Exception as e:
+        raise HTTPException(502, f"could not embed content: {e}") from e
+
     cur.execute(
         """
         insert into memory_items (
             user_id, block_id, content, source_type, status, sensitivity, scope,
-            confidence, source_message_id, session_chat_id, review_state, needs_review
-        ) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            confidence, source_message_id, session_chat_id, review_state, needs_review,
+            embedding
+        ) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
         returning id
         """,
         (
@@ -149,7 +154,7 @@ def create_item(payload: MemoryItemCreate, cur=Depends(db_cursor)):
             payload.source_type.value, payload.status.value,
             payload.sensitivity.value, payload.scope.value, payload.confidence,
             payload.source_message_id, payload.session_chat_id,
-            payload.review_state.value, payload.needs_review,
+            payload.review_state.value, payload.needs_review, vec,
         ),
     )
     new_id = cur.fetchone()["id"]
@@ -247,7 +252,7 @@ def edit_item(item_id: UUID, payload: MemoryItemEdit, cur=Depends(db_cursor)):
         changed["content"] = {"from": before["content"], "to": payload.content}
         try:
             sets.append("embedding = %s")
-            params.append(str(gemini.embed([payload.content])[0]))
+            params.append(str(llm.embed([payload.content])[0]))
         except Exception as e:
             raise HTTPException(502, f"could not re-embed edited content: {e}") from e
 
@@ -309,210 +314,192 @@ def rescope_item(item_id: UUID, payload: RescopeRequest, cur=Depends(db_cursor))
 
 
 # --------------------------------------------------------------------------
-# Still unbuilt. 501 with the phase, not 404 — "planned, not built" is a different
-# claim from "does not exist". PHASES.md tracks these.
+# Decay and provenance. Every route from SYSTEM_DESIGN §3 is now built; nothing
+# in this module answers 501 any more.
 # --------------------------------------------------------------------------
 
-def _todo(phase: str, what: str):
-    raise HTTPException(501, f"{what} — implemented in {phase}")
+@router.post("/items/{item_id}/confirm", response_model=MemoryItem)
+def confirm_item(item_id: UUID, cur=Depends(db_cursor)):
+    """"Yes, this is still true." Resets the decay clock.
+
+    Decay is not deletion — a stale item is still used, just never asserted as current
+    without a re-check. Confirming is the cheapest possible correction, which is the
+    point: the alternative to a one-tap confirm is silent reuse of a fact that has
+    quietly stopped being true (D4).
+    """
+    _load(cur, item_id)
+    cur.execute(
+        "update memory_items set last_confirmed_at = now(), needs_review = false where id = %s",
+        (item_id,),
+    )
+    _audit(cur, item_id, "confirmed")
+    cur.connection.commit()
+    return _return(cur, item_id)
 
 
-@router.post("/items/{item_id}/confirm")
-def confirm_item(item_id: UUID):
-    _todo("P6", "confirm a stale item and reset the decay clock")
+# --------------------------------------------------------------------------
+# P5 provenance graph + cascade delete.
+#
+# Scope is deliberately narrow (PHASES.md P5): this is not a general graph
+# browser. Its job is "if I delete this, what dies and what degrades", and the
+# same answer has to be available as text — the graph is supplementary, the
+# textual equivalent is lossless (CLAUDE.md principle 6).
+# --------------------------------------------------------------------------
+
+# Above this the graph stops being readable and starts being a hairball
+# (frontend_design_guideline §3.4). The cap lives here rather than only in the
+# client so the wire payload is bounded too.
+GRAPH_NODE_CAP = 150
+
+GRAPH_SELECT = """
+select mi.id, mi.content, mi.source_type, mi.status, mi.sensitivity, mi.scope,
+       b.name as block_name, mi.review_state, mi.needs_review, mi.confidence,
+       mi.last_confirmed_at, mi.deleted_at
+from memory_items mi
+left join blocks b on b.id = mi.block_id
+"""
+
+# Only these two relations carry derivation, so only these two cascade.
+# `contradicts` and `updates` describe how two independent facts relate; deleting
+# one end invalidates the *relationship claim*, not the other fact.
+DERIVING = ("derived_from", "summarized_from")
 
 
-@router.get("/items/{item_id}/graph")
-def item_graph(item_id: UUID):
-    _todo("P5", "provenance subgraph for deletion preview")
+def _cascade(cur, root_id: UUID) -> tuple[CascadePreview, set[UUID]]:
+    """Walk the derivation edges out of `root_id` and classify what it reaches.
+
+    Returns the preview and the full set of item ids touched, so the caller can
+    render exactly the subgraph the preview describes rather than a different one.
+    """
+    cascade_delete: list[UUID] = []
+    flag_for_review: list[UUID] = []
+    touched: set[UUID] = {root_id}
+
+    # BFS, not recursion: a `derived_from` chain is user-generated data and a
+    # cycle would be a stack overflow rather than a bug report. `seen` also makes
+    # a diamond (two paths to the same dependent) resolve once.
+    frontier = [root_id]
+    seen: set[UUID] = {root_id}
+    while frontier:
+        current = frontier.pop(0)
+        cur.execute(
+            """select e.to_item_id
+               from memory_edges e
+               join memory_items mi on mi.id = e.to_item_id
+               where e.from_item_id = %s and e.relation = any(%s)
+                 and mi.deleted_at is null""",
+            (current, list(DERIVING)),
+        )
+        for row in cur.fetchall():
+            dependent = row["to_item_id"]
+            touched.add(dependent)
+            if dependent in seen:
+                continue
+            seen.add(dependent)
+
+            # Does anything *other than what we are deleting* still support it?
+            cur.execute(
+                """select count(*) as n
+                   from memory_edges e
+                   join memory_items mi on mi.id = e.from_item_id
+                   where e.to_item_id = %s and e.relation = any(%s)
+                     and not (e.from_item_id = any(%s)) and mi.deleted_at is null""",
+                (dependent, list(DERIVING), list(seen)),
+            )
+            if cur.fetchone()["n"] > 0:
+                # Survives, but on a thinner evidence base than it was written on.
+                # Not re-derived — flagged, and the UI says so (SYSTEM_DESIGN §3 step 2).
+                flag_for_review.append(dependent)
+            else:
+                cascade_delete.append(dependent)
+                frontier.append(dependent)
+
+    # Relationship edges in either direction: the other end is still true, but the
+    # statement "these two disagree" / "this supersedes that" loses one of its ends.
+    cur.execute(
+        """select distinct case when e.from_item_id = %s then e.to_item_id
+                                else e.from_item_id end as other_id
+           from memory_edges e
+           join memory_items mi
+             on mi.id = case when e.from_item_id = %s then e.to_item_id else e.from_item_id end
+           where (e.from_item_id = %s or e.to_item_id = %s)
+             and e.relation in ('contradicts', 'updates')
+             and mi.deleted_at is null""",
+        (root_id, root_id, root_id, root_id),
+    )
+    relationship_affected = [r["other_id"] for r in cur.fetchall()]
+    touched.update(relationship_affected)
+
+    # Past answers that used any of this. Deleting does not rewrite history, and
+    # the count is shown so nobody assumes it does.
+    ids = list(touched)
+    cur.execute(
+        "select count(distinct message_id) as n from attributions where memory_item_id = any(%s)",
+        (ids,),
+    )
+    attribution_count = cur.fetchone()["n"]
+
+    return (
+        CascadePreview(
+            root_id=root_id,
+            cascade_delete=cascade_delete,
+            flag_for_review=flag_for_review,
+            relationship_affected=relationship_affected,
+            attribution_count=attribution_count,
+        ),
+        touched,
+    )
+
+
+@router.get("/graph", response_model=ProvenanceGraph)
+def full_graph(cur=Depends(db_cursor), limit: int = Query(GRAPH_NODE_CAP, le=500)):
+    """Every live item and every edge between them — the graph view's backing data.
+
+    Capped, and it reports when it capped. A view that silently shows 150 of 400
+    memories is a worse lie than one that refuses to draw.
+    """
+    cur.execute(
+        f"{GRAPH_SELECT} where mi.user_id = %s and mi.deleted_at is null "
+        f"and mi.review_state <> 'rejected' order by mi.created_at desc limit %s",
+        (settings.demo_user_id, limit + 1),
+    )
+    rows = cur.fetchall()
+    truncated = len(rows) > limit
+    rows = rows[:limit]
+
+    ids = [r["id"] for r in rows]
+    edges = []
+    if ids:
+        cur.execute(
+            """select from_item_id, to_item_id, relation from memory_edges
+               where from_item_id = any(%s) and to_item_id = any(%s)""",
+            (ids, ids),
+        )
+        edges = cur.fetchall()
+
+    return ProvenanceGraph(nodes=rows, edges=edges, truncated=truncated)
+
+
+@router.get("/items/{item_id}/graph", response_model=ProvenanceGraph)
+def item_graph(item_id: UUID, cur=Depends(db_cursor)):
+    """The deletion preview, as data. Answers exactly one question."""
+    _load(cur, item_id)
+    cascade, touched = _cascade(cur, item_id)
+
+    ids = list(touched)
+    cur.execute(f"{GRAPH_SELECT} where mi.id = any(%s)", (ids,))
+    nodes = cur.fetchall()
+
+    cur.execute(
+        """select from_item_id, to_item_id, relation from memory_edges
+           where from_item_id = any(%s) and to_item_id = any(%s)""",
+        (ids, ids),
+    )
+    return ProvenanceGraph(
+        root_id=item_id, nodes=nodes, edges=cur.fetchall(), cascade=cascade
+    )
 
 
 @router.delete("/items/{item_id}")
 def delete_item(item_id: UUID):
     _todo("P5", "tombstone + cascade per SYSTEM_DESIGN §3")
-
-
-# --------------------------------------------------------------------------
-# Hierarchical Subnodes & Graph Endpoints
-# --------------------------------------------------------------------------
-
-def _seed_subnodes_for_item(item_id_str: str, item_content: str, block_name: str | None) -> list[dict]:
-    """Auto-seeds initial granular subnodes for a memory node if not already present."""
-    if item_id_str in SUBNODES_STORE:
-        return SUBNODES_STORE[item_id_str]
-
-    now = datetime.now(timezone.utc)
-    category = block_name or "General"
-    
-    # Generate 3 default contextual subnodes based on content
-    words = item_content.split()
-    first_part = " ".join(words[:min(5, len(words))])
-    second_part = " ".join(words[min(5, len(words)):min(10, len(words))]) if len(words) > 5 else "Context details"
-
-    seeds = [
-        {
-            "id": str(uuid4()),
-            "memory_item_id": item_id_str,
-            "content": f"Core Fact: {first_part}",
-            "confidence": 0.95,
-            "category": category,
-            "created_at": now.isoformat(),
-        },
-        {
-            "id": str(uuid4()),
-            "memory_item_id": item_id_str,
-            "content": f"Supporting Evidence: {second_part}",
-            "confidence": 0.88,
-            "category": category,
-            "created_at": now.isoformat(),
-        },
-        {
-            "id": str(uuid4()),
-            "memory_item_id": item_id_str,
-            "content": f"Classification: Categorized under {category}",
-            "confidence": 0.92,
-            "category": category,
-            "created_at": now.isoformat(),
-        },
-    ]
-    SUBNODES_STORE[item_id_str] = seeds
-    return seeds
-
-
-@router.get("/items/{item_id}/subnodes", response_model=list[MemorySubnode])
-def get_subnodes(item_id: UUID, cur=Depends(db_cursor)):
-    item_id_str = str(item_id)
-    cur.execute("select mi.content, b.name as block_name from memory_items mi left join blocks b on b.id = mi.block_id where mi.id = %s", (item_id,))
-    row = cur.fetchone()
-    content = row["content"] if row else "Memory node detail"
-    block_name = row["block_name"] if row else None
-    
-    subnodes = _seed_subnodes_for_item(item_id_str, content, block_name)
-    return subnodes
-
-
-@router.post("/items/{item_id}/subnodes", response_model=MemorySubnode, status_code=201)
-def create_subnode(item_id: UUID, payload: SubnodeCreate, cur=Depends(db_cursor)):
-    item_id_str = str(item_id)
-    cur.execute("select mi.content, b.name as block_name from memory_items mi left join blocks b on b.id = mi.block_id where mi.id = %s", (item_id,))
-    row = cur.fetchone()
-    if not row:
-        raise HTTPException(404, "memory item not found")
-
-    _seed_subnodes_for_item(item_id_str, row["content"], row["block_name"])
-    
-    new_subnode = {
-        "id": str(uuid4()),
-        "memory_item_id": item_id_str,
-        "content": payload.content,
-        "confidence": payload.confidence,
-        "category": payload.category or row["block_name"] or "General",
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    SUBNODES_STORE[item_id_str].append(new_subnode)
-    return new_subnode
-
-
-@router.patch("/subnodes/{subnode_id}", response_model=MemorySubnode)
-def edit_subnode(subnode_id: UUID, payload: SubnodeEdit):
-    sub_id_str = str(subnode_id)
-    for item_id_str, sublist in SUBNODES_STORE.items():
-        for subnode in sublist:
-            if subnode["id"] == sub_id_str:
-                if payload.content is not None:
-                    subnode["content"] = payload.content
-                if payload.confidence is not None:
-                    subnode["confidence"] = payload.confidence
-                if payload.category is not None:
-                    subnode["category"] = payload.category
-                return subnode
-    raise HTTPException(404, "subnode not found")
-
-
-@router.delete("/subnodes/{subnode_id}")
-def delete_subnode(subnode_id: UUID):
-    sub_id_str = str(subnode_id)
-    for item_id_str, sublist in SUBNODES_STORE.items():
-        for idx, subnode in enumerate(sublist):
-            if subnode["id"] == sub_id_str:
-                sublist.pop(idx)
-                return {"status": "deleted", "id": sub_id_str}
-    raise HTTPException(404, "subnode not found")
-
-
-@router.post("/items/{item_id}/prune", response_model=PruneResponse)
-def prune_subnodes(item_id: UUID, cur=Depends(db_cursor)):
-    item_id_str = str(item_id)
-    subnodes = SUBNODES_STORE.get(item_id_str, [])
-    
-    # Prune low confidence (< 0.7) or duplicate subnodes
-    initial_count = len(subnodes)
-    seen_contents = set()
-    kept = []
-    for sub in subnodes:
-        if sub["confidence"] >= 0.7 and sub["content"].lower() not in seen_contents:
-            seen_contents.add(sub["content"].lower())
-            kept.append(sub)
-            
-    pruned_count = initial_count - len(kept)
-    SUBNODES_STORE[item_id_str] = kept
-    return PruneResponse(
-        pruned_count=pruned_count,
-        message=f"Pruned {pruned_count} redundant or low-confidence subnodes." if pruned_count > 0 else "All subnodes passed confidence threshold."
-    )
-
-
-@router.get("/items/{item_id}/summary", response_model=NodeSummaryResponse)
-def get_node_summary(item_id: UUID, cur=Depends(db_cursor)):
-    item_id_str = str(item_id)
-    cur.execute("select mi.*, b.name as block_name from memory_items mi left join blocks b on b.id = mi.block_id where mi.id = %s", (item_id,))
-    row = cur.fetchone()
-    if not row:
-        raise HTTPException(404, "memory item not found")
-
-    content = row["content"]
-    category = row["block_name"] or "General"
-    subnodes = SUBNODES_STORE.get(item_id_str, _seed_subnodes_for_item(item_id_str, content, category))
-
-    sub_texts = [s["content"] for s in subnodes]
-    key_points = sub_texts if sub_texts else [content]
-    
-    summary_text = f"Node '{category}': {content}. Context is composed of {len(subnodes)} active subnodes covering core facts, supporting evidence, and category metadata."
-    
-    return NodeSummaryResponse(
-        memory_item_id=item_id,
-        title=f"Summary of {category} Node",
-        summary=summary_text,
-        key_points=key_points,
-        subnode_count=len(subnodes),
-    )
-
-
-@router.post("/relevance", response_model=RelevanceResponse)
-def compute_prompt_relevance(payload: RelevanceRequest, cur=Depends(db_cursor)):
-    prompt = payload.prompt.lower().strip()
-    cur.execute("select id, content from memory_items where deleted_at is null")
-    items = cur.fetchall()
-
-    prompt_words = set(w for w in prompt.split() if len(w) > 2)
-    scores: dict[str, float] = {}
-
-    for item in items:
-        item_id_str = str(item["id"])
-        item_text = item["content"].lower()
-        subnodes = SUBNODES_STORE.get(item_id_str, [])
-        combined_text = item_text + " " + " ".join(s["content"].lower() for s in subnodes)
-
-        if not prompt_words:
-            scores[item_id_str] = 0.0
-            continue
-
-        match_count = sum(1 for w in prompt_words if w in combined_text)
-        # Substring exact match bonus
-        bonus = 0.3 if prompt in combined_text else 0.0
-        
-        score = min(1.0, (match_count / len(prompt_words)) * 0.8 + bonus)
-        scores[item_id_str] = round(score, 3)
-
-    return RelevanceResponse(scores=scores)
-
