@@ -3,7 +3,7 @@
 .env.*
 !.env.example
 
-# Key material and Google service-account JSON. The Gemini key lives in .env today,
+# Key material and service-account JSON. The LLM API key lives in .env today,
 # but a downloaded service-account file is the usual way a Google credential ends up
 # committed by accident.
 *.pem

@@ -40,29 +40,39 @@ memories shaped each response.
 7. **No orphaned facts.** Every memory item references a source message.
 
 ## Stack
-Next.js frontend, FastAPI backend, Postgres + pgvector, Gemini API for the LLM. Do not wrap mem0/Zep —
+Next.js frontend, FastAPI backend, Postgres + pgvector, OpenRouter for the LLM. Do not wrap mem0/Zep —
 the provenance edges, cascade deletion, and scope enforcement are the contribution, and those libraries
 abstract exactly those away.
 
-### Gemini usage rules
+### LLM usage rules
+The provider is OpenRouter, reached over its OpenAI-compatible API in `backend/app/services/llm.py`
+(see D25–D27). `LLM_BASE_URL` can point at any compatible gateway; no other code changes.
+
 - **Structured output, always.** Use a response schema for extraction and classification. Do not
   prompt-and-parse — schema enforcement removes a whole class of parsing bugs there is no time for.
-- **Model split.** Flash for extraction and classification (runs every turn, high volume).
-  Pro for chat responses and the P6 verification pass, where reasoning quality is visible.
-  Do not route everything through Pro — quota burn plus latency on the loop being demoed.
-- **Safety filters.** The demo deliberately involves health data, personal disclosures and PII —
-  exactly what the default safety settings sometimes block. Adjust thresholds for the triggered
-  categories and test the real demo script against the API early. A blocked response mid-demo is
-  ugly and hard to explain.
-- **Rate limits.** Chat + extraction + classification is 3+ calls per turn; free-tier RPM is low and
-  rapid demo turns will hit it. Batch extraction and classification into one call where the item is
-  unambiguous, add exponential backoff, cache the demo path.
-- **Embeddings.** Gemini's embedding endpoint keeps everything in one SDK. Fix the vector dimension
-  in the pgvector column before P0 migrations — changing it later forces a full re-embed.
-- **Hard rule:** nothing goes to Gemini before the user has consented to send. Pre-send PII detection
-  is client-side only (regex + Luhn). Gemini classifies only content the user already chose to share.
-  This is the one place a hosted LLM tempts a shortcut that breaks the project's own principle, and
-  it is checkable from the network tab.
+  Strict `json_schema` mode rejects `$ref`/`$defs` and numeric bounds, both of which Pydantic emits,
+  so schemas are *derived* from the Pydantic model and post-processed by `_strict_schema()` rather
+  than hand-written. Do not hand-write one — the two will drift.
+- **Model split.** The *stronger* model does extraction and classification, because status
+  classification is the field the whole design rests on and it runs off the chat critical path. The
+  *faster* model answers chat, because that is the call the user waits on. Do not collapse the two.
+- **Safety filters.** The demo deliberately involves health data, personal disclosures and PII.
+  Unlike Gemini, the OpenAI-compatible schema has **no per-request safety knob** — filter behaviour
+  is a property of the chosen model. Re-test the real demo script after any model change. A blocked
+  response mid-demo is ugly and hard to explain.
+- **Rate limits.** Chat + extraction is 3+ calls per turn and `:free` slugs are limited per day.
+  Extraction and classification are already batched into one call; keep them that way. Free slugs
+  are also retired without notice — if chat fails, check the slug still exists before debugging.
+- **Embeddings.** No free embedding model exists on OpenRouter; the configured one is paid but
+  costs fractions of a cent per session. It is natively 1536-dim and truncated to 768 via the
+  `dimensions` request param, so the pgvector column is unchanged.
+- **Changing the embedding model requires a re-embed.** Vectors from different providers occupy
+  different spaces and mixing them **fails silently** — pgvector returns the wrong memories with
+  plausible distances rather than erroring. Run `backend/scripts/reembed.py` (D27).
+- **Hard rule:** nothing goes to the LLM before the user has consented to send. Pre-send PII
+  detection is client-side only (regex + Luhn). The model classifies only content the user already
+  chose to share. This is the one place a hosted LLM tempts a shortcut that breaks the project's own
+  principle, and it is checkable from the network tab.
 
 ## Honesty constraints
 - Do not claim automatic re-derivation on cascade delete unless it is actually implemented.

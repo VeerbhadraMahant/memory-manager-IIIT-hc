@@ -4,7 +4,7 @@ Runs after the response is returned, so extraction latency (~9s on Flash) never 
 on the chat critical path.
 
 **Scope is enforced here, not in the UI.** A turn marked session_ephemeral is skipped
-entirely — no Gemini call, no candidates, nothing written. That is the P3 guarantee and
+entirely — no LLM call, no candidates, nothing written. That is the P3 guarantee and
 the reason this check is the first thing in the function rather than a filter later on.
 """
 
@@ -14,7 +14,7 @@ import logging
 
 from app.db import pool
 from app.models import Scope, Sensitivity, SourceType
-from app.services import gemini
+from app.services import llm
 from app.services.policy import decide
 
 log = logging.getLogger(__name__)
@@ -50,11 +50,11 @@ def run_extraction(message_id: str, chat_id: str, user_id: str) -> None:
             known = {b["name"] for b in blocks}
             fallback = next(b["name"] for b in blocks if b["is_fallback"])
 
-        candidates = gemini.extract_candidates(msg["content"], sorted(known))
+        candidates = llm.extract_candidates(msg["content"], sorted(known))
 
         rows = []
         for c in candidates:
-            # Gemini's schema gives back plain strings; policy reasons in enums so an
+            # The schema gives back plain strings; policy reasons in enums so an
             # unrecognised value fails here rather than silently falling through a
             # comparison that is never true.
             d = decide(
@@ -68,11 +68,11 @@ def run_extraction(message_id: str, chat_id: str, user_id: str) -> None:
             rows.append((c, d))
 
         # One embedding call for the whole turn's candidates rather than one per item.
-        vectors = gemini.embed([c.content for c, _ in rows]) if rows else []
+        vectors = llm.embed([c.content for c, _ in rows]) if rows else []
 
         with pool.connection() as conn, conn.cursor() as cur:
             # strict=True: a length mismatch here means candidates get dropped without
-            # a trace. gemini.embed() already guarantees this, and this is the backstop.
+            # a trace. llm.embed() already guarantees this, and this is the backstop.
             for (c, d), vec in zip(rows, vectors, strict=True):
                 cur.execute(
                     """

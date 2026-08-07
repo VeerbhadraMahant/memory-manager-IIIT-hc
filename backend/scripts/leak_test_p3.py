@@ -1,13 +1,13 @@
 """P3 leak test — the repeatable check PHASES.md asks for.
 
-    python backend/scripts/leak_test_p3.py            # full, uses ~4 Gemini calls
+    python backend/scripts/leak_test_p3.py            # full, uses ~4 LLM calls
     python backend/scripts/leak_test_p3.py --no-llm   # store-level only, free
 
 Two guarantees are tested, and they are genuinely different claims:
 
   1. An **off-the-record turn** is never extracted. Nothing is derived from it, so
      nothing about it exists in the memory store at all. This is enforced by an early
-     return in the extraction pass, before Gemini is called.
+     return in the extraction pass, before the LLM is called.
 
   2. A **session-scoped memory** does exist in the store, but is unreachable from any
      other chat. This is enforced in SQL at retrieval.
@@ -74,7 +74,7 @@ def wait_extraction(chat_id: str, message_id: str, timeout: float = 90) -> dict:
 
 
 def store_level_checks() -> None:
-    """No Gemini required. The invariants that must hold whatever is in the store."""
+    """No LLM required. The invariants that must hold whatever is in the store."""
     print("\nStore-level invariants (no model calls)")
 
     chats = c.get(f"{BASE}/chats").json()
@@ -118,7 +118,7 @@ def store_level_checks() -> None:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--no-llm", action="store_true",
-                    help="store-level checks only; spends no Gemini quota")
+                    help="store-level checks only; makes no LLM calls")
     args = ap.parse_args()
 
     try:

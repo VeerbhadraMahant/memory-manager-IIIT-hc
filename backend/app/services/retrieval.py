@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 
-from app.services import gemini
+from app.services import llm
 
 log = logging.getLogger(__name__)
 
@@ -40,7 +40,7 @@ limit %s
 
 def retrieve(cur, user_id: str, chat_id: str, query: str) -> list[dict]:
     try:
-        vec = gemini.embed([query])[0]
+        vec = llm.embed([query])[0]
     except Exception:
         # A failed embedding should cost the response its memory, not its existence.
         log.exception("embedding failed during retrieval; answering without memory")

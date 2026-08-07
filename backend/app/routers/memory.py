@@ -18,7 +18,7 @@ from app.models import (
     Scope,
     Sensitivity,
 )
-from app.services import gemini
+from app.services import llm
 
 router = APIRouter(prefix="/memory", tags=["memory"])
 
@@ -235,7 +235,7 @@ def edit_item(item_id: UUID, payload: MemoryItemEdit, cur=Depends(db_cursor)):
         changed["content"] = {"from": before["content"], "to": payload.content}
         try:
             sets.append("embedding = %s")
-            params.append(str(gemini.embed([payload.content])[0]))
+            params.append(str(llm.embed([payload.content])[0]))
         except Exception as e:
             raise HTTPException(502, f"could not re-embed edited content: {e}") from e
 

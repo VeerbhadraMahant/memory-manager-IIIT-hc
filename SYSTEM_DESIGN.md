@@ -43,11 +43,12 @@ Backend (FastAPI)
 
 Storage
  ├─ Postgres — users, chats, messages, memory_items, memory_edges, blocks
- └─ pgvector — embeddings on memory_items (Gemini embedding endpoint; fix dim before migrations)
+ └─ pgvector — embeddings on memory_items (768 dims, fixed before migrations; changing the
+               embedding model requires a full re-embed — scripts/reembed.py)
 
-LLM — Gemini API
- ├─ Flash  — extraction, classification (every turn, high volume, schema-enforced output)
- └─ Pro    — chat responses, P6 stake-proportional verification pass
+LLM — OpenRouter (OpenAI-compatible API, services/llm.py)
+ ├─ stronger model — extraction, classification (schema-enforced output, off critical path)
+ └─ faster model   — chat responses, P6 stake-proportional verification pass
 ```
 
 ### Data flow, one turn
@@ -104,21 +105,23 @@ Be honest with yourselves about step 2: live re-derivation is expensive to get r
 - **Sensitivity**: regex first pass for structured/special-category patterns, LLM second pass for context-dependent sensitivity (Nissenbaum-style — same fact, different context, different sensitivity).
 - Confidence below threshold → default to the *more* restrictive block and force review. Never silently auto-file a low-confidence item — the error costs are asymmetric.
 
-Gemini implementation: all three classification passes use a response schema rather than free-text
-parsing. Where the item is unambiguous, batch extraction + classification into a single Flash call —
-this halves per-turn request count, which matters because free-tier RPM will not survive a rapid
-live demo otherwise. Exponential backoff on 429s; consider a cached path for the scripted demo run.
+Implementation: all three classification passes use a strict `json_schema` response format rather
+than free-text parsing. Extraction + classification are batched into a single call on the stronger
+model — this halves per-turn request count, which matters because free-tier limits will not survive
+a rapid live demo otherwise. Exponential backoff on 429/5xx; consider a cached path for the scripted
+demo run.
 
 Safety filters need attention here specifically: the classification pass is deliberately fed health
-data, personal disclosures and PII. Default thresholds may block. Test the actual demo script against
-the API in the first few hours, not the last few.
+data, personal disclosures and PII. On the OpenAI-compatible API there is **no per-request safety
+threshold** to adjust — filter behaviour follows the chosen model, so this is a model-selection
+decision, not a config one. Test the actual demo script against the API after any model change.
 
 ### PII pre-send detection
 - Client-side regex + checksum (Luhn for card numbers, format checks for common ID patterns) for structured PII.
 - Small local/WASM classifier for unstructured cases (address-like, credential-like text) if time allows — regex-only is an acceptable MVP fallback, just say so rather than overclaim.
-- **Gemini must not be called here.** Sending text to a hosted model to check whether it is safe to send
+- **The LLM must not be called here.** Sending text to a hosted model to check whether it is safe to send
   defeats the purpose, and a judge opening the network tab will catch it. Pre-send is client-side only;
-  Gemini enters the pipeline after the user has chosen to send.
+  the LLM enters the pipeline after the user has chosen to send.
 
 ## 4. Scale and Reliability — intentionally thin
 Not a real constraint for a hackathon demo: single Postgres instance, no queue, no horizontal scaling story needed. What you'd revisit if this went past the hackathon: extraction/classification move to a real background queue (currently synchronous-ish, would bottleneck under load), and the PII detector would need proper eval/versioning instead of hand-tuned regex.

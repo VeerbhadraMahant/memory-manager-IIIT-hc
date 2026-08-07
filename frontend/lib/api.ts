@@ -114,7 +114,7 @@ export interface Health {
   pgvector: string | null;
   embedding_dim: number;
   live_memory_items: number;
-  gemini_key_loaded: boolean;
+  llm_key_loaded: boolean;
 }
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {

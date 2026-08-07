@@ -211,7 +211,7 @@ class ScopeReport(BaseModel):
     hidden_session_items: list[HiddenItem]
     ephemeral_turns: int
     # Database-wide, not per chat. Structurally always 0: extraction returns before
-    # calling Gemini when a turn is ephemeral, so no row can reference one. Reported
+    # calling the LLM when a turn is ephemeral, so no row can reference one. Reported
     # rather than asserted because a number a judge can watch beats a promise.
     items_from_ephemeral_turns_global: int
 

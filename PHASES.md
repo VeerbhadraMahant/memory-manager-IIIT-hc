@@ -68,7 +68,7 @@ Shipped: session switcher in the UI (P3 is not demonstrable without somewhere el
 The demo should state these separately, because a judge who conflates them will think one of them
 is weaker than it is.
 
-1. **Off the record → never written down.** The extraction pass returns before calling Gemini when a
+1. **Off the record → never written down.** The extraction pass returns before calling the LLM when a
    turn is ephemeral. Nothing is derived from it, so nothing about it exists in the memory store.
    `scope-report.items_from_ephemeral_turns_global` counts memory items whose source message was
    ephemeral, across the whole database. It is structurally 0.
@@ -164,7 +164,7 @@ These routes exist and return **501 with the phase that implements them**, delib
 
 | Route | Returns | Lands in |
 |---|---|---|
-| `POST /chats/{id}/message` (full turn: retrieve → Gemini → attributions) | ✅ built in P1 | — |
+| `POST /chats/{id}/message` (full turn: retrieve → LLM → attributions) | ✅ built in P1 | — |
 | `POST /memory/items/{id}/accept` | ✅ built in P1 | — |
 | `POST /memory/items/{id}/reject` | ✅ built in P1 | — |
 | `PATCH /memory/items/{id}` | ✅ built in P1 | — |
@@ -175,16 +175,21 @@ These routes exist and return **501 with the phase that implements them**, delib
 
 ### As of P1
 
-**The Gemini free tier is now the top project risk.** The quota is
-`GenerateRequestsPerDayPerProjectPerModel-FreeTier` = **20 requests per day, per model** — per *day*,
-not per minute. Development testing exhausted `gemini-3.6-flash` in a single session. Mitigations in
-place: chat and extraction run on *different* models so they draw from separate daily buckets, and
-backoff handles the per-minute limit. Neither is a fix. Enabling billing on the Google Cloud project
-is the only real answer, and it should happen before demo day rather than during it.
+**Superseded — the project moved off Gemini to OpenRouter (D25–D27).** The Gemini free tier was the
+top project risk at P1: 20 requests per day, per model, which development testing exhausted in a
+single session. That constraint is what the port removed.
 
-**No Pro model is reachable on this key** — every Pro variant returns 429 on first call, verified on
-retry. `CLAUDE.md`'s Flash/Pro split is therefore not implemented: chat runs on Flash. This is one
-env var (`GEMINI_CHAT_MODEL`) away from being restored if billing is enabled.
+**Current LLM risk, restated.** Chat and extraction run on OpenRouter `:free` slugs, which carry a
+daily free-tier limit and — the newer hazard — are **retired without notice**; three `:free` slugs
+returned 404 during the port itself. Mitigation is that the fallback is a config edit, not a dead
+demo: drop the `:free` suffix in `LLM_CHAT_MODEL` / `LLM_EXTRACT_MODEL` to use the paid version of
+the same model. Embeddings have no free option and are already paid, at fractions of a cent per
+session. Backoff handles per-minute limits.
+
+**What the port cost, stated plainly.** Gemini's explicit per-request safety thresholds have no
+OpenAI-compatible equivalent, so filter behaviour is now a property of the chosen model rather than
+something the code asserts. The demo content did not trip filters on the configured models, but that
+is a test result, not a guarantee. The `thinking_level` control on chat latency (D18) is also gone.
 
 Still not done after P1:
 - **No provenance edges are written.** `memory_edges` exists and is empty. Nothing detects that
@@ -199,10 +204,12 @@ Still not done after P1:
 - **The memory panel is read-only.** P4 owns the complete filterable, keyboard-navigable list.
 
 Also not done at P0, and **not yet claimed anywhere**:
-- **No Gemini call has been made yet.** The key loads from `.env` and `/health` reports
-  `gemini_key_loaded`, but that only proves a non-empty string was read — it is not a validated key.
-  First real call is P1. Safety-threshold testing against the demo script (CLAUDE.md) is still open,
-  and is the item most likely to bite late.
+- **`/health` does not validate the key.** It reports `llm_key_loaded`, which only proves a non-empty
+  string was read from `.env`. Real calls have since been made successfully through the OpenRouter
+  client (chat, extraction and embeddings all verified end-to-end after the port), but the health
+  endpoint itself still proves nothing beyond "a string is present".
+- **Safety-filter testing against the demo script is still open**, and is now *less* controllable
+  than it was: there is no per-request threshold to set, only a model to choose. See CLAUDE.md.
 - **No embeddings are written.** The `vector(768)` column and its HNSW index exist and are empty.
   Retrieval is not implemented, so nothing is being ranked by similarity yet.
 - **`POST /memory/items` is a direct insert, not extraction.** It exists for tests and manual entry.

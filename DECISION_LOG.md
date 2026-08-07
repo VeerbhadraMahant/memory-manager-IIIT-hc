@@ -247,6 +247,57 @@ would have been equally meaningless: absence of a common word from an answer pro
 **General lesson worth keeping:** a negative assertion is only evidence if the thing being looked for
 could not have arrived by another route.
 
+### D25 — OpenRouter replaces the Gemini API (supersedes D15, D16, D18)
+**Chose:** route chat, extraction and embeddings through OpenRouter's OpenAI-compatible API.
+**Considered:** staying on Gemini and enabling billing, which D15 assumed would happen.
+**Rejected because:** the constraint that drove D15 never went away — the free Gemini key allows
+20 requests *per day, per model*, and D15's "Flash for everything" was already a workaround for Pro
+being unreachable. Gemini's ceiling is a hard daily cliff; OpenRouter's is a per-day free-tier limit
+across a *catalogue*, so a model that runs out or gets retired is a config change rather than a dead
+demo. The gateway is also OpenAI-compatible, which means the escape hatch from OpenRouter itself is
+a base-URL edit.
+**What this costs:** Gemini's explicit per-request safety thresholds have no equivalent here — the
+OpenAI-compatible schema has no safety knob, so filter behaviour is now a property of the chosen
+model rather than something the code asserts. The demo's health and PII content did not trip filters
+on the configured models, but that is a test result, not a guarantee, and it must be re-tested after
+any model change. D18's thinking-budget control is likewise gone; it was a Gemini-3 parameter.
+**Kept from D16:** the model split survives intact and for the original reason. The *stronger* model
+(`nemotron-3-super-120b`) does extraction, because status classification is the field the whole
+design rests on and it runs off the critical path; the *faster* one (`gemma-4-26b-a4b`, an MoE)
+answers chat, because that is the call the user waits on. Both were verified on the tense test that
+motivated the split: "still writing" → `in_progress`, "should finish next month" → `planned`.
+
+### D26 — httpx directly, no provider SDK
+**Chose:** call the two endpoints (`/chat/completions`, `/embeddings`) over httpx, which was already
+a dependency, and drop `google-genai` entirely.
+**Considered:** the `openai` SDK, which is the idiomatic client for an OpenAI-compatible gateway.
+**Rejected because:** two endpoints do not justify a dependency, and the SDK's value is mostly in
+retry/streaming machinery this project already has its own version of (`with_retry`). The concrete
+argument is venue wifi: an install that can fail at the worst possible moment, traded for about
+forty lines of httpx. Swapping providers stays a config change either way.
+**Sharp edge worth recording:** strict `json_schema` mode rejects `$ref`/`$defs` and numeric bounds,
+both of which Pydantic emits — `Field(ge=0, le=1)` becomes `minimum`/`maximum` and is refused. The
+schema is therefore *derived* from the Pydantic model and post-processed (`_strict_schema`) rather
+than hand-written, so the two cannot drift; the dropped bounds are re-checked by Pydantic when the
+response is validated, so nothing is actually lost.
+
+### D27 — Re-embed the existing store rather than wipe it (revises D17)
+**Chose:** a one-off `backend/scripts/reembed.py` that re-embeds every live memory item with the new
+model, touching the `embedding` column only.
+**Considered:** clearing the test memories, which the README already documents SQL for.
+**Rejected because:** the accumulated store *is* the P3 evidence — the session-confined items the
+leak test produced are what make the scope boundary demonstrable, and they cannot be regenerated
+without re-running the whole scenario. Wiping trades irreplaceable demo evidence for convenience.
+**The actual hazard:** embeddings from different providers occupy different vector spaces, and
+mixing them **fails silently**. pgvector compares them happily and returns the wrong memories with
+plausible-looking distances. Nothing errors, no test goes red — retrieval just quietly degrades,
+which is the worst possible failure mode for a system whose entire claim is that the user can see
+what shaped a response. This is exactly the re-embed cost D10 warned about, arriving on schedule.
+**Note on D17:** its two findings were provider-specific (embedding-001 batching, 768-dim
+renormalisation), but the *invariants* they motivated were kept and now guard the new client too —
+one vector per input, enforced by a length check, and unit norm, enforced on every return. A model
+that silently collapses a batch fails loudly here instead of dropping memories.
+
 ---
 
 ## To verify before any of this goes in a slide

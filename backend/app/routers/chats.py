@@ -18,7 +18,7 @@ from app.models import (
     TurnResponse,
 )
 from app.routers.memory import ITEM_SELECT
-from app.services import gemini
+from app.services import llm
 from app.services.extraction import run_extraction
 from app.services.retrieval import retrieve
 
@@ -107,9 +107,9 @@ def chat_turn(
     history = list(reversed(cur.fetchall()))
 
     try:
-        reply = gemini.chat_response(history, used)
+        reply = llm.chat_response(history, used)
     except Exception as e:
-        raise HTTPException(502, f"Gemini call failed: {type(e).__name__}: {e}") from e
+        raise HTTPException(502, f"LLM call failed: {type(e).__name__}: {e}") from e
 
     cur.execute(
         """insert into messages (chat_id, role, content, extraction_status)
