@@ -50,8 +50,8 @@ const panelStore = {
     const saved = window.localStorage.getItem(PANEL_KEY);
     if (saved === "open") return true;
     if (saved === "closed") return false;
-    // Unset: expanded where there is room for it, collapsed where there is not.
-    return window.matchMedia(WIDE_QUERY).matches;
+    // Default: closed until explicitly opened by the user.
+    return false;
   },
   server: (): boolean => false,
 };

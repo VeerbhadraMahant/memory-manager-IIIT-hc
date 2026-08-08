@@ -385,7 +385,10 @@ function PendingItem({
                 )
               }
             >
-              {item.scope === "session" ? "Keep beyond this chat" : "Session only"}
+              {/* "Only this chat", not "Session only": §13 requires the label to
+                  name the consequence, and it must match the wording the action
+                  bar and the bulk actions already use for the same operation. */}
+              {item.scope === "session" ? "Keep beyond this chat" : "Only this chat"}
             </Button>
           </>
         )}

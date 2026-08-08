@@ -53,6 +53,8 @@ export function MemoryPanel({
   tier,
   silenced,
   relevance,
+  chatId,
+  sourceMessageId,
 }: {
   open: boolean;
   overlay: boolean;
@@ -63,6 +65,9 @@ export function MemoryPanel({
   tier: PiiTier | null;
   silenced: number;
   relevance: Map<string, number> | null;
+  /** §12: passed straight through to the workspace's Add-memory button. */
+  chatId: string | null;
+  sourceMessageId: string | null;
 }) {
   const panel = useRef<HTMLElement>(null);
   const animate = useAnimateAfterFirstPaint();
@@ -165,7 +170,11 @@ export function MemoryPanel({
             </div>
           </div>
 
-          <MemoryWorkspace relevance={relevance} />
+          <MemoryWorkspace
+            relevance={relevance}
+            chatId={chatId}
+            sourceMessageId={sourceMessageId}
+          />
         </div>
       </aside>
     </>

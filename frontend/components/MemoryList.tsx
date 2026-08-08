@@ -37,6 +37,8 @@ import {
   blockLabel,
   describeMemory,
   isStale,
+  lastConfirmedLabel,
+  statusTone,
 } from "@/lib/semantics";
 import { cn } from "@/lib/utils";
 import { MemoryActionBar } from "@/components/MemoryActionBar";
@@ -379,7 +381,7 @@ function Row({
               </span>
               <span className="flex flex-wrap items-center gap-1.5">
                 <Chip>{blockLabel(item.block_name ?? "unclassified")}</Chip>
-                <Chip tone={stale ? "danger" : "neutral"}>
+                <Chip tone={statusTone(item)}>
                   {STATUS_CHIP[item.status]}
                   {stale && " · stale"}
                 </Chip>
@@ -405,6 +407,12 @@ function Row({
                     {item.review_reason}
                   </p>
                 )}
+                {/* Decay, made legible. "Still true" resets this clock, so the
+                    user needs to see what the clock currently says before
+                    deciding whether pressing it is warranted. */}
+                <p className="meta mb-3 text-ink-muted">
+                  Last confirmed: {lastConfirmedLabel(item.last_confirmed_at)}
+                </p>
                 <MemoryActionBar item={item} onRequestDelete={onRequestDelete} />
               </div>
             )}

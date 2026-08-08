@@ -11,6 +11,7 @@
 import type {
   AssertionStatus,
   MemoryItem,
+  ReviewState,
   Scope,
   Sensitivity,
   SourceType,
@@ -155,6 +156,8 @@ export function describeMemory(item: {
   block_name: string | null;
   last_confirmed_at?: string | null;
   created_at?: string;
+  needs_review?: boolean;
+  review_state?: ReviewState;
 }): string {
   const parts = [
     item.content,
@@ -166,7 +169,73 @@ export function describeMemory(item: {
   if (isStale({ ...item, last_confirmed_at: item.last_confirmed_at ?? null })) {
     parts.push("not confirmed recently");
   }
+  // §18 wants "flagged for review" visible consistently wherever a surface
+  // renders the item. The list row has a chip and the action bar has a summary
+  // line, but the graph node has room for neither — putting it here covers the
+  // graph through the accessible name every node already builds from this
+  // function, which is the same mechanism that makes the graph's textual
+  // equivalent lossless rather than a second description that can drift.
+  if (item.needs_review && item.review_state !== "pending") {
+    parts.push("flagged for review");
+  }
   return parts.join(", ") + ".";
+}
+
+/**
+ * The status chip's tone, in one place so the list row and the action bar cannot
+ * disagree about it.
+ *
+ * Stale wins over everything: an `in_progress` item nobody has re-asserted is
+ * the CV failure case, and §18 puts it on `danger`. `third_party` then takes
+ * `inferred` — "about someone else" is a different *kind* of claim, not a
+ * problem with the claim, so it reads as a classification rather than a warning,
+ * and it reuses an existing tone rather than introducing a sixth colour.
+ */
+export function statusTone(item: {
+  status: AssertionStatus;
+  last_confirmed_at: string | null;
+  created_at?: string;
+}): "danger" | "inferred" | "neutral" {
+  if (isStale(item)) return "danger";
+  if (item.status === "third_party") return "inferred";
+  return "neutral";
+}
+
+/**
+ * "3 days ago" / "never confirmed", for the expanded row's confirmation line.
+ *
+ * `Intl.RelativeTimeFormat` rather than a date library: it is in every browser
+ * this app targets, it localises for free, and a dependency for one string is
+ * not a trade worth making. The unit is picked by magnitude so a 40-day-old
+ * item reads "1 month ago" instead of "40 days ago" — the staleness *threshold*
+ * is 14 days and lives in isStale(), so this line only has to be readable, not
+ * precise enough to compute staleness from.
+ */
+const RELATIVE = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
+
+export function lastConfirmedLabel(at: string | null): string {
+  if (!at) return "never confirmed";
+
+  const then = new Date(at).getTime();
+  if (Number.isNaN(then)) return "never confirmed";
+
+  const seconds = (then - Date.now()) / 1000;
+  const magnitude = Math.abs(seconds);
+
+  // Ordered largest-first so the first threshold that fits wins.
+  const units: [Intl.RelativeTimeFormatUnit, number][] = [
+    ["year", 31_536_000],
+    ["month", 2_592_000],
+    ["week", 604_800],
+    ["day", 86_400],
+    ["hour", 3_600],
+    ["minute", 60],
+  ];
+
+  for (const [unit, size] of units) {
+    if (magnitude >= size) return RELATIVE.format(Math.round(seconds / size), unit);
+  }
+  return RELATIVE.format(Math.round(seconds), "second");
 }
 
 /** Relation wording for the deletion preview's text equivalent (§4.5). */

@@ -24,12 +24,13 @@
 // stops competing with the transcript for horizontal space.
 
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
-import { Cpu, EyeOff, FileCheck2, Loader2, Network, Send } from "lucide-react";
+import { Cpu, EyeOff, Info, Loader2, Network, Send } from "lucide-react";
 
 import { AttributionChips } from "@/components/Attribution";
 import { DraftPanel } from "@/components/DraftPanel";
 import { EmptyHeading, SuggestionCards } from "@/components/EmptyState";
 import { MemoryPanel, MemoryPanelToggle } from "@/components/MemoryPanel";
+import { Onboarding } from "@/components/Onboarding";
 import { PiiModal, PiiStrip } from "@/components/PiiIntervention";
 import { ReviewCard } from "@/components/ReviewCard";
 import { SessionSidebar, SidebarOpenButton } from "@/components/SessionSidebar";
@@ -129,12 +130,19 @@ export default function Page() {
     <MemoryProvider>
       <Workbench />
       <MemoryLiveRegion />
+      {/* §1. Outside <Workbench> because it explains the app rather than
+          reflecting any of its state, and it must not re-render with the
+          conversation. */}
+      <Onboarding />
     </MemoryProvider>
   );
 }
 
 function Workbench() {
-  const { refresh } = useMemoryStore();
+  // `items` here is only for the composer's count line (§16); every memory
+  // *operation* still goes through useMemoryActions() inside the panel.
+  const { refresh, items: memoryItems } = useMemoryStore();
+  const memoryCount = memoryItems.length;
 
   const [chats, setChats] = useState<Chat[]>([]);
   const [chatId, setChatId] = useState<string | null>(null);
@@ -175,6 +183,22 @@ function Workbench() {
 
   const bottom = useRef<HTMLDivElement>(null);
   const composer = useRef<HTMLTextAreaElement>(null);
+
+  // §12: the most recent message id that actually exists server-side, for a
+  // user-written memory to cite (principle 7 — no orphaned facts).
+  //
+  // Not simply `turns.at(-1).id`: a turn dispatched locally carries a
+  // crypto.randomUUID() until the response lands, so citing it would send the
+  // backend a foreign key that does not exist. An assistant id is always real
+  // when present; a user id is real only on a turn that came from history.
+  const sourceMessageId = useMemo(() => {
+    for (let i = turns.length - 1; i >= 0; i--) {
+      const t = turns[i];
+      if (t.assistantMessageId) return t.assistantMessageId;
+      if (t.fromHistory) return t.id;
+    }
+    return null;
+  }, [turns]);
 
   const refreshSidebar = useCallback(
     (id: string | null) => {
@@ -251,6 +275,7 @@ function Workbench() {
 
   const newSession = async () => {
     setDrawerOpen(false);
+    setMemoryOpen(false);
     try {
       const chat = await api.createChat(`Session ${chats.length + 1}`);
       setChats((cs) => [chat, ...cs]);
@@ -580,11 +605,30 @@ function Workbench() {
                   </p>
                 )}
 
+                {/* Two different facts, deliberately not merged (§9).
+                    "Nothing was extracted" is a guarantee the user asked for by
+                    ticking off-the-record — the extractor never ran. "Nothing
+                    worth remembering" is a *result*: it ran and found nothing.
+                    Collapsing them into one line would let an off-the-record
+                    turn look like a judgement call, which is the opposite of the
+                    promise. Hence also the different visual treatment: the
+                    guarantee gets the eye-off icon it was set with, the result
+                    is plain. */}
                 {t.ephemeral && t.reply && (
-                  <p className="meta ml-0 text-ink-invert-muted sm:ml-10">
+                  <p className="meta ml-0 flex items-center gap-1.5 text-ink-invert-muted sm:ml-10">
+                    <EyeOff className="size-3.5 shrink-0" aria-hidden="true" />
                     nothing was extracted from this turn
                   </p>
                 )}
+
+                {!t.ephemeral &&
+                  t.extraction?.status === "done" &&
+                  t.extraction.candidates.length === 0 &&
+                  t.extraction.auto_accepted.length === 0 && (
+                    <p className="meta ml-0 text-ink-invert-muted sm:ml-10">
+                      nothing worth remembering from this turn
+                    </p>
+                  )}
 
                 {t.sessionOnlyApplied !== null && t.sessionOnlyApplied > 0 && (
                   <p role="status" className="meta ml-0 text-stated-on-bg sm:ml-10">
@@ -642,6 +686,129 @@ function Workbench() {
               }
             />
 
+            {/* ── Memory-mode badges ──────────────────────────────────────────
+                Three coloured toggles that replace the old checkbox rows.
+                High contrast & crystal-clear text readability across all states.
+                Each carries an Info icon that reveals a popover tooltip on hover.
+            ─────────────────────────────────────────────────────────────── */}
+            <div className="mb-2.5 flex flex-wrap items-center gap-2">
+              {/* Red — Short-term memory */}
+              <button
+                type="button"
+                onClick={() => {
+                  if (ephemeral) {
+                    setEphemeral(false);
+                  } else {
+                    setEphemeral(true);
+                    setHighStakes(false);
+                  }
+                }}
+                aria-pressed={ephemeral}
+                className={cn(
+                  "group relative flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-xs transition-all shadow-xs",
+                  ephemeral
+                    ? "bg-red-600 text-white border-red-700 font-semibold shadow-sm"
+                    : "bg-red-50/90 text-red-950 border-red-300 hover:bg-red-100 hover:border-red-400 font-medium",
+                )}
+              >
+                <span
+                  className={cn(
+                    "size-2.5 rounded-full shrink-0",
+                    ephemeral ? "bg-white animate-pulse" : "bg-red-500",
+                  )}
+                />
+                <span>Short-term memory</span>
+                {/* ⓘ tooltip trigger */}
+                <span className="relative ml-0.5 inline-flex items-center justify-center">
+                  <Info className={cn("size-3.5 shrink-0 transition-opacity", ephemeral ? "text-white/80 group-hover:text-white" : "text-red-800/70 group-hover:text-red-950")} />
+                  {/* tooltip popover */}
+                  <span
+                    role="tooltip"
+                    className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 w-72 -translate-x-1/2 rounded-xl border border-slate-700/80 bg-slate-900 px-3.5 py-2.5 text-left text-xs text-slate-100 opacity-0 shadow-xl transition-opacity group-hover:opacity-100"
+                  >
+                    <span className="mb-1 block font-bold text-red-400">Short-term memory</span>
+                    The model uses the active conversation as working context. Messages, instructions,
+                    and details from this chat influence responses while they remain within the active
+                    context window.
+                  </span>
+                </span>
+              </button>
+
+              {/* Yellow / Amber — Cross-session memory (default/normal mode) */}
+              <button
+                type="button"
+                onClick={() => {
+                  setEphemeral(false);
+                  setHighStakes(false);
+                }}
+                aria-pressed={!ephemeral && !highStakes}
+                className={cn(
+                  "group relative flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-xs transition-all shadow-xs",
+                  !ephemeral && !highStakes
+                    ? "bg-amber-500 text-slate-950 border-amber-600 font-semibold shadow-sm"
+                    : "bg-amber-50/90 text-amber-950 border-amber-300 hover:bg-amber-100 hover:border-amber-400 font-medium",
+                )}
+              >
+                <span
+                  className={cn(
+                    "size-2.5 rounded-full shrink-0",
+                    !ephemeral && !highStakes ? "bg-slate-950 animate-pulse" : "bg-amber-600",
+                  )}
+                />
+                <span>Cross-session memory</span>
+                <span className="relative ml-0.5 inline-flex items-center justify-center">
+                  <Info className={cn("size-3.5 shrink-0 transition-opacity", !ephemeral && !highStakes ? "text-slate-950/80 group-hover:text-slate-950" : "text-amber-900/70 group-hover:text-amber-950")} />
+                  <span
+                    role="tooltip"
+                    className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 w-72 -translate-x-1/2 rounded-xl border border-slate-700/80 bg-slate-900 px-3.5 py-2.5 text-left text-xs text-slate-100 opacity-0 shadow-xl transition-opacity group-hover:opacity-100"
+                  >
+                    <span className="mb-1 block font-bold text-amber-400">Cross-session explicit/implicit memories</span>
+                    The model can retain relevant information across conversations to provide
+                    continuity and more personalised responses, depending on memory settings.
+                  </span>
+                </span>
+              </button>
+
+              {/* Green — Specialised workspace / high-stakes draft */}
+              <button
+                type="button"
+                onClick={() => {
+                  if (highStakes) {
+                    setHighStakes(false);
+                  } else {
+                    setHighStakes(true);
+                    setEphemeral(false);
+                  }
+                }}
+                aria-pressed={highStakes}
+                className={cn(
+                  "group relative flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-xs transition-all shadow-xs",
+                  highStakes
+                    ? "bg-emerald-600 text-white border-emerald-700 font-semibold shadow-sm"
+                    : "bg-emerald-50/90 text-emerald-950 border-emerald-300 hover:bg-emerald-100 hover:border-emerald-400 font-medium",
+                )}
+              >
+                <span
+                  className={cn(
+                    "size-2.5 rounded-full shrink-0",
+                    highStakes ? "bg-white animate-pulse" : "bg-emerald-600",
+                  )}
+                />
+                <span>Specialised workspace</span>
+                <span className="relative ml-0.5 inline-flex items-center justify-center">
+                  <Info className={cn("size-3.5 shrink-0 transition-opacity", highStakes ? "text-white/80 group-hover:text-white" : "text-emerald-900/70 group-hover:text-emerald-950")} />
+                  <span
+                    role="tooltip"
+                    className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 w-72 -translate-x-1/2 rounded-xl border border-slate-700/80 bg-slate-900 px-3.5 py-2.5 text-left text-xs text-slate-100 opacity-0 shadow-xl transition-opacity group-hover:opacity-100"
+                  >
+                    <span className="mb-1 block font-bold text-emerald-400">Specialised workspace</span>
+                    A specialised workspace provides the model with a dedicated context containing
+                    project-specific conversations, files, and instructions.
+                  </span>
+                </span>
+              </button>
+            </div>
+
             {/* One surface, not two. The textarea and its controls used to be
                 separate boxes with the page background running between them,
                 which on #F2F2F2 read as two unrelated widgets; a single white
@@ -673,18 +840,6 @@ function Workbench() {
               />
 
               <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
-              <label className="flex min-h-11 items-center gap-2 text-body-sm text-ink-invert-muted">
-                <input
-                  type="checkbox"
-                  checked={ephemeral}
-                  onChange={(e) => setEphemeral(e.target.checked)}
-                  disabled={highStakes}
-                  className="size-4 accent-[color:var(--accent)]"
-                />
-                <EyeOff className="size-4 shrink-0" aria-hidden="true" />
-                Off the record
-              </label>
-
               {/* Switchable mid-conversation. Changing this changes only who writes the
                   next reply — the memory store is untouched, so the new model inherits
                   the same memories rather than re-deriving them (D32). */}
@@ -718,18 +873,6 @@ function Workbench() {
                 </label>
               )}
 
-              <label className="flex min-h-11 items-center gap-2 text-body-sm text-ink-invert-muted">
-                <input
-                  type="checkbox"
-                  checked={highStakes}
-                  onChange={(e) => setHighStakes(e.target.checked)}
-                  disabled={ephemeral}
-                  className="size-4 accent-[color:var(--danger)]"
-                />
-                <FileCheck2 className="size-4 shrink-0" aria-hidden="true" />
-                High-stakes draft
-              </label>
-
               <span className="text-body-sm text-ink-invert-muted">
                 {highStakes
                   ? "every memory-derived claim is checked before it lands"
@@ -753,6 +896,19 @@ function Workbench() {
               </Button>
               </div>
             </div>
+
+            {/* §16. The only relational signal in the app, and deliberately a
+                statement rather than a control: it reports what the store holds
+                and offers nothing to press. Anything more — an avatar change, a
+                "friend" indicator — would be claiming a relationship the system
+                does not have. The count comes from the store, so it moves when
+                a memory is kept or discarded without this needing to know. */}
+            {memoryCount > 0 && (
+              <p className="meta mt-2 text-ink-invert-muted">
+                remembers <span className="tnum">{memoryCount}</span>{" "}
+                {memoryCount === 1 ? "thing" : "things"} about you
+              </p>
+            )}
           </form>
 
           {/* Below the composer, so the first thing on screen is still the thing
@@ -778,6 +934,8 @@ function Workbench() {
         tier={tier}
         silenced={dismissed.size}
         relevance={relevance}
+        chatId={chatId}
+        sourceMessageId={sourceMessageId}
       />
 
       {/* §4.3 tier 1. Focus-trapped, and it always offers a way through. */}

@@ -80,7 +80,12 @@ function PreviewBody({
   const [graph, setGraph] = useState<ProvenanceGraph | null>(null);
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState(false);
+  // Two failures, two messages. They shared one state and the preview's wording
+  // won, so a delete that failed reported "Could not load the preview" — which
+  // sends the user looking for the wrong problem, and reads as though nothing
+  // had been attempted when in fact the delete was.
   const [error, setError] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const itemId = item.id;
   useEffect(() => {
@@ -199,6 +204,12 @@ function PreviewBody({
           )}
         </div>
 
+        {deleteError && (
+          <p role="alert" className="px-6 pt-4 text-body-sm text-danger-ink">
+            Could not delete this memory: {deleteError}. Nothing was deleted.
+          </p>
+        )}
+
         <DialogFooter>
           <Button variant="outlineInk" onClick={onClose} disabled={deleting}>
             Keep it
@@ -212,7 +223,7 @@ function PreviewBody({
                 onDeleted(await actions.remove(item.id));
                 onClose();
               } catch (e) {
-                setError(e instanceof Error ? e.message : "delete failed");
+                setDeleteError(e instanceof Error ? e.message : "delete failed");
               } finally {
                 setDeleting(false);
               }
@@ -249,7 +260,11 @@ function ConsequenceGroup({
     <section>
       <h3
         className={
-          "meta " + (tone === "danger" ? "text-danger-ink" : "text-stated-ink")
+          // `warn` was --stated-ink, which was orange under the old palette and
+          // is green under this one (D45) — so "Flagged for you to check" was
+          // being painted in the colour that means "you said this". Amber is the
+          // warning tone the palette swap introduced for exactly this.
+          "meta " + (tone === "danger" ? "text-danger-ink" : "text-alert-ink")
         }
       >
         {heading}

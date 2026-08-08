@@ -170,6 +170,10 @@ function MemoryNodeInner({ data }: NodeProps) {
 
   const enc = SOURCE[memory.source_type];
   const stale = isStale(memory);
+  // The item's own review flag, which is not the same thing as `degraded` — that
+  // one is the pending deletion preview's "would be flagged". Both warrant the
+  // warning triangle; only this one is a property of the memory (§18).
+  const flagged = memory.needs_review && memory.review_state !== "pending";
 
   const relVal = relevance ?? null;
   const dim = relVal !== null && relVal < 0.2;
@@ -239,7 +243,7 @@ function MemoryNodeInner({ data }: NodeProps) {
           >
             {enc.label}
           </span>
-          {(stale || degraded) && (
+          {(stale || degraded || flagged) && (
             <AlertTriangle
               aria-hidden="true"
               className="ml-auto size-3.5 text-[color:var(--danger)]"
@@ -255,11 +259,12 @@ function MemoryNodeInner({ data }: NodeProps) {
           <span
             className={cn(
               "meta truncate",
-              stale ? "text-danger-on-bg" : "text-ink-invert-muted",
+              stale || flagged ? "text-danger-on-bg" : "text-ink-invert-muted",
             )}
           >
             {STATUS_CHIP[memory.status]}
             {stale && " · stale"}
+            {flagged && " · flagged"}
           </span>
           {memory.scope === "session" && (
             <span className="meta shrink-0 text-alert-ink">session</span>

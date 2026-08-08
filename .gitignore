@@ -94,11 +94,12 @@ CLAUDE.md
 /PHASES.md
 /SYSTEM_DESIGN.md
 /DESIGN_BRIEF.md
-# The next two are the same kind of file — a task prompt handed to the coding
+# The next three are the same kind of file — a task prompt handed to the coding
 # agent, not project documentation — added here rather than left to sit
 # untracked, which is how they ended up dodging every `git status` review.
 /ui-fixes.md
 /ui-shell-prompt.md
+/design_changes.md
 # Scratch, not documentation: setup notes for one contributor's machine,
 # never intended to be read by anyone judging the submission.
 /macos_configuration_backup.md

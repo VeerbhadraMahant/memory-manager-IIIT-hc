@@ -23,6 +23,7 @@ import { ExternalLink, List, Network } from "lucide-react";
 import type { MemoryItem, ProvenanceGraph } from "@/lib/api";
 import { useMemoryStore } from "@/lib/memory-store";
 import { cn } from "@/lib/utils";
+import { AddMemoryButton } from "@/components/AddMemory";
 import { DeletionPreviewDialog } from "@/components/DeletionPreview";
 import { MemoryGraph } from "@/components/MemoryGraph";
 import { MemoryList } from "@/components/MemoryList";
@@ -64,10 +65,17 @@ export function MemoryWorkspace({
    *  opening a new tab from the page that already *is* the new tab is a no-op
    *  wearing a link. */
   hideExpandLink,
+  /** §12: the chat a user-written memory would be anchored to. Both null on the
+   *  full-page route, which has no conversation — the Add button disables itself
+   *  rather than inventing a source message. */
+  chatId = null,
+  sourceMessageId = null,
 }: {
   relevance: Map<string, number> | null;
   initialView?: View;
   hideExpandLink?: boolean;
+  chatId?: string | null;
+  sourceMessageId?: string | null;
 }) {
   const { items, loading } = useMemoryStore();
   const stored = useSyncExternalStore(
@@ -83,6 +91,9 @@ export function MemoryWorkspace({
   const [requestedId, setRequestedId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<MemoryItem | null>(null);
   const [preview, setPreview] = useState<ProvenanceGraph | null>(null);
+  // §12's success line. Held here rather than in the dialog because the dialog
+  // closes on success and would take its own confirmation with it.
+  const [added, setAdded] = useState<string | null>(null);
 
   // Derived, not stored-and-cleaned-up. A memory that no longer exists cannot
   // stay selected — after a cascade delete the graph would otherwise hold a
@@ -110,6 +121,14 @@ export function MemoryWorkspace({
     wasHighlighting.current = isHighlighting;
   }, [relevance, choose]);
 
+  // The confirmation is transient. It is also announced through the store's live
+  // region, so clearing the visible copy loses nothing for a screen reader.
+  useEffect(() => {
+    if (!added) return;
+    const id = setTimeout(() => setAdded(null), 4000);
+    return () => clearTimeout(id);
+  }, [added]);
+
   return (
     <section
       id="memory-workspace"
@@ -131,7 +150,15 @@ export function MemoryWorkspace({
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        {/* Wraps, because three controls plus the tablist do not fit the 420px
+            panel on one line — unwrapped this scrolled the panel sideways. */}
+        <div className="flex flex-wrap items-center gap-2">
+          <AddMemoryButton
+            chatId={chatId}
+            sourceMessageId={sourceMessageId}
+            onAdded={setAdded}
+          />
+
           {/* Prominent, persistent, and a real tablist — arrow keys move between
               tabs, which is the pattern a screen-reader user will expect from
               something announced as one. */}
@@ -190,6 +217,12 @@ export function MemoryWorkspace({
           )}
         </div>
       </header>
+
+      {added && (
+        <p role="status" className="meta text-stated-on-bg">
+          {added}
+        </p>
+      )}
 
       {/* Both panels stay mounted; the inactive one is hidden rather than
           unmounted, so switching views does not throw away scroll position,

@@ -259,6 +259,30 @@ export interface RelevanceResponse {
   scores: Record<string, number>;
 }
 
+/**
+ * A memory the user wrote themselves (§12).
+ *
+ * Mirrors the backend's existing `MemoryItemCreate` — this is a wrapper over
+ * `POST /memory/items`, which has existed since P0 as the escape hatch for
+ * manual entry, not a new endpoint. Two constraints the backend enforces and
+ * this type cannot: `session_chat_id` is required when scope is `session` and
+ * rejected when it is `persistent`, and `block_name` must already exist in the
+ * blocks table.
+ */
+export interface MemoryItemCreate {
+  content: string;
+  source_type: SourceType;
+  status: AssertionStatus;
+  sensitivity: Sensitivity;
+  scope: Scope;
+  confidence: number;
+  source_message_id: string;
+  block_name?: string | null;
+  session_chat_id?: string | null;
+  review_state?: ReviewState;
+  needs_review?: boolean;
+}
+
 export const api = {
   health: () => req<Health>("/health"),
   providers: () => req<ProvidersResponse>("/chats/providers"),
@@ -268,6 +292,12 @@ export const api = {
     const qs = new URLSearchParams(params).toString();
     return req<MemoryItem[]>(`/memory/items${qs ? `?${qs}` : ""}`);
   },
+
+  /** §12: a memory the user wrote rather than one the extractor proposed. The
+   *  route is the pre-existing manual-entry path; nothing new was added
+   *  server-side for this. */
+  createItem: (payload: MemoryItemCreate) =>
+    post<MemoryItem>("/memory/items", payload),
 
   createChat: (title?: string) => post<Chat>("/chats", { title }),
   chats: () => req<Chat[]>("/chats"),

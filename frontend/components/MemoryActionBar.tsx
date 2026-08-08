@@ -30,6 +30,7 @@ import {
   STATUSES,
   blockLabel,
   isStale,
+  statusTone,
 } from "@/lib/semantics";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -152,7 +153,9 @@ export function MemoryActionBar({
             options={STATUSES.map((s) => [s, STATUS_CHIP[s]] as const)}
             disabled={working}
             onLight={onLight}
-            tone={stale ? "alert" : "neutral"}
+            // Shared with the list row, so the same item cannot read `neutral`
+            // in one surface and `inferred` in the other (§11, §18).
+            tone={statusTone(item)}
             onChange={(v) =>
               void run(() =>
                 actions.reclassify(item.id, { status: v as AssertionStatus }),
