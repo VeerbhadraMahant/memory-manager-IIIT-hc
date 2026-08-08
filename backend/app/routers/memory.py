@@ -11,6 +11,7 @@ from app.db import db_cursor
 from app.models import (
     AssertionStatus,
     Block,
+    BlockPrivacy,
     CascadePreview,
     MemoryItem,
     MemoryItemCreate,
@@ -41,13 +42,54 @@ left join blocks b on b.id = mi.block_id
 def list_blocks(cur=Depends(db_cursor)):
     cur.execute(
         """
-        select id, name, default_sensitivity, restrictive_rank, is_fallback
+        select id, name, default_sensitivity, restrictive_rank, is_fallback,
+               coalesce(private, false) as private
         from blocks where user_id = %s
         order by restrictive_rank
         """,
         (settings.demo_user_id,),
     )
     return cur.fetchall()
+
+
+@router.patch("/blocks/{name}/privacy", response_model=Block)
+def set_block_privacy(name: str, payload: BlockPrivacy, cur=Depends(db_cursor)):
+    """Mark a block private, or lift it.
+
+    Private means retrieval excludes the block, so its memories are never written into
+    a prompt (services/retrieval.py). It does not hide them from the user, and it does
+    not delete anything — the items stay listed, editable and deletable, they simply
+    stop being available to the model.
+
+    The fallback block is refused. It is where low-confidence items land by design
+    (D3), so making it private would silently withhold everything the classifier was
+    unsure about — a privacy setting that quietly degrades the assistant is worse than
+    one the user chose per block.
+    """
+    cur.execute(
+        "select is_fallback from blocks where user_id = %s and name = %s",
+        (settings.demo_user_id, name),
+    )
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(404, f"unknown block: {name}")
+    if row["is_fallback"] and payload.private:
+        raise HTTPException(
+            422,
+            "the fallback block cannot be private — unclassified items would be "
+            "withheld without you having chosen that",
+        )
+
+    cur.execute(
+        """update blocks set private = %s
+            where user_id = %s and name = %s
+        returning id, name, default_sensitivity, restrictive_rank, is_fallback,
+                  coalesce(private, false) as private""",
+        (payload.private, settings.demo_user_id, name),
+    )
+    updated = cur.fetchone()
+    cur.connection.commit()
+    return updated
 
 
 @router.get("/items", response_model=list[MemoryItem])

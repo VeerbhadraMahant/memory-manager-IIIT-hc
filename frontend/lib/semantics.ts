@@ -86,15 +86,23 @@ export const SENSITIVITIES: Sensitivity[] = [
 
 export const SCOPES: Scope[] = ["persistent", "session"];
 
-// Mirrors migration 002. Fetched at runtime by the workspace and used as the
-// fallback when that fetch has not landed — a review card renders
+// Mirrors migration 005 (which renamed `learning` -> `education` and `family` ->
+// `relationships`, and added four). Fetched at runtime by the workspace and used as
+// the fallback when that fetch has not landed — a review card renders
 // mid-conversation and cannot wait on a round trip to show its own chips.
+//
+// Ordered most-restrictive-first to match `order by restrictive_rank` on the API,
+// so the pre-fetch list and the real one do not visibly reorder themselves.
 export const FALLBACK_BLOCKS = [
   "unclassified",
-  "work",
   "health",
-  "family",
-  "learning",
+  "identity",
+  "finance",
+  "relationships",
+  "location",
+  "education",
+  "work",
+  "preferences",
 ];
 
 /**

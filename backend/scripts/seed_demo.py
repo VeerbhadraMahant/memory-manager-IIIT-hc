@@ -65,15 +65,15 @@ SEED = [
     ),
     (
         "Learning Rust, currently on the borrow checker chapter",
-        "learning", "stated", "in_progress", "medium", 0.88, "auto_accepted", 2,
+        "education", "stated", "in_progress", "medium", 0.88, "auto_accepted", 2,
     ),
     (
         "Took an intro statistics course last year",
-        "learning", "stated", "completed", "medium", 0.9, "accepted", 30,
+        "education", "stated", "completed", "medium", 0.9, "accepted", 30,
     ),
     (
         "Sister Meera is getting married in December",
-        "family", "stated", "planned", "high", 0.87, "accepted", 6,
+        "relationships", "stated", "planned", "high", 0.87, "accepted", 6,
     ),
     (
         "Has been on 20mg escitalopram since March",

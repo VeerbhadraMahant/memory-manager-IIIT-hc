@@ -28,6 +28,8 @@ export interface Block {
   default_sensitivity: Sensitivity;
   restrictive_rank: number;
   is_fallback: boolean;
+  /** Private blocks are excluded by retrieval, so the model never receives them. */
+  private: boolean;
 }
 
 export interface MemoryItem {
@@ -73,6 +75,31 @@ export interface UsedMemory {
   is_stale: boolean;
 }
 
+/** One memory the vector search ranked, and what happened to it. */
+export interface RetrievalCandidate {
+  id: string;
+  content: string;
+  block_name: string | null;
+  distance: number;
+  verdict: "injected" | "too_distant" | "private_block" | "revoked" | "pinned";
+}
+
+/** How the memories for a turn were chosen. Real numbers from retrieval.py — the
+ *  counts distinguish "nothing matched" from "matched but not allowed through". */
+export interface RetrievalTrace {
+  query: string;
+  considered: RetrievalCandidate[];
+  injected_count: number;
+  withheld_private: number;
+  dropped_too_distant: number;
+  revoked_count: number;
+  fenced_to_another_chat: number;
+  awaiting_review: number;
+  not_embedded: number;
+  max_distance: number;
+  embedding_failed: boolean;
+}
+
 export interface TurnResponse {
   user_message: Message;
   assistant_message: Message;
@@ -82,6 +109,10 @@ export interface TurnResponse {
   // unconfigured or stale selection falls back on the server (D32).
   provider: string | null;
   model: string | null;
+  /** The model's own <think> scratchpad, verbatim. "" when it emitted none — the UI
+   *  then renders no panel rather than inventing one. */
+  reasoning: string;
+  retrieval: RetrievalTrace | null;
 }
 
 /** A chat provider the server has a key for. Memory is shared across all of them. */
@@ -133,6 +164,21 @@ export interface Chat {
   user_id: string;
   title: string | null;
   created_at: string;
+}
+
+/** What deleting a chat did. The split is the point — see migration 006. */
+export interface ChatDeleted {
+  chat_id: string;
+  session_memories_removed: number;
+  persistent_memories_kept: number;
+}
+
+/** Who the request is acting as. `is_demo_user` is true until sign-in exists. */
+export interface Me {
+  id: string;
+  handle: string;
+  created_at: string;
+  is_demo_user: boolean;
 }
 
 export interface HiddenItem {
@@ -288,6 +334,14 @@ export const api = {
   providers: () => req<ProvidersResponse>("/chats/providers"),
   blocks: () => req<Block[]>("/memory/blocks"),
 
+  /** Withhold a whole block from every prompt. Enforced in retrieval's SQL, not in
+   *  the UI, so a frontend bug cannot leak it. */
+  setBlockPrivacy: (name: string, isPrivate: boolean) =>
+    req<Block>(`/memory/blocks/${encodeURIComponent(name)}/privacy`, {
+      method: "PATCH",
+      body: JSON.stringify({ private: isPrivate }),
+    }),
+
   items: (params: Record<string, string> = {}) => {
     const qs = new URLSearchParams(params).toString();
     return req<MemoryItem[]>(`/memory/items${qs ? `?${qs}` : ""}`);
@@ -299,8 +353,22 @@ export const api = {
   createItem: (payload: MemoryItemCreate) =>
     post<MemoryItem>("/memory/items", payload),
 
+  me: () => req<Me>("/me"),
+
   createChat: (title?: string) => post<Chat>("/chats", { title }),
   chats: () => req<Chat[]>("/chats"),
+
+  renameChat: (chatId: string, title: string) =>
+    req<Chat>(`/chats/${chatId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ title }),
+    }),
+
+  /** Tombstones the chat and the memories confined to it; persistent ones survive.
+   *  The reply carries both counts so the UI reports what happened rather than
+   *  guessing at it. */
+  deleteChat: (chatId: string) =>
+    req<ChatDeleted>(`/chats/${chatId}`, { method: "DELETE" }),
   messages: (chatId: string) => req<Message[]>(`/chats/${chatId}/messages`),
   scopeReport: (chatId: string) => req<ScopeReport>(`/chats/${chatId}/scope-report`),
   purgeEphemeral: (chatId: string) =>

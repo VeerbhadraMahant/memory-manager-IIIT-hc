@@ -24,7 +24,7 @@
 // stops competing with the transcript for horizontal space.
 
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
-import { Cpu, EyeOff, Info, Loader2, Network, Send } from "lucide-react";
+import { Cpu, EyeOff, Info, Loader2, Send } from "lucide-react";
 
 import { AttributionChips } from "@/components/Attribution";
 import { DraftPanel } from "@/components/DraftPanel";
@@ -33,13 +33,21 @@ import { MemoryPanel, MemoryPanelToggle } from "@/components/MemoryPanel";
 import { Onboarding } from "@/components/Onboarding";
 import { PiiModal, PiiStrip } from "@/components/PiiIntervention";
 import { ReviewCard } from "@/components/ReviewCard";
+import {
+  DeleteChatDialog,
+  ProfileDialog,
+  SettingsDialog,
+} from "@/components/SessionDialogs";
 import { SessionSidebar, SidebarOpenButton } from "@/components/SessionSidebar";
+import { MemoryTimeline } from "@/components/MemoryTimeline";
+import { ThinkingPanel } from "@/components/TurnInsight";
 import { Button } from "@/components/ui/button";
 import {
   MemoryLiveRegion,
   MemoryProvider,
   useMemoryStore,
 } from "@/lib/memory-store";
+import { useMemoryConsent } from "@/lib/consent";
 import {
   DESKTOP_QUERY,
   WIDE_QUERY,
@@ -52,8 +60,10 @@ import {
   api,
   type Chat,
   type CandidatesResponse,
+  type Me,
   type Message,
   type Provider,
+  type RetrievalTrace,
   type ProvidersResponse,
   type ScopeReport,
   type TurnResponse,
@@ -76,6 +86,10 @@ interface Turn {
   model: string | null;
   provider: string | null;
   assistantMessageId: string | null;
+  // The model's own scratchpad and the retrieval funnel for this turn. Both come
+  // straight from the response; neither is ever synthesised client-side.
+  reasoning: string;
+  retrieval: RetrievalTrace | null;
   // P6: kept so "here is what I would have said without that" is shown, not claimed.
   previousReply: string | null;
   regenerating: boolean;
@@ -98,6 +112,8 @@ const emptyTurn = (): Omit<Turn, "id" | "userText" | "ephemeral" | "fromHistory"
   model: null,
   provider: null,
   assistantMessageId: null,
+  reasoning: "",
+  retrieval: null,
   previousReply: null,
   regenerating: false,
   draft: null,
@@ -130,10 +146,6 @@ export default function Page() {
     <MemoryProvider>
       <Workbench />
       <MemoryLiveRegion />
-      {/* §1. Outside <Workbench> because it explains the app rather than
-          reflecting any of its state, and it must not re-render with the
-          conversation. */}
-      <Onboarding />
     </MemoryProvider>
   );
 }
@@ -148,8 +160,22 @@ function Workbench() {
   const [chatId, setChatId] = useState<string | null>(null);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState("");
-  const [ephemeral, setEphemeral] = useState(false);
   const [highStakes, setHighStakes] = useState(false);
+
+  // Declining the memory opt-in has to change what the app does, or the consent
+  // step is theatre. It defaults every turn to off-the-record, which is the
+  // mechanism that actually stops extraction (the pass returns before the LLM
+  // call), rather than a flag that merely hides the result.
+  const [consent] = useMemoryConsent();
+  const declined = consent === "declined";
+
+  // Derived, not synced. `null` means "follow the consent decision"; a boolean is
+  // the user having overridden it for themselves, which then sticks. Doing this
+  // with an effect that pushed `declined` into state would fire a second render
+  // on every consent change and fight the user's own click on the way past.
+  const [ephemeralOverride, setEphemeralOverride] = useState<boolean | null>(null);
+  const ephemeral = ephemeralOverride ?? declined;
+  const setEphemeral = useCallback((v: boolean) => setEphemeralOverride(v), []);
   const [sending, setSending] = useState(false);
   const [scope, setScope] = useState<ScopeReport | null>(null);
   const [fatal, setFatal] = useState<string | null>(null);
@@ -180,6 +206,13 @@ function Workbench() {
   // boolean would need a different default on each side of the breakpoint.
   const [railCollapsed, setRailCollapsed] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
+
+  // Sidebar chrome: who you are, and the three dialogs it can open.
+  const [me, setMe] = useState<Me | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Chat | null>(null);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [replayOnboarding, setReplayOnboarding] = useState(false);
 
   const bottom = useRef<HTMLDivElement>(null);
   const composer = useRef<HTMLTextAreaElement>(null);
@@ -225,6 +258,12 @@ function Workbench() {
       }
     })();
   }, [refreshSidebar]);
+
+  // Identity for the sidebar footer. Non-fatal on failure: the app is usable
+  // without knowing who you are, and the entry falls back to "Profile".
+  useEffect(() => {
+    api.me().then(setMe).catch(() => {});
+  }, []);
 
   // Which providers exist depends on which keys the server has, so the switcher is
   // populated from the backend rather than hardcoded — a missing key means the
@@ -286,6 +325,32 @@ function Workbench() {
     } catch (e) {
       setFatal(e instanceof Error ? e.message : "failed to start a session");
     }
+  };
+
+  const renameSession = async (id: string, title: string) => {
+    const updated = await api.renameChat(id, title);
+    setChats((cs) => cs.map((c) => (c.id === id ? updated : c)));
+  };
+
+  const deleteSession = async (chat: Chat) => {
+    const result = await api.deleteChat(chat.id);
+    const remaining = chats.filter((c) => c.id !== chat.id);
+    setChats(remaining);
+
+    // Deleting the chat you are looking at has to land you somewhere real. Falling
+    // back to the newest remaining one keeps the transcript non-empty; with nothing
+    // left, a fresh session is better than an interface with no conversation in it.
+    if (chat.id === chatId) {
+      if (remaining[0]) await switchTo(remaining[0].id);
+      else await newSession();
+    }
+
+    // The store has to be refetched, not patched: the tombstoned items are whatever
+    // the server decided, and the count in the reply is the only honest source for
+    // what actually happened.
+    void refresh();
+    if (chatId && chat.id !== chatId) refreshSidebar(chatId);
+    return result;
   };
 
   const pollCandidates = useCallback(
@@ -364,6 +429,8 @@ function Workbench() {
           // From the response, not from local state: the server may have fallen back.
           model: res.model,
           provider: res.provider,
+          reasoning: res.reasoning ?? "",
+          retrieval: res.retrieval,
         });
         if (res.extraction_running) {
           void pollCandidates(turnId, chatId, res.user_message.id, keepToSession);
@@ -447,6 +514,11 @@ function Workbench() {
         }
         onSelect={(id) => void switchTo(id)}
         onNew={() => void newSession()}
+        onRename={renameSession}
+        onDelete={setDeleteTarget}
+        profileLabel={me?.handle ?? null}
+        onOpenProfile={() => setProfileOpen(true)}
+        onOpenSettings={() => setSettingsOpen(true)}
       />
 
       {/* Centre zone. Its own scroll container at ≥1024px so the transcript and
@@ -463,22 +535,11 @@ function Workbench() {
             {chats.find((c) => c.id === chatId)?.title ?? "Loading…"}
           </p>
           <div className="ml-auto flex items-center gap-2">
-            {/* Always reachable, unlike the matching link inside the memory
-                panel — that one is unmounted-from-tab-order when the panel is
-                collapsed (MemoryPanel.tsx), and finding it would otherwise cost
-                an "open the panel" click first. Icon-only: the top bar is
-                genuinely space-starved at 390px, same exception the collapsed
-                sidebar rail and the panel edge toggle already get. */}
-            <a
-              href="/graph"
-              target="_blank"
-              rel="noopener noreferrer"
-              title="View memory graph"
-              aria-label="View memory graph — opens in a new tab"
-              className="tap inline-flex items-center justify-center rounded-input text-ink-invert-muted hover:bg-raised hover:text-ink-invert"
-            >
-              <Network className="size-4" aria-hidden="true" />
-            </a>
+            {/* The graph-link shortcut that used to sit here is gone (cosmetic
+                request: only the Memory toggle stays in the top bar). It is
+                still reachable from inside the memory panel itself
+                (MemoryPanel.tsx / MemoryWorkspace.tsx), just not duplicated
+                up here. */}
             <MemoryPanelToggle
               open={memoryOpen}
               onToggle={() => setMemoryOpen(!memoryOpen)}
@@ -537,12 +598,24 @@ function Workbench() {
                   </p>
                 )}
 
-                {t.reply === null && !t.error && (
-                  <p className="flex items-center gap-2 text-body-sm text-ink-invert-muted">
-                    <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-                    thinking…
-                  </p>
-                )}
+                {/* Replaces "thinking…" and the five status lines that used to be
+                    scattered below the reply. One ordered account of what the turn
+                    did to memory, so the structural story does not require opening
+                    the graph (principle 6). Every state and count in it is derived
+                    from the real payload. */}
+                <MemoryTimeline
+                  ephemeral={t.ephemeral}
+                  reply={t.reply}
+                  error={t.error}
+                  retrieval={t.retrieval}
+                  extractionRunning={t.extractionRunning}
+                  extraction={t.extraction}
+                  sessionOnlyApplied={t.sessionOnlyApplied}
+                />
+
+                {/* Kept separate: the model's own scratchpad is not a memory
+                    operation, and it is absent entirely for models that emit none. */}
+                <ThinkingPanel reasoning={t.reasoning} />
 
                 {t.reply && (
                   <div>
@@ -595,56 +668,18 @@ function Workbench() {
                   </div>
                 )}
 
-                {t.extractionRunning && (
-                  <p className="meta ml-0 flex items-center gap-2 text-ink-invert-muted sm:ml-10">
-                    <span
-                      aria-hidden="true"
-                      className="inline-block size-1.5 animate-pulse rounded-full bg-stated"
-                    />
-                    looking at what to remember…
-                  </p>
-                )}
+                {/* The five status lines that used to live here — extraction
+                    running, off-the-record, nothing-worth-remembering, kept-to-session,
+                    extraction-failed — are now steps in <MemoryTimeline> above. They
+                    each said something true, but the reader had to assemble the story
+                    from fragments spread around the turn.
 
-                {/* Two different facts, deliberately not merged (§9).
-                    "Nothing was extracted" is a guarantee the user asked for by
-                    ticking off-the-record — the extractor never ran. "Nothing
-                    worth remembering" is a *result*: it ran and found nothing.
-                    Collapsing them into one line would let an off-the-record
-                    turn look like a judgement call, which is the opposite of the
-                    promise. Hence also the different visual treatment: the
-                    guarantee gets the eye-off icon it was set with, the result
-                    is plain. */}
-                {t.ephemeral && t.reply && (
-                  <p className="meta ml-0 flex items-center gap-1.5 text-ink-invert-muted sm:ml-10">
-                    <EyeOff className="size-3.5 shrink-0" aria-hidden="true" />
-                    nothing was extracted from this turn
-                  </p>
-                )}
-
-                {!t.ephemeral &&
-                  t.extraction?.status === "done" &&
-                  t.extraction.candidates.length === 0 &&
-                  t.extraction.auto_accepted.length === 0 && (
-                    <p className="meta ml-0 text-ink-invert-muted sm:ml-10">
-                      nothing worth remembering from this turn
-                    </p>
-                  )}
-
-                {t.sessionOnlyApplied !== null && t.sessionOnlyApplied > 0 && (
-                  <p role="status" className="meta ml-0 text-stated-on-bg sm:ml-10">
-                    <span className="tnum">{t.sessionOnlyApplied}</span> kept to
-                    this session only
-                  </p>
-                )}
-
-                {t.extraction?.status === "failed" && (
-                  <p
-                    role="alert"
-                    className="ml-0 text-body-sm text-danger-on-bg sm:ml-10"
-                  >
-                    Extraction failed: {t.extraction.error}
-                  </p>
-                )}
+                    The §9 distinction they encoded is preserved there, not lost: the
+                    timeline's extraction step reads "skipped — the extractor never
+                    ran" for an off-the-record turn and "nothing worth remembering"
+                    for one that ran and found nothing. Those are a guarantee and a
+                    result, and collapsing them would let off-the-record look like a
+                    judgement call. */}
 
                 {t.draft && (
                   <DraftPanel draft={t.draft} onConfirmed={() => refreshSidebar(chatId)} />
@@ -903,11 +938,21 @@ function Workbench() {
                 "friend" indicator — would be claiming a relationship the system
                 does not have. The count comes from the store, so it moves when
                 a memory is kept or discarded without this needing to know. */}
-            {memoryCount > 0 && (
-              <p className="meta mt-2 text-ink-invert-muted">
-                remembers <span className="tnum">{memoryCount}</span>{" "}
-                {memoryCount === 1 ? "thing" : "things"} about you
+            {declined ? (
+              // Says what is true *and* where to undo it. A mode the user chose
+              // still has to be visible, or "why is nothing being remembered?"
+              // becomes a bug report.
+              <p className="meta mt-2 flex items-center gap-1.5 text-alert-ink">
+                <EyeOff className="size-3.5 shrink-0" aria-hidden="true" />
+                memory is off — turn it on in the memory panel
               </p>
+            ) : (
+              memoryCount > 0 && (
+                <p className="meta mt-2 text-ink-invert-muted">
+                  remembers <span className="tnum">{memoryCount}</span>{" "}
+                  {memoryCount === 1 ? "thing" : "things"} about you
+                </p>
+              )
             )}
           </form>
 
@@ -936,6 +981,32 @@ function Workbench() {
         relevance={relevance}
         chatId={chatId}
         sourceMessageId={sourceMessageId}
+      />
+
+      {/* Rendered inside <Workbench> rather than beside it, because Settings can
+          reopen it and the flag that does so lives here. Costs nothing when shut —
+          a closed Radix dialog portals no content. */}
+      <Onboarding
+        forceOpen={replayOnboarding}
+        onReplayFinished={() => setReplayOnboarding(false)}
+      />
+
+      <DeleteChatDialog
+        chat={deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={deleteSession}
+      />
+
+      <ProfileDialog
+        me={me}
+        open={profileOpen}
+        onClose={() => setProfileOpen(false)}
+      />
+
+      <SettingsDialog
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        onReplayOnboarding={() => setReplayOnboarding(true)}
       />
 
       {/* §4.3 tier 1. Focus-trapped, and it always offers a way through. */}

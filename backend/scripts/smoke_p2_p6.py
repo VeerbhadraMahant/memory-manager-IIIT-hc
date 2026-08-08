@@ -157,8 +157,8 @@ def main() -> int:
     check("status corrected in one call", r["status"], "planned")
     r = c.patch(f"{BASE}/memory/items/{paper['id']}", json={"status": "in_progress"}).json()
     check("and corrected back", r["status"], "in_progress")
-    r = c.patch(f"{BASE}/memory/items/{paper['id']}", json={"block_name": "learning"}).json()
-    check("block reassigned", r["block_name"], "learning")
+    r = c.patch(f"{BASE}/memory/items/{paper['id']}", json={"block_name": "education"}).json()
+    check("block reassigned", r["block_name"], "education")
     c.patch(f"{BASE}/memory/items/{paper['id']}", json={"block_name": "work"})
 
     print("\nP6 — confirm resets the decay clock")

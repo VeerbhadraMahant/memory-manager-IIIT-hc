@@ -12,6 +12,8 @@ from app.models import (
     CandidatesResponse,
     Chat,
     ChatCreate,
+    ChatDeleted,
+    ChatUpdate,
     DraftRequest,
     ExtractionStatus,
     Message,
@@ -23,11 +25,11 @@ from app.models import (
     TurnResponse,
     VerifiedDraft,
 )
-from app.routers.memory import ITEM_SELECT
+from app.routers.memory import ITEM_SELECT, _audit
 from app.services import llm
 from app.services.classify import check_claim
 from app.services.extraction import run_extraction
-from app.services.retrieval import retrieve
+from app.services.retrieval import pinned_trace, retrieve, retrieve_traced
 
 router = APIRouter(prefix="/chats", tags=["chats"])
 
@@ -59,14 +61,84 @@ def create_chat(payload: ChatCreate, cur=Depends(db_cursor)):
 @router.get("", response_model=list[Chat])
 def list_chats(cur=Depends(db_cursor)):
     cur.execute(
-        "select * from chats where user_id = %s order by created_at desc",
+        """select * from chats
+            where user_id = %s and deleted_at is null
+            order by created_at desc""",
         (settings.demo_user_id,),
     )
     return cur.fetchall()
 
 
+@router.patch("/{chat_id}", response_model=Chat)
+def rename_chat(chat_id: UUID, payload: ChatUpdate, cur=Depends(db_cursor)):
+    _assert_chat(cur, chat_id)
+    cur.execute(
+        "update chats set title = %s where id = %s returning *",
+        (payload.title, chat_id),
+    )
+    row = cur.fetchone()
+    cur.connection.commit()
+    return row
+
+
+@router.delete("/{chat_id}", response_model=ChatDeleted)
+def delete_chat(chat_id: UUID, cur=Depends(db_cursor)):
+    """Tombstone a chat, and with it the memories that were confined to it.
+
+    Not a row delete — see migration 006 for why the schema forbids one. The split
+    below is the whole decision:
+
+      * session-scoped items anchored to this chat are tombstoned. They were only
+        ever usable inside it, so leaving them would be unreachable dead weight
+        that still counts in the store.
+      * persistent items are left alone. The user promoted those out of the chat
+        deliberately, and deleting a conversation is not a retraction of that.
+      * message rows stay, so every surviving item's `source_message_id` still
+        resolves and its evidence quote still renders (principle 7).
+
+    Each tombstoned item gets an audit row naming the chat, so "why did this
+    disappear" has an answer that is not "we assume the chat deletion did it".
+    """
+    _assert_chat(cur, chat_id)
+
+    cur.execute(
+        """update memory_items
+              set deleted_at = now()
+            where user_id = %s and session_chat_id = %s and deleted_at is null
+        returning id""",
+        (settings.demo_user_id, chat_id),
+    )
+    removed = [row["id"] for row in cur.fetchall()]
+    for item_id in removed:
+        _audit(cur, item_id, "deleted_with_chat", {"chat_id": str(chat_id)})
+
+    # Counted, not assumed: the reply says how many memories outlived the chat, so
+    # the confirmation the user sees is the database's answer rather than the UI's.
+    cur.execute(
+        """select count(*) as n
+             from memory_items mi
+             join messages m on m.id = mi.source_message_id
+            where mi.user_id = %s and m.chat_id = %s and mi.deleted_at is null""",
+        (settings.demo_user_id, chat_id),
+    )
+    kept = cur.fetchone()["n"]
+
+    cur.execute("update chats set deleted_at = now() where id = %s", (chat_id,))
+    cur.connection.commit()
+
+    return ChatDeleted(
+        chat_id=chat_id,
+        session_memories_removed=len(removed),
+        persistent_memories_kept=kept,
+    )
+
+
 @router.get("/{chat_id}/messages", response_model=list[Message])
 def list_messages(chat_id: UUID, cur=Depends(db_cursor)):
+    # Guarded like every other chat route. Without this it happily served the
+    # transcript of a chat the user had deleted — harmless while there is one
+    # hardcoded user, a cross-account read the moment there is more than one.
+    _assert_chat(cur, chat_id)
     cur.execute("select * from messages where chat_id = %s order by created_at", (chat_id,))
     return cur.fetchall()
 
@@ -123,9 +195,17 @@ def chat_turn(
             ([str(i) for i in payload.selected_memory_ids],),
         )
         selected_rows = cur.fetchall()
-        used = selected_rows if selected_rows else retrieve(cur, str(settings.demo_user_id), str(chat_id), payload.content)
+        if selected_rows:
+            used = selected_rows
+            trace = pinned_trace(payload.content, selected_rows)
+        else:
+            used, trace = retrieve_traced(
+                cur, str(settings.demo_user_id), str(chat_id), payload.content
+            )
     else:
-        used = retrieve(cur, str(settings.demo_user_id), str(chat_id), payload.content)
+        used, trace = retrieve_traced(
+            cur, str(settings.demo_user_id), str(chat_id), payload.content
+        )
 
     cur.execute(
         """select role, content from messages
@@ -138,7 +218,9 @@ def chat_turn(
     # The provider is chosen per turn, but the memory above was already retrieved —
     # switching models carries the memory across rather than re-deriving it (D32).
     try:
-        reply, provider_used, model_used = llm.chat_response(history, used, payload.provider)
+        reply, provider_used, model_used, reasoning = llm.chat_response(
+            history, used, payload.provider
+        )
     except Exception as e:
         raise HTTPException(502, f"LLM call failed: {type(e).__name__}: {e}") from e
 
@@ -174,6 +256,13 @@ def chat_turn(
         # or stale selection falls back, and that should be visible rather than silent.
         "provider": provider_used,
         "model": model_used,
+        # The model's own scratchpad, verbatim, or "" when it emitted none. Never
+        # synthesised — a UI that invents plausible reasoning is worse than one that
+        # shows none, because it cannot be told apart from the real thing.
+        "reasoning": reasoning,
+        # How the memories above were chosen, including what was considered and
+        # rejected. This is the retrieval claim made checkable rather than asserted.
+        "retrieval": trace.as_dict(),
     }
 
 
@@ -185,6 +274,7 @@ def turn_candidates(chat_id: UUID, message_id: UUID, cur=Depends(db_cursor)):
     made visible: the user sees what was taken silently, without being asked to
     approve it. Principle 2 is about not prompting, not about hiding.
     """
+    _assert_chat(cur, chat_id)
     cur.execute(
         "select extraction_status, extraction_error from messages where id = %s and chat_id = %s",
         (message_id, chat_id),
@@ -272,7 +362,7 @@ def regenerate(chat_id: UUID, payload: RegenerateRequest, cur=Depends(db_cursor)
     history = list(reversed(cur.fetchall()))
 
     try:
-        reply, _, _ = llm.chat_response(history, used, payload.provider)
+        reply, _, _, _ = llm.chat_response(history, used, payload.provider)
     except Exception as e:
         raise HTTPException(502, f"chat call failed: {type(e).__name__}: {e}") from e
 
@@ -444,7 +534,9 @@ def purge_ephemeral(chat_id: UUID, cur=Depends(db_cursor)):
 
 def _assert_chat(cur, chat_id: UUID) -> None:
     cur.execute(
-        "select 1 from chats where id = %s and user_id = %s", (chat_id, settings.demo_user_id)
+        """select 1 from chats
+            where id = %s and user_id = %s and deleted_at is null""",
+        (chat_id, settings.demo_user_id),
     )
     if not cur.fetchone():
         raise HTTPException(404, "chat not found")

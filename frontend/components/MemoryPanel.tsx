@@ -26,6 +26,7 @@
 import { useRef } from "react";
 import {
   Brain,
+  EyeOff,
   PanelRightClose,
   PanelRightOpen,
   ShieldAlert,
@@ -33,12 +34,15 @@ import {
 } from "lucide-react";
 
 import type { ScopeReport } from "@/lib/api";
+import { useMemoryConsent } from "@/lib/consent";
 import { useMemoryStore } from "@/lib/memory-store";
 import { useAnimateAfterFirstPaint, useFocusTrap } from "@/lib/shell";
 import type { PiiFinding, PiiTier } from "@/lib/pii";
 import { cn } from "@/lib/utils";
 import { MemoryWorkspace } from "@/components/MemoryWorkspace";
+import { PrivacyBlocks } from "@/components/PrivacyBlocks";
 import { ScopePanel } from "@/components/ScopePanel";
+import { Button } from "@/components/ui/button";
 import { Chip } from "@/components/ui/chip";
 
 export function MemoryPanel({
@@ -147,6 +151,10 @@ export function MemoryPanel({
             </button>
           </div>
 
+          <ConsentControl />
+
+          <PrivacyBlocks />
+
           <ScopePanel report={scope} onChanged={onScopeChanged} />
 
           <div className="shrink-0 rounded-card border border-outline p-4">
@@ -178,6 +186,55 @@ export function MemoryPanel({
         </div>
       </aside>
     </>
+  );
+}
+
+/**
+ * Withdrawing or granting the memory opt-in after onboarding.
+ *
+ * This exists because the consent dialog promises it twice ("you can change this
+ * later from the memory panel"), and a promise the interface does not keep is
+ * worse than one it never made. It is also the substance of consent rather than a
+ * nicety: a choice you cannot revisit is a gate, not consent.
+ *
+ * Deliberately not a switch. Declining changes how every subsequent turn behaves,
+ * so it reads as two labelled states with one action, not as a toggle that could
+ * be flipped by a stray click.
+ */
+function ConsentControl() {
+  const [consent, setConsent] = useMemoryConsent();
+  // null only before onboarding resolves, where the dialog is covering this anyway.
+  if (consent === null) return null;
+
+  const on = consent === "accepted";
+
+  return (
+    <section
+      aria-label="Memory opt-in"
+      className="shrink-0 rounded-card border border-outline bg-raised p-4"
+    >
+      <h2 className="meta mb-2 flex items-center gap-1.5 text-ink-invert-muted">
+        {on ? (
+          <Brain className="size-4" aria-hidden="true" />
+        ) : (
+          <EyeOff className="size-4" aria-hidden="true" />
+        )}
+        Memory is {on ? "on" : "off"}
+      </h2>
+      <p className="text-body-sm text-ink-invert-muted">
+        {on
+          ? "Facts are proposed after each turn and kept once you accept them. Existing memories stay either way."
+          : "Every message starts off the record, so nothing new is extracted. Memories kept earlier are still here and still usable."}
+      </p>
+      <Button
+        variant="outline"
+        size="sm"
+        className="mt-3"
+        onClick={() => setConsent(on ? "declined" : "accepted")}
+      >
+        {on ? "Turn memory off" : "Turn memory on"}
+      </Button>
+    </section>
   );
 }
 

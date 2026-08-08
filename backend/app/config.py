@@ -65,11 +65,40 @@ class Settings(BaseSettings):
     groq_base_url: str = "https://api.groq.com/openai/v1"
 
     # Which provider answers when the client does not ask for one.
-    default_chat_provider: str = "openrouter"
+    # Groq, because qwen3 is the only configured chat model that emits a <think>
+    # block — and the reasoning panel shows the model's real scratchpad or nothing
+    # at all, never a synthesised one. On OpenRouter's gemma or Gemini flash the
+    # panel is simply absent, which is correct but makes the feature invisible.
+    # Override with DEFAULT_CHAT_PROVIDER if Groq's daily limit runs out; resolve_provider
+    # falls back on its own if the key is missing entirely.
+    default_chat_provider: str = "groq"
 
-    # Seeded by migration 002. No auth flow during the hackathon; swapping this for
-    # a real user id later touches only the request-scoped dependency in deps.py.
+    # Seeded by migration 002, and still the request identity for every route —
+    # there are 24 call sites reading it and no auth dependency to replace them yet.
+    # (An earlier version of this comment said otherwise, pointing at a deps.py and
+    # routers/auth.py that do not exist. Corrected rather than left, because a
+    # comment claiming the app is multi-user when it is not is the kind of thing
+    # that gets believed.)
     demo_user_id: UUID = UUID("00000000-0000-0000-0000-000000000001")
+
+    # ---------------------------------------------------------------- auth
+    # SCAFFOLDING ONLY — nothing reads these yet. The columns exist (migration 006)
+    # and the settings are declared, but there is no /auth router, no session
+    # verification and no sign-in flow. Sign-in does not work; do not read the
+    # presence of these fields as evidence that it does.
+    #
+    # Intended shape when it lands: the frontend gets an ID token from Google
+    # Identity Services and posts it to POST /auth/google, and the backend verifies
+    # it against this client id rather than trusting the token's own `aud` claim.
+    google_client_id: str | None = None
+
+    # Signs the session cookie (routers/auth.py). Required in practice — there is
+    # no sign-in without it — but kept optional here so the app still boots (and
+    # /health still answers) on a checkout that has not set it yet, the same
+    # posture llm_api_key already takes.
+    session_secret: str | None = None
+    session_cookie_name: str = "nam_session"
+    session_max_age_days: int = 30
 
     cors_origins: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
 

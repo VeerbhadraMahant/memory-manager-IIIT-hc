@@ -11,7 +11,7 @@ from datetime import datetime
 from enum import Enum
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class SourceType(str, Enum):
@@ -73,11 +73,59 @@ class ChatCreate(BaseModel):
     title: str | None = None
 
 
+class ChatUpdate(BaseModel):
+    """Rename. `title` is the only mutable field on a chat."""
+
+    title: str = Field(min_length=1, max_length=200)
+
+    @field_validator("title")
+    @classmethod
+    def _not_blank(cls, v: str) -> str:
+        """Validate the *stripped* value, not the raw one.
+
+        `min_length=1` alone accepts "   ", which the handler then strips to "" —
+        producing a chat with a blank name in the sidebar. Stripping here means the
+        length constraint and the stored value can no longer disagree.
+        """
+        stripped = v.strip()
+        if not stripped:
+            raise ValueError("title cannot be blank")
+        return stripped
+
+
 class Chat(BaseModel):
     id: UUID
     user_id: UUID
     title: str | None
     created_at: datetime
+
+
+class ChatDeleted(BaseModel):
+    """What deleting a chat actually did, so the UI reports it rather than guessing.
+
+    Named `session_memories_removed` and `persistent_memories_kept` rather than a
+    single count because the asymmetry is the point: memories confined to this chat
+    go with it, memories the user promoted out of it do not (migration 006).
+    """
+
+    chat_id: UUID
+    session_memories_removed: int
+    persistent_memories_kept: int
+
+
+class Me(BaseModel):
+    """Who the request is acting as.
+
+    Reports the real `users` row rather than echoing the configured id, so the
+    sidebar's profile entry shows something true. There is no auth yet — this is
+    always the demo user — and that is precisely why it reads from the database:
+    when sign-in lands, this endpoint changes and the UI does not.
+    """
+
+    id: UUID
+    handle: str
+    created_at: datetime
+    is_demo_user: bool
 
 
 class MessageCreate(BaseModel):
@@ -147,6 +195,14 @@ class Block(BaseModel):
     default_sensitivity: Sensitivity
     restrictive_rank: int
     is_fallback: bool
+    # Migration 007. True means retrieval excludes this block, so its memories are
+    # never placed in a prompt. Distinct from scope, which controls *which chats* may
+    # use a memory; this controls whether the model may see it at all.
+    private: bool = False
+
+
+class BlockPrivacy(BaseModel):
+    private: bool
 
 
 # ------------------------------------------------------- P5 provenance graph
@@ -242,6 +298,40 @@ class UsedMemory(BaseModel):
     is_stale: bool = False
 
 
+class RetrievalCandidate(BaseModel):
+    """One memory the vector search ranked, and what happened to it."""
+
+    id: UUID
+    content: str
+    block_name: str | None = None
+    distance: float
+    # injected | too_distant | private_block | revoked | pinned
+    verdict: str
+
+
+class RetrievalTrace(BaseModel):
+    """How the memories for this turn were chosen.
+
+    Exists so "retrieval is scoped and filtered" is checkable rather than asserted.
+    The counts below distinguish outcomes that look identical in the result set and
+    mean very different things: nothing matched, versus things matched and were not
+    allowed through.
+    """
+
+    query: str
+    considered: list[RetrievalCandidate] = []
+    injected_count: int = 0
+    # Blocked by a private block — the model's prompt did not contain these.
+    withheld_private: int = 0
+    dropped_too_distant: int = 0
+    revoked_count: int = 0
+    fenced_to_another_chat: int = 0
+    awaiting_review: int = 0
+    not_embedded: int = 0
+    max_distance: float = 0.0
+    embedding_failed: bool = False
+
+
 class TurnResponse(BaseModel):
     user_message: Message
     assistant_message: Message
@@ -253,6 +343,12 @@ class TurnResponse(BaseModel):
     # a stale or unconfigured selection falls back silently otherwise.
     provider: str | None = None
     model: str | None = None
+    # The model's own <think> scratchpad, verbatim. Empty for models that emit none;
+    # never synthesised, because reasoning the UI made up would be indistinguishable
+    # from reasoning the model actually did.
+    reasoning: str = ""
+    # How the memories above were selected, including what was rejected and why.
+    retrieval: RetrievalTrace | None = None
 
 
 class CandidatesResponse(BaseModel):

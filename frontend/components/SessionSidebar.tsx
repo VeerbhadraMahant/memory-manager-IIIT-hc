@@ -19,14 +19,22 @@
 // information too, which is why the label is on the element rather than implied
 // by it.
 
-import { useRef } from "react";
-import { PanelLeftClose, PanelLeftOpen, SquarePen } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import {
+  Check,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Pencil,
+  Settings,
+  SquarePen,
+  Trash2,
+  User,
+  X,
+} from "lucide-react";
 
 import type { Chat } from "@/lib/api";
 import { useFocusTrap } from "@/lib/shell";
 import { cn } from "@/lib/utils";
-
-const VISIBLE_SESSIONS = 6;
 
 export function SessionSidebar({
   chats,
@@ -37,6 +45,11 @@ export function SessionSidebar({
   onToggle,
   onSelect,
   onNew,
+  onRename,
+  onDelete,
+  profileLabel,
+  onOpenProfile,
+  onOpenSettings,
 }: {
   chats: Chat[];
   currentId: string | null;
@@ -50,11 +63,17 @@ export function SessionSidebar({
   onToggle: () => void;
   onSelect: (id: string) => void;
   onNew: () => void;
+  onRename: (id: string, title: string) => Promise<void>;
+  /** Opens the confirmation. Deleting also removes memories confined to the chat,
+   *  so this never fires straight from a click in the list. */
+  onDelete: (chat: Chat) => void;
+  /** Who you are acting as. `null` while /me is still in flight. */
+  profileLabel: string | null;
+  onOpenProfile: () => void;
+  onOpenSettings: () => void;
 }) {
   const panel = useRef<HTMLElement>(null);
   useFocusTrap(panel, overlay && open, onToggle);
-
-  const older = chats.length - VISIBLE_SESSIONS;
 
   return (
     <>
@@ -149,85 +168,262 @@ export function SessionSidebar({
             </span>
           </button>
 
-          {/* Capped at six. Test runs accumulate sessions quickly, and an
-              unbounded list would push the product title off the bottom; older
-              sessions stay accounted for through the count rather than
-              vanishing silently. */}
+          {/* The six-item cap is gone. It existed so an unbounded list could not
+              push the product title off the bottom, and the title has moved to
+              Profile/Settings below — but the real reason is that a chat you
+              cannot see is a chat you cannot delete, which would make "manage
+              chats" a feature you can only use on your seven most recent. The
+              parent already scrolls, and the footer is a shrink-0 sibling, so
+              nothing gets pushed anywhere. */}
           <nav aria-label="Session list" className="min-h-0">
             <ul className="space-y-1">
-              {chats.slice(0, VISIBLE_SESSIONS).map((ch) => {
-                const title = ch.title ?? "Untitled";
-                const current = ch.id === currentId;
-                return (
-                  <li key={ch.id}>
-                    <button
-                      type="button"
-                      onClick={() => onSelect(ch.id)}
-                      aria-current={current ? "true" : undefined}
-                      // Always set, not only when collapsed. The visible label
-                      // lives in a second <span> alongside the (hidden, but
-                      // still in the DOM) avatar span, and Chrome's real
-                      // accessibility tree returns an *empty* name for a button
-                      // whose text is split across sibling elements like that —
-                      // confirmed by inspecting the computed AX node directly,
-                      // not assumed. An explicit aria-label is the one path that
-                      // reliably works here regardless of that split.
-                      aria-label={title}
-                      title={collapsed ? title : undefined}
-                      className={cn(
-                        "tap flex w-full items-center gap-2 rounded-input px-3 text-left text-body-sm transition-colors duration-[var(--motion-micro)]",
-                        current
-                          ? "bg-accent-dim text-ink-invert"
-                          : "text-ink-invert-muted hover:bg-raised hover:text-ink-invert",
-                        collapsed && "lg:justify-center lg:px-0",
-                      )}
-                    >
-                      <span
-                        className={cn(
-                          "hidden shrink-0 items-center justify-center rounded-input border border-outline-strong text-body-sm font-medium",
-                          collapsed && "lg:flex lg:size-8",
-                        )}
-                      >
-                        {title.slice(0, 1).toUpperCase()}
-                      </span>
-                      <span className={cn("truncate", collapsed && "lg:hidden")}>
-                        {title}
-                      </span>
-                    </button>
-                  </li>
-                );
-              })}
+              {chats.map((ch) => (
+                <SessionRow
+                  key={ch.id}
+                  chat={ch}
+                  current={ch.id === currentId}
+                  collapsed={collapsed}
+                  onSelect={onSelect}
+                  onRename={onRename}
+                  onDelete={onDelete}
+                />
+              ))}
             </ul>
-            {older > 0 && (
+            {chats.length === 0 && (
               <p
                 className={cn(
-                  "meta tnum px-3 pt-2 text-ink-invert-muted",
-                  collapsed && "lg:text-center lg:px-0",
+                  "px-3 pt-2 text-body-sm text-ink-invert-muted",
+                  collapsed && "lg:hidden",
                 )}
               >
-                +{older} <span className={cn(collapsed && "lg:hidden")}>older</span>
+                No sessions yet.
               </p>
             )}
           </nav>
         </div>
 
-        {/* De-emphasised: the product name is orientation, not a heading the eye
-            should return to. It is still the page's h1. */}
-        <div
-          className={cn(
-            "shrink-0 border-t border-outline px-3 py-3",
-            collapsed && "lg:hidden",
-          )}
-        >
-          <h1 className="text-body-sm font-medium text-ink-invert-muted">
-            Negotiated AI Memory
-          </h1>
-          <p className="mt-0.5 text-body-sm text-ink-invert-muted">
-            You decide what is remembered, as it happens.
-          </p>
+        {/* Identity and settings, pinned. Replaces the product blurb that used to
+            sit here: orientation is worth one line, but not a permanent one at the
+            bottom of every screen, and the h1 it carried is redundant with the
+            document title. */}
+        <div className="shrink-0 space-y-1 border-t border-outline p-2">
+          <SidebarEntry
+            icon={<User className="size-4 shrink-0" aria-hidden="true" />}
+            label={profileLabel ?? "Profile"}
+            collapsed={collapsed}
+            onClick={onOpenProfile}
+          />
+          <SidebarEntry
+            icon={<Settings className="size-4 shrink-0" aria-hidden="true" />}
+            label="Settings"
+            collapsed={collapsed}
+            onClick={onOpenSettings}
+          />
         </div>
       </aside>
     </>
+  );
+}
+
+/**
+ * One session: select, rename in place, or delete.
+ *
+ * Rename is inline rather than a dialog, matching how the review card and the
+ * memory action bar already handle a correction — the thing you are changing stays
+ * on screen while you change it.
+ *
+ * The two action buttons are always rendered, never hover-only. Hover-only controls
+ * are unreachable by keyboard and by touch, and this row is the only route to
+ * deleting a chat.
+ */
+function SessionRow({
+  chat,
+  current,
+  collapsed,
+  onSelect,
+  onRename,
+  onDelete,
+}: {
+  chat: Chat;
+  current: boolean;
+  collapsed: boolean;
+  onSelect: (id: string) => void;
+  onRename: (id: string, title: string) => Promise<void>;
+  onDelete: (chat: Chat) => void;
+}) {
+  const title = chat.title ?? "Untitled";
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(title);
+  const [busy, setBusy] = useState(false);
+  const input = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (editing) input.current?.select();
+  }, [editing]);
+
+  const begin = () => {
+    setDraft(title);
+    setEditing(true);
+  };
+
+  const commit = async () => {
+    const next = draft.trim();
+    // Unchanged or emptied is a cancel, not an error. The server rejects a blank
+    // title too (ChatUpdate), but bothering the user with a 422 for pressing Enter
+    // on an empty box would be the interface blaming them for its own affordance.
+    if (!next || next === title) {
+      setEditing(false);
+      return;
+    }
+    setBusy(true);
+    try {
+      await onRename(chat.id, next);
+      setEditing(false);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (editing && !collapsed) {
+    return (
+      <li>
+        <div className="flex items-center gap-1 rounded-input bg-raised px-1 py-1">
+          <label className="sr-only" htmlFor={`rename-${chat.id}`}>
+            Rename session
+          </label>
+          <input
+            id={`rename-${chat.id}`}
+            ref={input}
+            value={draft}
+            disabled={busy}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                void commit();
+              }
+              if (e.key === "Escape") {
+                e.preventDefault();
+                // Stopped here so Escape renames-cancel rather than also closing
+                // the drawer this row sits inside.
+                e.stopPropagation();
+                setEditing(false);
+              }
+            }}
+            className="min-w-0 flex-1 rounded-input border border-outline-strong bg-bg px-2 py-1 text-body-sm text-ink-invert"
+          />
+          <button
+            type="button"
+            onClick={() => void commit()}
+            disabled={busy}
+            aria-label="Save session name"
+            title="Save"
+            className="tap inline-flex items-center justify-center rounded-input text-ink-invert-muted hover:text-ink-invert"
+          >
+            <Check className="size-4" aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setEditing(false)}
+            disabled={busy}
+            aria-label="Cancel renaming"
+            title="Cancel"
+            className="tap inline-flex items-center justify-center rounded-input text-ink-invert-muted hover:text-ink-invert"
+          >
+            <X className="size-4" aria-hidden="true" />
+          </button>
+        </div>
+      </li>
+    );
+  }
+
+  return (
+    <li
+      className={cn(
+        "group flex items-center gap-1 rounded-input transition-colors duration-[var(--motion-micro)]",
+        current ? "bg-accent-dim" : "hover:bg-raised",
+      )}
+    >
+      <button
+        type="button"
+        onClick={() => onSelect(chat.id)}
+        aria-current={current ? "true" : undefined}
+        // Always set, not only when collapsed. The visible label lives in a second
+        // <span> alongside the (hidden, but still in the DOM) avatar span, and
+        // Chrome's real accessibility tree returns an *empty* name for a button
+        // whose text is split across sibling elements like that — confirmed by
+        // inspecting the computed AX node directly, not assumed.
+        aria-label={title}
+        title={collapsed ? title : undefined}
+        className={cn(
+          "tap flex min-w-0 flex-1 items-center gap-2 rounded-input px-3 text-left text-body-sm",
+          current ? "text-ink-invert" : "text-ink-invert-muted group-hover:text-ink-invert",
+          collapsed && "lg:justify-center lg:px-0",
+        )}
+      >
+        <span
+          className={cn(
+            "hidden shrink-0 items-center justify-center rounded-input border border-outline-strong text-body-sm font-medium",
+            collapsed && "lg:flex lg:size-8",
+          )}
+        >
+          {title.slice(0, 1).toUpperCase()}
+        </span>
+        <span className={cn("truncate", collapsed && "lg:hidden")}>{title}</span>
+      </button>
+
+      {/* Hidden on the 56px rail: there is no room, and both actions stay reachable
+          by expanding the sidebar. */}
+      <span className={cn("flex shrink-0 items-center pr-1", collapsed && "lg:hidden")}>
+        <button
+          type="button"
+          onClick={begin}
+          aria-label={`Rename ${title}`}
+          title="Rename"
+          className="tap inline-flex items-center justify-center rounded-input text-ink-invert-muted opacity-60 hover:bg-sunken hover:text-ink-invert focus-visible:opacity-100 group-hover:opacity-100"
+        >
+          <Pencil className="size-3.5" aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          onClick={() => onDelete(chat)}
+          aria-label={`Delete ${title}`}
+          title="Delete"
+          className="tap inline-flex items-center justify-center rounded-input text-ink-invert-muted opacity-60 hover:bg-sunken hover:text-danger-on-bg focus-visible:opacity-100 group-hover:opacity-100"
+        >
+          <Trash2 className="size-3.5" aria-hidden="true" />
+        </button>
+      </span>
+    </li>
+  );
+}
+
+/** A footer row. Icon-only on the rail, icon + label when expanded. */
+function SidebarEntry({
+  icon,
+  label,
+  collapsed,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  collapsed: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      title={collapsed ? label : undefined}
+      className={cn(
+        "tap flex w-full items-center gap-2 rounded-input px-3 text-left text-body-sm text-ink-invert-muted hover:bg-raised hover:text-ink-invert",
+        collapsed && "lg:justify-center lg:px-0",
+      )}
+    >
+      {icon}
+      <span className={cn("truncate", collapsed && "lg:hidden")}>{label}</span>
+    </button>
   );
 }
 

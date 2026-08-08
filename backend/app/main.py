@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.db import pool
+from app.models import Me
 from app.routers import chats, memory
 
 
@@ -34,6 +35,27 @@ app.add_middleware(
 
 app.include_router(chats.router)
 app.include_router(memory.router)
+
+
+@app.get("/me", response_model=Me, tags=["meta"])
+def me():
+    """Who the request is acting as, for the sidebar's profile entry.
+
+    Reads the `users` row rather than echoing `settings.demo_user_id`, so what the UI
+    shows is a fact from the database. There is no sign-in yet, so this is always the
+    demo user and `is_demo_user` says so plainly instead of dressing it up as an
+    account. When auth lands, this endpoint resolves a session and the frontend needs
+    no change.
+    """
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "select id, handle, created_at from users where id = %s",
+            (settings.demo_user_id,),
+        )
+        row = cur.fetchone()
+    if not row:
+        raise HTTPException(500, "configured demo user does not exist — run migrate.py")
+    return Me(**row, is_demo_user=row["id"] == settings.demo_user_id)
 
 
 @app.get("/health", tags=["meta"])

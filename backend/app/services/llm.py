@@ -314,10 +314,15 @@ mid-conversation carries the memory across rather than re-deriving it. A provide
 here is only a way of turning (history + memory) into text.
 """
 
-# Reasoning models emit their scratchpad inline. Qwen on Groq is the one in use,
-# but the pattern is general enough to apply to any provider's output — showing a
-# user the model's internal monologue is never the intent.
-_THINK_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL | re.IGNORECASE)
+# Reasoning models emit their scratchpad inline. Qwen on Groq is the one in use, but
+# the pattern is general enough to apply to any provider's output.
+#
+# This used to be discarded. It is now *separated* instead: the reply and the
+# reasoning come back as two values, so the UI can show the model's actual working
+# rather than a fabricated imitation of it. Only what the model really emitted ever
+# reaches the screen — a provider that emits nothing yields an empty string, and the
+# UI then shows no thinking panel at all rather than inventing one.
+_THINK_RE = re.compile(r"<think>(.*?)</think>\s*", re.DOTALL | re.IGNORECASE)
 
 
 def _memory_block(memory_items: list[dict]) -> str:
@@ -338,19 +343,38 @@ def _memory_block(memory_items: list[dict]) -> str:
     return f"MEMORY\n{lines}"
 
 
+def _split_reasoning(text: str) -> tuple[str, str]:
+    """Return (reply, reasoning). Reasoning is "" when the model emitted none."""
+    thoughts = [m.group(1).strip() for m in _THINK_RE.finditer(text)]
+    reply = _THINK_RE.sub("", text)
+
+    # An unterminated <think> means the model hit its token ceiling mid-thought. The
+    # partial scratchpad is still real and still worth showing; what must not happen
+    # is it being served as the *answer*, so it moves to the reasoning side and the
+    # reply keeps only what preceded it.
+    lowered = reply.lower()
+    if "<think>" in lowered:
+        cut = lowered.index("<think>")
+        thoughts.append(reply[cut + len("<think>") :].strip())
+        reply = reply[:cut]
+
+    return reply.strip(), "\n\n".join(t for t in thoughts if t)
+
+
 def _strip_reasoning(text: str) -> str:
-    text = _THINK_RE.sub("", text)
-    # An unterminated <think> means the model hit its token ceiling mid-thought;
-    # returning the scratchpad would be worse than returning nothing.
-    if "<think>" in text.lower():
-        text = text[: text.lower().index("<think>")]
-    return text.strip()
+    """Reply only. For the paths where the scratchpad is noise, not content —
+    extraction and the verified draft both parse structured output and must never
+    have a monologue prepended to it."""
+    return _split_reasoning(text)[0]
 
 
 def _openai_compatible_chat(
     *, base_url: str, api_key: str, model: str, messages: list[dict], label: str
-) -> str:
-    """Both OpenRouter and Groq speak this; only the host and key differ."""
+) -> tuple[str, str]:
+    """Both OpenRouter and Groq speak this; only the host and key differ.
+
+    Returns (reply, reasoning). Reasoning is "" unless the model actually emitted a
+    <think> block."""
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     if "openrouter" in base_url:
         headers |= {"HTTP-Referer": "http://localhost:3000", "X-Title": "Negotiated AI Memory"}
@@ -366,7 +390,7 @@ def _openai_compatible_chat(
     data = with_retry(call)
     if isinstance(data, dict) and data.get("error"):
         raise RuntimeError(f"{label} error: {data['error'].get('message')}")
-    return _strip_reasoning(_content(data))
+    return _split_reasoning(_content(data))
 
 
 def _gemini_chat(*, api_key: str, model: str, system: str, history: list[dict]) -> str:
@@ -452,26 +476,29 @@ def resolve_provider(provider: str | None) -> str:
 
 def chat_response(
     history: list[dict], memory_items: list[dict], provider: str | None = None
-) -> tuple[str, str, str]:
-    """Answer one turn. Returns (reply, provider_id, model) so the caller can record
-    and display which model actually spoke — necessary because `provider` is a
-    request, not a guarantee (see resolve_provider)."""
+) -> tuple[str, str, str, str]:
+    """Answer one turn.
+
+    Returns (reply, provider_id, model, reasoning). The provider and model are what
+    actually ran, not what was requested (see resolve_provider). `reasoning` is the
+    model's own <think> scratchpad, verbatim, and is "" for the models that emit
+    none — the UI must render nothing in that case rather than substituting a
+    plausible-looking summary."""
     system = CHAT_SYSTEM.format(memory_block=_memory_block(memory_items))
     chosen = resolve_provider(provider)
 
     if chosen == "gemini":
         if not settings.gemini_api_key:
             raise RuntimeError("GEMINI_API_KEY is not set")
-        return (
+        reply, reasoning = _split_reasoning(
             _gemini_chat(
                 api_key=settings.gemini_api_key,
                 model=settings.gemini_chat_model,
                 system=system,
                 history=history,
-            ),
-            "gemini",
-            settings.gemini_chat_model,
+            )
         )
+        return reply, "gemini", settings.gemini_chat_model, reasoning
 
     # OpenAI-compatible roles are already 'user'/'assistant', so unlike Gemini
     # (which needs 'model') the history passes through unmapped.
@@ -484,31 +511,25 @@ def chat_response(
     if chosen == "groq":
         if not settings.groq_api_key:
             raise RuntimeError("GROQ_API_KEY is not set")
-        return (
-            _openai_compatible_chat(
-                base_url=settings.groq_base_url,
-                api_key=settings.groq_api_key,
-                model=settings.groq_chat_model,
-                messages=messages,
-                label="Groq",
-            ),
-            "groq",
-            settings.groq_chat_model,
+        reply, reasoning = _openai_compatible_chat(
+            base_url=settings.groq_base_url,
+            api_key=settings.groq_api_key,
+            model=settings.groq_chat_model,
+            messages=messages,
+            label="Groq",
         )
+        return reply, "groq", settings.groq_chat_model, reasoning
 
     if not settings.llm_api_key:
         raise RuntimeError("LLM_API_KEY is not set")
-    return (
-        _openai_compatible_chat(
-            base_url=settings.llm_base_url,
-            api_key=settings.llm_api_key,
-            model=settings.llm_chat_model,
-            messages=messages,
-            label="OpenRouter",
-        ),
-        "openrouter",
-        settings.llm_chat_model,
+    reply, reasoning = _openai_compatible_chat(
+        base_url=settings.llm_base_url,
+        api_key=settings.llm_api_key,
+        model=settings.llm_chat_model,
+        messages=messages,
+        label="OpenRouter",
     )
+    return reply, "openrouter", settings.llm_chat_model, reasoning
 
 
 # ----------------------------------------------------------------- P6 verified draft
