@@ -69,6 +69,7 @@ import {
   type TurnResponse,
   type VerifiedDraft as VerifiedDraftT,
 } from "@/lib/api";
+import { useAuth } from "@/lib/auth-context";
 
 interface Turn {
   id: string;
@@ -209,6 +210,7 @@ function Workbench() {
 
   // Sidebar chrome: who you are, and the three dialogs it can open.
   const [me, setMe] = useState<Me | null>(null);
+  const { canSignOut, signOut } = useAuth();
   const [deleteTarget, setDeleteTarget] = useState<Chat | null>(null);
   const [profileOpen, setProfileOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -516,7 +518,7 @@ function Workbench() {
         onNew={() => void newSession()}
         onRename={renameSession}
         onDelete={setDeleteTarget}
-        profileLabel={me?.handle ?? null}
+        profileLabel={me?.name ?? me?.email ?? me?.handle ?? null}
         onOpenProfile={() => setProfileOpen(true)}
         onOpenSettings={() => setSettingsOpen(true)}
       />
@@ -1001,6 +1003,7 @@ function Workbench() {
         me={me}
         open={profileOpen}
         onClose={() => setProfileOpen(false)}
+        onSignOut={canSignOut ? () => void signOut() : undefined}
       />
 
       <SettingsDialog

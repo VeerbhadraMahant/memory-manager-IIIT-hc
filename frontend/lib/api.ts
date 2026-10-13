@@ -4,6 +4,8 @@
 // from migrations/001_init.sql. Three places, one vocabulary (CLAUDE.md "Core
 // concepts") — a rename is deliberately a three-file change, not silent drift.
 
+import { getAccessToken, notifyUnauthorized, type AuthConfig } from "@/lib/auth";
+
 export const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:8000";
 
@@ -177,6 +179,9 @@ export interface ChatDeleted {
 export interface Me {
   id: string;
   handle: string;
+  email: string | null;
+  name: string | null;
+  avatar_url: string | null;
   created_at: string;
   is_demo_user: boolean;
 }
@@ -258,11 +263,24 @@ export interface Health {
 }
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers);
+  if (init?.body && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+  // Supabase mode: a fresh access token per request (supabase-js refreshes it).
+  // Google mode: no token here — the session is an HttpOnly cookie, sent below.
+  const token = await getAccessToken();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+
   const res = await fetch(`${API_BASE}${path}`, {
     cache: "no-store",
-    headers: init?.body ? { "Content-Type": "application/json" } : undefined,
+    // Required for the cookie to travel cross-origin (localhost:3000 -> :8000). The
+    // backend allows credentials only for its explicit CORS origin list.
+    credentials: "include",
     ...init,
+    headers,
   });
+  if (res.status === 401) notifyUnauthorized();
   if (!res.ok) {
     let detail = `${res.status} ${res.statusText}`;
     try {
@@ -354,6 +372,16 @@ export const api = {
     post<MemoryItem>("/memory/items", payload),
 
   me: () => req<Me>("/me"),
+
+  // ---- auth. `authConfig` is public; the rest need (or establish) a session.
+  authConfig: () => req<AuthConfig>("/auth/config"),
+  /** Exchanges a Google ID token for the backend's session cookie. */
+  googleSignIn: (credential: string) =>
+    post<{ user: { id: string } }>("/auth/google", { credential }),
+  signOutServer: () => post<{ status: string }>("/auth/logout"),
+  /** Right to portability: everything stored about the caller. */
+  exportData: () => req<Record<string, unknown[]>>("/me/export"),
+  deleteAccount: () => req<{ status: string }>("/me", { method: "DELETE" }),
 
   createChat: (title?: string) => post<Chat>("/chats", { title }),
   chats: () => req<Chat[]>("/chats"),

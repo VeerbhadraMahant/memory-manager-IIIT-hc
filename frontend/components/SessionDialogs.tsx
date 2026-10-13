@@ -115,10 +115,13 @@ export function ProfileDialog({
   me,
   open,
   onClose,
+  onSignOut,
 }: {
   me: Me | null;
   open: boolean;
   onClose: () => void;
+  /** Absent when no one is signed in (demo mode), so the button is not offered. */
+  onSignOut?: () => void;
 }) {
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
@@ -131,7 +134,8 @@ export function ProfileDialog({
         </DialogHeader>
 
         <dl className="space-y-2 px-6">
-          <Field label="Signed in as" value={me?.handle ?? "…"} />
+          <Field label="Signed in as" value={me?.name ?? me?.handle ?? "…"} />
+          {me?.email && <Field label="Email" value={me.email} />}
           <Field label="User id" value={me?.id ?? "…"} mono />
           <Field
             label="Account created"
@@ -141,12 +145,17 @@ export function ProfileDialog({
 
         {me?.is_demo_user && (
           <p className="mt-3 px-6 text-body-sm text-ink-muted">
-            This is the shared demo account. Sign-in is not built yet, so every
-            request acts as this user — which is why there is nothing here to edit.
+            This is the shared demo account. The server is not requiring sign-in, so
+            every request acts as this user — which is why there is nothing here to edit.
           </p>
         )}
 
         <DialogFooter>
+          {onSignOut && (
+            <Button variant="outlineInk" onClick={onSignOut}>
+              Sign out
+            </Button>
+          )}
           <Button variant="outlineInk" onClick={onClose}>
             Close
           </Button>

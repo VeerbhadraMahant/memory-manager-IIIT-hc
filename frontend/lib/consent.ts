@@ -23,7 +23,19 @@
 
 import { useCallback, useSyncExternalStore } from "react";
 
-const CONSENT_KEY = "nam.memory-consent";
+import { useAuth } from "@/lib/auth-context";
+
+// Per user, not per browser. This used to be one global key, so on a shared browser the
+// second person to sign in silently inherited the first person's answer — consent they
+// were never asked for. The key now carries the account id (from the auth gate, which
+// only renders the app once it knows who is signed in), so each account is asked once
+// and a decision never crosses accounts.
+//
+// Limits worth knowing: it is still browser storage, so a new device asks again (the
+// safe direction), and the backend never sees it — the opt-in is honoured by the client
+// (composer defaults to off-the-record when declined), not enforced server-side.
+const LEGACY_KEY = "nam.memory-consent";
+const keyFor = (userId: string) => `${LEGACY_KEY}:${userId}`;
 
 /** `null` means the user has not been asked yet. */
 export type MemoryConsent = "accepted" | "declined" | null;
@@ -40,8 +52,13 @@ function subscribe(onChange: () => void) {
   };
 }
 
-function read(): MemoryConsent {
-  const raw = window.localStorage.getItem(CONSENT_KEY);
+function read(userId: string, isDemo: boolean): MemoryConsent {
+  // The un-keyed value from before this change cannot be attributed to a person, so it
+  // is honoured only for the shared demo account — which is where it came from when
+  // there was no sign-in — and never for a real account.
+  const raw =
+    window.localStorage.getItem(keyFor(userId)) ??
+    (isDemo ? window.localStorage.getItem(LEGACY_KEY) : null);
   return raw === "accepted" || raw === "declined" ? raw : null;
 }
 
@@ -53,12 +70,20 @@ export function useMemoryConsent(): [
   MemoryConsent,
   (next: Exclude<MemoryConsent, null>) => void,
 ] {
-  const consent = useSyncExternalStore(subscribe, read, serverSnapshot);
+  const { userId, isDemo } = useAuth();
+  const consent = useSyncExternalStore(
+    subscribe,
+    () => read(userId, isDemo),
+    serverSnapshot,
+  );
 
-  const set = useCallback((next: Exclude<MemoryConsent, null>) => {
-    window.localStorage.setItem(CONSENT_KEY, next);
-    notify();
-  }, []);
+  const set = useCallback(
+    (next: Exclude<MemoryConsent, null>) => {
+      window.localStorage.setItem(keyFor(userId), next);
+      notify();
+    },
+    [userId],
+  );
 
   return [consent, set];
 }
