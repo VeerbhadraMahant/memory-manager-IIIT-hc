@@ -32,6 +32,20 @@ to the database directly; it never calls Supabase's REST API.
    * **Google Identity Services** — set `GOOGLE_CLIENT_ID` and `SESSION_SECRET`; the frontend posts
      the Google ID token to `POST /auth/google` and receives a session token (also set as an
      HttpOnly cookie). `GET /auth/config` tells the frontend which is enabled.
+   **Frontend side** — the UI asks the backend (`GET /auth/config`) what is required, so there is
+   nothing to hard-code:
+   * `auth_required=false` → the app opens straight away as the demo user (no sign-in screen).
+   * Supabase → set `NEXT_PUBLIC_SUPABASE_ANON_KEY` for the frontend and, in the Supabase dashboard,
+     add your frontend URL to *Authentication → URL Configuration* (Site URL and Redirect URLs) and
+     enable the Google provider. Sessions use PKCE and auto-refresh; each request carries
+     `Authorization: Bearer <access_token>`.
+   * Google → no frontend env needed; the button comes from `GOOGLE_CLIENT_ID`. Add the frontend
+     origin to the OAuth client's *Authorized JavaScript origins*. The session is an HttpOnly cookie
+     (`credentials: "include"`), so no credential is readable from JavaScript. If the frontend and
+     API are on different *sites* (not just ports), set `SESSION_COOKIE_SAMESITE=none` on the API,
+     which also forces `Secure`.
+   * Supabase wins if both are configured and the anon key is set; a 401 at any time returns the
+     user to the sign-in screen.
 6. Migration `002` creates a shared demo user. In production it is unreachable (auth is
    required); delete it if you prefer: `delete from users where handle = 'demo';`.
 

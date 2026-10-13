@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Hanken_Grotesk, Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
+import { AuthGate } from "@/components/AuthGate";
 
 // §1 type. Three families, three jobs, no overlap — JetBrains in particular is
 // load-bearing: mono means "the machine generated this", so it carries
@@ -57,7 +58,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         >
           Skip to the memory workspace
         </a>
-        {children}
+        <AuthGate>{children}</AuthGate>
       </body>
     </html>
   );
