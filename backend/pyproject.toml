@@ -1,0 +1,19 @@
+[tool.ruff]
+line-length = 110
+target-version = "py313"
+extend-exclude = ["tests/_unused"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S"]
+ignore = [
+  "E501",   # long lines: comments here are deliberately prose
+  "S608",   # f-string SQL: only column/clause names built from constants, values are bound
+  "B008",   # FastAPI's Depends() in defaults is the framework idiom
+  "S101",   # assert is fine in tests and invariants
+  "S311",   # random.uniform is retry jitter, not cryptography
+  "UP042",  # str+Enum mirrors the DB enums; StrEnum would change str()/format output
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S", "B", "E402", "I001"]
+"scripts/*" = ["S", "E402"]

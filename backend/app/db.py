@@ -10,12 +10,29 @@ from app.config import settings
 
 # Supabase sits across the network, so a pool matters more than it would locally —
 # a fresh TLS handshake per request is ~100ms we would pay on every chat turn.
+#
+# statement_timeout bounds a runaway query instead of letting it hold a pooled
+# connection (and a worker thread) indefinitely.
+_kwargs: dict = {
+    "row_factory": dict_row,
+    "options": f"-c statement_timeout={settings.db_statement_timeout_ms}",
+}
+if settings.db_disable_prepared_statements:
+    # Required behind PgBouncer / Supabase's transaction pooler (port 6543).
+    _kwargs["prepare_threshold"] = None
+
 pool = ConnectionPool(
-    conninfo=settings.database_url,
-    min_size=1,
-    max_size=8,
+    conninfo=settings.dsn,
+    min_size=settings.db_pool_min,
+    max_size=settings.db_pool_max,
+    timeout=settings.db_pool_timeout_s,
+    # Recycle so a connection silently dropped by a pooler or NAT is replaced rather
+    # than handed out dead.
+    max_lifetime=1800,
+    max_idle=300,
+    check=ConnectionPool.check_connection,
     open=False,
-    kwargs={"row_factory": dict_row},
+    kwargs=_kwargs,
 )
 
 
@@ -30,7 +47,13 @@ def get_cursor(commit: bool = False) -> Iterator:
 
 
 def db_cursor() -> Iterator:
-    """FastAPI dependency — read-only by default; writes commit explicitly."""
+    """FastAPI dependency. The pooled connection commits on a clean exit and rolls back
+    on an exception, so a handler that raises HTTPException halfway never leaves a
+    partial write behind.
+
+    Do not hold this across an LLM call on a hot path — see `get_cursor` and the turn
+    handler, which take short-lived connections around the network calls instead.
+    """
     with pool.connection() as conn:
         with conn.cursor() as cur:
             yield cur

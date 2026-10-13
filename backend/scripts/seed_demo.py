@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import psycopg
@@ -40,7 +40,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.config import settings  # noqa: E402
 from app.services import llm  # noqa: E402
 
-NOW = datetime.now(timezone.utc)
+NOW = datetime.now(UTC)
 
 # (content, block, source_type, status, sensitivity, confidence, review_state,
 #  last_confirmed_days_ago)
@@ -121,7 +121,7 @@ def main() -> int:
 
     user = str(settings.demo_user_id)
 
-    with psycopg.connect(settings.database_url, row_factory=dict_row) as conn:
+    with psycopg.connect(settings.dsn, row_factory=dict_row) as conn:
         with conn.cursor() as cur:
             if not args.yes and not confirm(cur):
                 print("aborted.")
@@ -160,7 +160,7 @@ def main() -> int:
 
             vectors = llm.embed([s[0] for s in SEED])
 
-            user_turns = [m for m, (role, _) in zip(message_ids, TRANSCRIPT) if role == "user"]
+            user_turns = [m for m, (role, _) in zip(message_ids, TRANSCRIPT, strict=False) if role == "user"]
             for i, (row, vec) in enumerate(zip(SEED, vectors, strict=True)):
                 content, block, source, status, sens, conf, review, days = row
                 cur.execute(

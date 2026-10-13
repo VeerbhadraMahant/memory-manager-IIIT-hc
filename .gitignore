@@ -114,3 +114,6 @@ gemini_quickstarts.md
 /*.jpeg
 /*.jpg
 /*.png
+# --- deployment secrets (docker secrets files) ---
+/deploy/secrets/*
+!/deploy/secrets/README.md

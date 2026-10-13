@@ -38,26 +38,56 @@ TOP_K = 8
 # rather than injected.
 TRACE_K = 14
 
+# Exact search over the caller's own rows, deliberately not the HNSW index.
+#
+# `where user_id = ...` on an `order by embedding <=> q limit k` query lets the planner
+# walk the HNSW graph *globally* and filter afterwards. With many users that returns the
+# nearest few dozen vectors in the whole table, most belonging to other people, and the
+# filter then leaves this user with too few rows or none — wrong answers with no error.
+# A per-user store is small (hundreds to low thousands), so the MATERIALIZED CTE
+# restricts to the user via the btree first and ranks exactly. Correct at any tenant
+# count, and faster than a global ANN scan at this size.
 RETRIEVE_SQL = """
-select mi.id, mi.content, mi.status, mi.scope, mi.sensitivity, mi.source_type,
+with mine as materialized (
+  select mi.id, mi.content, mi.status, mi.scope, mi.sensitivity, mi.source_type,
+         mi.block_id, mi.embedding, mi.last_confirmed_at, mi.created_at
+  from memory_items mi
+  where mi.user_id = %s
+    and mi.deleted_at is null
+    and mi.review_state in ('accepted', 'auto_accepted')
+    and mi.embedding is not null
+    and (mi.scope = 'persistent' or mi.session_chat_id = %s)
+)
+select m.id, m.content, m.status, m.scope, m.sensitivity, m.source_type,
        b.name as block_name,
        coalesce(b.private, false) as block_private,
-       mi.embedding <=> %s::vector as distance,
+       m.embedding <=> %s::vector as distance,
        -- P6 decay: something the user was in the middle of months ago is not
        -- evidence that they still are. Only in_progress decays — a completed fact
        -- does not become less true with time.
+       (m.status = 'in_progress'
+        and coalesce(m.last_confirmed_at, m.created_at)
+            < now() - make_interval(days => %s)) as is_stale
+from mine m
+left join blocks b on b.id = m.block_id
+order by distance
+limit %s
+"""
+
+PINNED_SQL = """
+select mi.id, mi.content, mi.status, mi.scope, mi.sensitivity, mi.source_type,
+       b.name as block_name, coalesce(b.private, false) as block_private,
+       0.0 as distance,
        (mi.status = 'in_progress'
         and coalesce(mi.last_confirmed_at, mi.created_at)
             < now() - make_interval(days => %s)) as is_stale
 from memory_items mi
 left join blocks b on b.id = mi.block_id
-where mi.user_id = %s
+where mi.id = any(%s)
+  and mi.user_id = %s
   and mi.deleted_at is null
   and mi.review_state in ('accepted', 'auto_accepted')
-  and mi.embedding is not null
   and (mi.scope = 'persistent' or mi.session_chat_id = %s)
-order by distance
-limit %s
 """
 
 # Counted separately so the trace can distinguish "nothing matched" from "things
@@ -119,22 +149,32 @@ class RetrievalTrace:
         }
 
 
+def embed_query(query: str) -> list[float] | None:
+    """Embed a retrieval query, or None on failure. Split out of `retrieve_traced` so
+    callers can do this network call *before* taking a database connection."""
+    try:
+        return llm.embed([query])[0]
+    except Exception:
+        # A failed embedding should cost the response its memory, not its existence.
+        log.exception("embedding failed during retrieval; answering without memory")
+        return None
+
+
 def retrieve_traced(
-    cur, user_id: str, chat_id: str, query: str, exclude: set[str] | None = None
+    cur, user_id: str, chat_id: str, query: str, exclude: set[str] | None = None,
+    vec: list[float] | None = None,
 ) -> tuple[list[dict], RetrievalTrace]:
     """The rows to inject, plus the record of how they were chosen."""
     trace = RetrievalTrace(query=query)
 
-    try:
-        vec = llm.embed([query])[0]
-    except Exception:
-        # A failed embedding should cost the response its memory, not its existence.
-        log.exception("embedding failed during retrieval; answering without memory")
+    if vec is None:
+        vec = embed_query(query)
+    if vec is None:
         trace.embedding_failed = True
         return [], trace
 
     cur.execute(
-        RETRIEVE_SQL, (str(vec), settings.stale_after_days, user_id, chat_id, TRACE_K)
+        RETRIEVE_SQL, (user_id, chat_id, str(vec), settings.stale_after_days, TRACE_K)
     )
     ranked = cur.fetchall()
 
@@ -182,11 +222,31 @@ def retrieve_traced(
 
 
 def retrieve(
-    cur, user_id: str, chat_id: str, query: str, exclude: set[str] | None = None
+    cur, user_id: str, chat_id: str, query: str, exclude: set[str] | None = None,
+    vec: list[float] | None = None,
 ) -> list[dict]:
     """Rows only. Kept so callers that do not surface a trace stay unchanged."""
-    rows, _ = retrieve_traced(cur, user_id, chat_id, query, exclude)
+    rows, _ = retrieve_traced(cur, user_id, chat_id, query, exclude, vec)
     return rows
+
+
+def pinned(
+    cur, user_id: str, chat_id: str, query: str, ids: list[str]
+) -> tuple[list[dict], RetrievalTrace]:
+    """The user hand-picked these memories for the turn.
+
+    Pinning chooses *among* what is eligible; it does not widen eligibility. The old
+    inline query skipped the owner check, the tombstone check, review state, session
+    scope and the private-block rule — so a pinned id could put another user's row,
+    a deleted memory, or a private block's contents into the prompt. The same rules as
+    `retrieve` apply here, and the private-block withholding is counted in the trace.
+    """
+    cur.execute(PINNED_SQL, (settings.stale_after_days, ids, user_id, chat_id))
+    rows = cur.fetchall()
+    allowed = [r for r in rows if not r["block_private"]]
+    trace = pinned_trace(query, allowed)
+    trace.withheld_private = len(rows) - len(allowed)
+    return allowed, trace
 
 
 def pinned_trace(query: str, rows: list[dict]) -> RetrievalTrace:

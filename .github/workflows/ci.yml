@@ -1,0 +1,53 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: nam
+          POSTGRES_PASSWORD: nam
+          POSTGRES_DB: nam_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U nam -d nam_test" --health-interval 5s
+          --health-timeout 3s --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql://nam:nam@127.0.0.1:5432/nam_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: backend/requirements.lock
+      - name: Install
+        working-directory: backend
+        run: pip install -r requirements.lock pytest ruff
+      - name: Lint
+        working-directory: backend
+        run: ruff check .
+      - name: Tests (real Postgres + pgvector, LLM mocked)
+        working-directory: backend
+        run: pytest -q
+      - name: Build the production image
+        working-directory: backend
+        run: docker build -t nam-backend:ci .
+      - name: Image boots, migrates and reports ready
+        run: |
+          docker run -d --name nam --network host \
+            -e DATABASE_URL="$TEST_DATABASE_URL" -e LLM_API_KEY=ci-placeholder-key \
+            -e ENVIRONMENT=development -e RUN_MIGRATIONS=true -e LOG_JSON=false \
+            nam-backend:ci
+          for i in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:8000/readyz && exit 0
+            sleep 1
+          done
+          docker logs nam
+          exit 1

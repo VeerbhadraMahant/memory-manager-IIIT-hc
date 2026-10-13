@@ -42,7 +42,7 @@ def main() -> int:
 
     print("\nSeeded blocks")
     blocks = c.get(f"{BASE}/memory/blocks").json()
-    check("five blocks", len(blocks), 5)
+    check("nine blocks", len(blocks), 9)
     check("fallback is most restrictive", blocks[0]["name"], "unclassified")
     check("fallback flagged", blocks[0]["is_fallback"], True)
 
@@ -114,11 +114,11 @@ def main() -> int:
     check("confirm -> 200, built in P6",
           c.post(f"{BASE}/memory/items/{item['id']}/confirm").status_code, 200)
 
-    print("\nUnbuilt routes announce themselves")
-    check("delete -> 501 not 404",
-          c.delete(f"{BASE}/memory/items/{item['id']}").status_code, 501)
-    check("graph -> 501 not 404",
-          c.get(f"{BASE}/memory/items/{item['id']}/graph").status_code, 501)
+    print("\nEvery route is built")
+    check("graph -> 200",
+          c.get(f"{BASE}/memory/items/{item['id']}/graph").status_code, 200)
+    check("delete -> 200, executes the cascade preview",
+          c.delete(f"{BASE}/memory/items/{item['id']}").status_code, 200)
 
     if failures:
         print(f"\n{len(failures)} FAILED: {', '.join(failures)}")

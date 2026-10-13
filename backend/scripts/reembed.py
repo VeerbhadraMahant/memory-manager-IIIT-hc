@@ -36,7 +36,7 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true", help="report what would change, write nothing")
     args = ap.parse_args()
 
-    with psycopg.connect(settings.database_url, row_factory=dict_row, connect_timeout=15) as conn:
+    with psycopg.connect(settings.dsn, row_factory=dict_row, connect_timeout=15) as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """select id, content from memory_items
