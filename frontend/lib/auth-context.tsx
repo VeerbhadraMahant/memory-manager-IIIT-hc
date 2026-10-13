@@ -43,12 +43,18 @@ const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
 type State =
   | { status: "loading" }
-  | { status: "ready"; mode: AuthMode }
+  | { status: "ready"; mode: AuthMode; userId: string; isDemo: boolean }
   | { status: "signed_out"; mode: Exclude<AuthMode, "none">; config: AuthConfig; error?: string }
   | { status: "misconfigured"; message: string };
 
 export interface AuthContextValue {
   mode: AuthMode;
+  /** Who is acting. The app renders only once this is known, so per-user state (the
+   *  memory-consent decision, see lib/consent.ts) can be keyed by it from the first
+   *  render instead of being read under the wrong identity and corrected later. */
+  userId: string;
+  /** The shared demo account rather than a real sign-in. */
+  isDemo: boolean;
   /** True when a real account (not the shared demo user) is signed in. */
   canSignOut: boolean;
   signOut: () => Promise<void>;
@@ -56,6 +62,8 @@ export interface AuthContextValue {
 
 const Ctx = createContext<AuthContextValue>({
   mode: "none",
+  userId: "unknown",
+  isDemo: false,
   canSignOut: false,
   signOut: async () => {},
 });
@@ -74,6 +82,12 @@ async function getSupabase(url: string): Promise<SupabaseClient> {
     });
   }
   return supabaseClient;
+}
+
+/** Identity for modes where the backend, not the client, knows who we are. */
+async function identify(): Promise<{ userId: string; isDemo: boolean }> {
+  const me = await api.me();
+  return { userId: me.id, isDemo: me.is_demo_user };
 }
 
 function pickMode(cfg: AuthConfig): { mode: Exclude<AuthMode, "none"> | null; why?: string } {
@@ -127,14 +141,15 @@ export function AuthProvider({
         // Backend down, or an older backend with no /auth/config. Do not block on it:
         // the page's own boot reports "backend unreachable" far more usefully than a
         // blank gate would.
-        if (!cancelled) setState({ status: "ready", mode: "none" });
+        if (!cancelled) setState({ status: "ready", mode: "none", userId: "unknown", isDemo: false });
         return;
       }
       if (cancelled) return;
       cfgRef.current = cfg;
 
       if (!cfg.auth_required) {
-        setState({ status: "ready", mode: "none" });
+        const who = await identify().catch(() => ({ userId: "unknown", isDemo: false }));
+        if (!cancelled) setState({ status: "ready", mode: "none", ...who });
         return;
       }
 
@@ -148,23 +163,29 @@ export function AuthProvider({
       if (mode === "supabase") {
         const sb = await getSupabase(cfg.supabase_url!);
         setTokenSource(async () => (await sb.auth.getSession()).data.session?.access_token ?? null);
+        // Token refreshes also fire this; keep the same state object when the user has
+        // not changed so a refresh does not re-render the whole app.
+        const ready = (userId: string): State => ({ status: "ready", mode: "supabase", userId, isDemo: false });
         const { data } = sb.auth.onAuthStateChange((_event, session) => {
           if (cancelled) return;
-          if (session) setState({ status: "ready", mode: "supabase" });
-          else toSignedOut();
+          if (session) {
+            setState((prev) =>
+              prev.status === "ready" && prev.userId === session.user.id ? prev : ready(session.user.id),
+            );
+          } else toSignedOut();
         });
         unsubscribe = () => data.subscription.unsubscribe();
         const { data: s } = await sb.auth.getSession();
         if (cancelled) return;
-        if (s.session) setState({ status: "ready", mode: "supabase" });
+        if (s.session) setState(ready(s.session.user.id));
         else toSignedOut();
         return;
       }
 
       // Google: the session is a cookie we cannot inspect, so ask the backend.
       try {
-        await api.me();
-        if (!cancelled) setState({ status: "ready", mode: "google" });
+        const who = await identify();
+        if (!cancelled) setState({ status: "ready", mode: "google", ...who });
       } catch {
         if (!cancelled) toSignedOut();
       }
@@ -188,7 +209,7 @@ export function AuthProvider({
     async (credential: string) => {
       try {
         await api.googleSignIn(credential);
-        setState({ status: "ready", mode: "google" });
+        setState({ status: "ready", mode: "google", ...(await identify()) });
       } catch (e) {
         toSignedOut(e instanceof Error ? e.message : "Sign-in failed.");
       }
@@ -221,6 +242,8 @@ export function AuthProvider({
   const value = useMemo<AuthContextValue>(
     () => ({
       mode: state.status === "ready" ? state.mode : "none",
+      userId: state.status === "ready" ? state.userId : "unknown",
+      isDemo: state.status === "ready" && state.isDemo,
       canSignOut: state.status === "ready" && state.mode !== "none",
       signOut,
     }),
