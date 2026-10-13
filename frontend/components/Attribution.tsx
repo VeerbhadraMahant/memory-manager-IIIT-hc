@@ -64,7 +64,7 @@ export function AttributionChips({
             "meta min-h-11 rounded-pill px-3 ring-1 transition-colors duration-[var(--motion-micro)]",
             highlighted
               ? "bg-accent-dim text-accent ring-accent/40"
-              : "bg-black/5 text-ink-invert-muted ring-outline hover:text-ink-invert",
+              : "bg-ink-invert/[0.06] text-ink-invert-muted ring-outline hover:text-ink-invert",
           )}
         >
           {highlighted ? "clear highlight" : "show in graph"}

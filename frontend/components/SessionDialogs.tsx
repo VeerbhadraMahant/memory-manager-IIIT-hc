@@ -8,9 +8,9 @@
 // from a list row.
 
 import { useState } from "react";
-import { Loader2, Trash2 } from "lucide-react";
+import { Download, Loader2, Trash2 } from "lucide-react";
 
-import type { Chat, ChatDeleted, Me } from "@/lib/api";
+import { api, type Chat, type ChatDeleted, type Me } from "@/lib/api";
 import { useMemoryConsent } from "@/lib/consent";
 import { Button } from "@/components/ui/button";
 import {
@@ -123,9 +123,58 @@ export function ProfileDialog({
   /** Absent when no one is signed in (demo mode), so the button is not offered. */
   onSignOut?: () => void;
 }) {
+  const [busy, setBusy] = useState<"export" | "delete" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const [typed, setTyped] = useState("");
+
+  // The shared demo account cannot be erased (the server refuses with 403), and exporting
+  // it would hand out other demo users' data, so neither is offered.
+  const ownAccount = !!me && !me.is_demo_user;
+
+  const close = () => {
+    setConfirming(false);
+    setTyped("");
+    setError(null);
+    onClose();
+  };
+
+  const exportData = async () => {
+    setBusy("export");
+    setError(null);
+    try {
+      const data = await api.exportData();
+      const url = URL.createObjectURL(
+        new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }),
+      );
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "negotiated-memory-export.json";
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Export failed.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const deleteAccount = async () => {
+    setBusy("delete");
+    setError(null);
+    try {
+      await api.deleteAccount();
+      close();
+      onSignOut?.();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Deleting the account failed.");
+      setBusy(null);
+    }
+  };
+
   return (
-    <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
-      <DialogContent>
+    <Dialog open={open} onOpenChange={(next) => !next && close()}>
+      <DialogContent accent={confirming ? "danger" : undefined}>
         <DialogHeader>
           <DialogTitle>Profile</DialogTitle>
           <DialogDescription>
@@ -150,13 +199,90 @@ export function ProfileDialog({
           </p>
         )}
 
+        {ownAccount && (
+          <div className="mt-5 space-y-3 px-6">
+            <div className="flex items-center justify-between gap-3 border-t border-outline-ink pt-4">
+              <p className="text-body-sm text-ink-muted">
+                Everything stored about you — chats, memories, child notes and the audit
+                trail — as one JSON file.
+              </p>
+              <Button variant="outlineInk" size="sm" onClick={exportData} disabled={busy !== null}>
+                {busy === "export" ? (
+                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                ) : (
+                  <Download className="size-4" aria-hidden="true" />
+                )}
+                Download
+              </Button>
+            </div>
+
+            {!confirming ? (
+              <div className="flex items-center justify-between gap-3 border-t border-outline-ink pt-4">
+                <p className="text-body-sm text-ink-muted">
+                  Permanently erase your account and everything in it.
+                </p>
+                <Button variant="dangerInk" size="sm" onClick={() => setConfirming(true)} disabled={busy !== null}>
+                  <Trash2 className="size-4" aria-hidden="true" />
+                  Delete account
+                </Button>
+              </div>
+            ) : (
+              <div className="space-y-3 border-t border-outline-ink pt-4" role="group" aria-label="Confirm account deletion">
+                <p className="text-body-sm text-ink">
+                  This cannot be undone. Unlike deleting a single memory, nothing is kept as a
+                  tombstone — your chats, memories and audit trail are erased. Download your data
+                  first if you want a copy.
+                </p>
+                <label className="block text-body-sm text-ink-muted" htmlFor="confirm-delete">
+                  Type <span className="font-mono text-ink">delete</span> to confirm
+                </label>
+                <input
+                  id="confirm-delete"
+                  value={typed}
+                  onChange={(e) => setTyped(e.target.value)}
+                  autoComplete="off"
+                  className="min-h-11 w-full rounded-input border border-outline-ink bg-sunken px-3 text-body-sm text-ink"
+                />
+                <div className="flex gap-2">
+                  <Button
+                    variant="dangerInk"
+                    size="sm"
+                    onClick={deleteAccount}
+                    disabled={typed.trim().toLowerCase() !== "delete" || busy !== null}
+                  >
+                    {busy === "delete" && <Loader2 className="size-4 animate-spin" aria-hidden="true" />}
+                    Delete everything
+                  </Button>
+                  <Button
+                    variant="ghostInk"
+                    size="sm"
+                    onClick={() => {
+                      setConfirming(false);
+                      setTyped("");
+                    }}
+                    disabled={busy !== null}
+                  >
+                    Keep my account
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {error && (
+              <p role="alert" className="text-body-sm text-danger-ink">
+                {error}
+              </p>
+            )}
+          </div>
+        )}
+
         <DialogFooter>
           {onSignOut && (
             <Button variant="outlineInk" onClick={onSignOut}>
               Sign out
             </Button>
           )}
-          <Button variant="outlineInk" onClick={onClose}>
+          <Button variant="outlineInk" onClick={close}>
             Close
           </Button>
         </DialogFooter>

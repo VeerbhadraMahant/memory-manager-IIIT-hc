@@ -71,7 +71,7 @@ export function SuggestionCards({ onPick }: { onPick: (prompt: string) => void }
               // (checked directly against the AX node, not assumed) rather
               // than concatenating them, so the label is spelled out here.
               aria-label={`${beat.title}. ${beat.body}`}
-              className="flex w-full flex-col items-start gap-1.5 rounded-card border border-outline bg-raised p-4 text-left transition-colors duration-[var(--motion-micro)] hover:border-outline-strong hover:bg-sunken"
+              className="flex w-full flex-col items-start gap-1.5 rounded-card border border-outline bg-raised p-4 text-left transition-colors duration-[var(--motion-micro)] hover:border-outline-strong hover:bg-ink-invert/[0.05]"
             >
               <beat.icon className="size-5 text-accent" aria-hidden="true" />
               <span className="text-body-md font-medium text-ink-invert">

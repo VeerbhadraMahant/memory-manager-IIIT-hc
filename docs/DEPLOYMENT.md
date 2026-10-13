@@ -36,7 +36,7 @@ to the database directly; it never calls Supabase's REST API.
    nothing to hard-code:
    * `auth_required=false` → the app opens straight away as the demo user (no sign-in screen).
    * Supabase → set `NEXT_PUBLIC_SUPABASE_ANON_KEY` for the frontend and, in the Supabase dashboard,
-     add your frontend URL to *Authentication → URL Configuration* (Site URL and Redirect URLs) and
+     add your frontend URL to *Authentication → URL Configuration* (Site URL, and Redirect URLs including `https://<frontend>/app` — the app sends users back to `/app` after the OAuth round trip) and
      enable the Google provider. Sessions use PKCE and auto-refresh; each request carries
      `Authorization: Bearer <access_token>`.
    * Google → no frontend env needed; the button comes from `GOOGLE_CLIENT_ID`. Add the frontend
@@ -44,6 +44,10 @@ to the database directly; it never calls Supabase's REST API.
      (`credentials: "include"`), so no credential is readable from JavaScript. If the frontend and
      API are on different *sites* (not just ports), set `SESSION_COOKIE_SAMESITE=none` on the API,
      which also forces `Secure`.
+   * Deleting an account from the profile dialog erases everything the *app* stores. With Supabase the
+     sign-in identity itself lives in Supabase Auth and is not removed by it; delete that user in the
+     Supabase dashboard if you also want the login gone (otherwise signing in again creates a fresh,
+     empty account).
    * Supabase wins if both are configured and the anon key is set; a 401 at any time returns the
      user to the sign-in screen.
 6. Migration `002` creates a shared demo user. In production it is unreachable (auth is

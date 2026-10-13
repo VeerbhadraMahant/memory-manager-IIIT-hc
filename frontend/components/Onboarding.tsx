@@ -271,7 +271,7 @@ function StepConsent({
           <button
             type="button"
             onClick={() => onDecide(false)}
-            className="flex flex-col items-start gap-1 rounded-input border border-outline-ink p-3 text-left transition-colors duration-[var(--motion-micro)] hover:bg-black/[0.03]"
+            className="flex flex-col items-start gap-1 rounded-input border border-outline-ink p-3 text-left transition-colors duration-[var(--motion-micro)] hover:bg-ink-invert/[0.05]"
           >
             <span className="flex items-center gap-2 text-body-sm font-medium text-ink">
               <EyeOff className="size-4 shrink-0" aria-hidden="true" />
@@ -359,7 +359,7 @@ export function Onboarding({
               key={s}
               className={cn(
                 "h-1 flex-1 rounded-pill transition-colors duration-[var(--motion-state)]",
-                s <= step ? "bg-accent" : "bg-black/10",
+                s <= step ? "bg-accent" : "bg-ink-invert/[0.16]",
               )}
             />
           ))}

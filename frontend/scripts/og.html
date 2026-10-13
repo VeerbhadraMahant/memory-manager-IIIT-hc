@@ -1,0 +1,19 @@
+<!doctype html>
+<!-- Social card, 1200x630. Render with Chromium at that viewport and save as
+     public/brand/og.png:
+       chromium --headless --screenshot=public/brand/og.png --window-size=1200,630 file://$PWD/scripts/og.html
+     Uses the same hero art and type as the landing page. -->
+<meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;500;700&display=swap" rel="stylesheet">
+<style>
+  html, body { margin: 0; width: 1200px; height: 630px; overflow: hidden; }
+  body { background: #e4cbf2 url("../public/brand/hero.svg") right bottom / cover no-repeat; font-family: Poppins, system-ui, sans-serif; color: #1a1a1a; position: relative; }
+  .brand { position: absolute; left: 72px; top: 56px; display: flex; align-items: center; gap: 14px; font-weight: 500; font-size: 22px; }
+  .brand img { width: 40px; height: 40px; }
+  h1 { position: absolute; left: 72px; top: 170px; margin: 0; width: 600px; font-weight: 300; font-size: 60px; line-height: 1.05; }
+  h1 b { font-weight: 700; }
+  p { position: absolute; left: 72px; top: 440px; width: 520px; margin: 0; font-weight: 300; font-size: 24px; line-height: 1.4; color: #1a1a1a; }
+</style>
+<div class="brand"><img src="../public/brand/mark.svg" alt="">Negotiated AI Memory</div>
+<h1>Memory that is <b>agreed</b>, not silently piled up.</h1>
+<p>See what is remembered as it forms, correct it, and keep it to one conversation.</p>

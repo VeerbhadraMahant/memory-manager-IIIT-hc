@@ -31,8 +31,8 @@ export default function GraphPage() {
       <div className="mx-auto flex h-dvh w-full max-w-[1600px] flex-col px-4 py-4 md:px-8">
         <header className="mb-4 flex shrink-0 items-center gap-3">
           <Link
-            href="/"
-            className="tap inline-flex items-center gap-1.5 rounded-input px-2 text-body-sm text-ink-invert-muted hover:bg-raised hover:text-ink-invert"
+            href="/app"
+            className="tap inline-flex items-center gap-1.5 rounded-input px-2 text-body-sm text-ink-invert-muted hover:bg-ink-invert/[0.08] hover:text-ink-invert"
           >
             <ArrowLeft className="size-4 shrink-0" aria-hidden="true" />
             Back to conversation

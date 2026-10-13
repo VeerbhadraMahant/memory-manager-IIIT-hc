@@ -223,7 +223,7 @@ export function AuthProvider({
     const sb = await getSupabase(cfg.supabase_url);
     const { error } = await sb.auth.signInWithOAuth({
       provider: "google",
-      options: { redirectTo: window.location.origin },
+      options: { redirectTo: `${window.location.origin}/app` },
     });
     if (error) toSignedOut(error.message);
   }, [toSignedOut]);

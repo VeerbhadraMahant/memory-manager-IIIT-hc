@@ -137,7 +137,7 @@ function PreviewBody({
         </DialogHeader>
 
         <div className="px-6">
-          <p className="rounded-input border border-outline-ink bg-black/[0.03] p-3 text-body-md text-ink">
+          <p className="rounded-input border border-outline-ink bg-ink-invert/[0.04] p-3 text-body-md text-ink">
             {item.content}
           </p>
 

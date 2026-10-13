@@ -59,7 +59,7 @@ export function DraftPanel({
       </h3>
 
       <div className="px-4 py-4">
-        <p className="measure whitespace-pre-wrap rounded-input border border-outline-ink bg-black/[0.03] p-3 text-body-md text-ink">
+        <p className="measure whitespace-pre-wrap rounded-input border border-outline-ink bg-ink-invert/[0.04] p-3 text-body-md text-ink">
           {draft.draft}
         </p>
 

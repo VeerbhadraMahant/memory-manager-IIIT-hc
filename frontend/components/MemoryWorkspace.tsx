@@ -209,7 +209,7 @@ export function MemoryWorkspace({
               // tab", the one thing a screen-reader user most needs warned
               // about before this link fires. aria-label is what actually wins.
               aria-label="View memory graph — opens in a new tab"
-              className="tap inline-flex items-center gap-1.5 rounded-input px-2 text-body-sm text-ink-invert-muted hover:bg-raised hover:text-ink-invert"
+              className="tap inline-flex items-center gap-1.5 rounded-input px-2 text-body-sm text-ink-invert-muted hover:bg-ink-invert/[0.08] hover:text-ink-invert"
             >
               <ExternalLink className="size-4 shrink-0" aria-hidden="true" />
               View memory graph
@@ -297,7 +297,7 @@ function ViewTab({
       className={cn(
         "inline-flex min-h-11 items-center gap-2 rounded-pill px-4 text-body-sm font-medium transition-colors duration-[var(--motion-micro)]",
         active
-          ? "bg-accent text-white"
+          ? "bg-accent-dim text-accent"
           : "text-ink-invert-muted hover:text-ink-invert",
       )}
     >

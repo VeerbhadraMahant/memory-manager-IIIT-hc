@@ -367,7 +367,7 @@ function Row({
             className="min-w-0 flex-1"
           >
             <summary
-              className="tap flex cursor-pointer list-none flex-col gap-1.5 rounded-input px-2 py-2 marker:hidden hover:bg-black/[0.04] [&::-webkit-details-marker]:hidden"
+              className="tap flex cursor-pointer list-none flex-col gap-1.5 rounded-input px-2 py-2 marker:hidden hover:bg-ink-invert/[0.06] [&::-webkit-details-marker]:hidden"
               // The full sentence, so a screen reader gets the whole memory from
               // the row without expanding it (§6, and the same string the graph
               // node is labelled with).
@@ -441,7 +441,7 @@ function FilterSelect({
     <label
       className={cn(
         "meta inline-flex min-h-11 items-center gap-1.5 rounded-pill px-3 ring-1",
-        value ? "bg-accent-dim text-accent ring-accent/40" : "bg-black/5 text-ink-invert-muted ring-outline",
+        value ? "bg-accent-dim text-accent ring-accent/40" : "bg-ink-invert/[0.06] text-ink-invert-muted ring-outline",
       )}
     >
       <span>{label}</span>
@@ -482,7 +482,7 @@ function FilterToggle({
         "meta min-h-11 rounded-pill px-3 ring-1 transition-colors duration-[var(--motion-micro)]",
         pressed
           ? "bg-accent-dim text-accent ring-accent/40"
-          : "bg-black/5 text-ink-invert-muted ring-outline hover:text-ink-invert",
+          : "bg-ink-invert/[0.06] text-ink-invert-muted ring-outline hover:text-ink-invert",
       )}
     >
       {children}

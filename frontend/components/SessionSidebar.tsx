@@ -136,7 +136,7 @@ export function SessionSidebar({
                   ? "Expand sessions"
                   : "Collapse sessions"
             }
-            className="tap inline-flex items-center justify-center rounded-input text-ink-invert-muted hover:bg-raised hover:text-ink-invert"
+            className="tap inline-flex items-center justify-center rounded-input text-ink-invert-muted hover:bg-ink-invert/[0.08] hover:text-ink-invert"
           >
             {collapsed ? (
               <PanelLeftOpen className="size-5" aria-hidden="true" />
@@ -155,7 +155,7 @@ export function SessionSidebar({
             title="New session"
             aria-label="New session"
             className={cn(
-              "tap inline-flex shrink-0 items-center gap-2 rounded-input bg-accent px-3 text-body-sm font-medium text-white hover:brightness-110",
+              "tap inline-flex shrink-0 items-center gap-2 rounded-input bg-action px-3 text-body-sm font-medium text-on-action hover:brightness-90",
               collapsed && "lg:justify-center lg:px-0",
             )}
           >
@@ -341,7 +341,7 @@ function SessionRow({
     <li
       className={cn(
         "group flex items-center gap-1 rounded-input transition-colors duration-[var(--motion-micro)]",
-        current ? "bg-accent-dim" : "hover:bg-raised",
+        current ? "bg-accent-dim" : "hover:bg-ink-invert/[0.08]",
       )}
     >
       <button
@@ -417,7 +417,7 @@ function SidebarEntry({
       aria-label={label}
       title={collapsed ? label : undefined}
       className={cn(
-        "tap flex w-full items-center gap-2 rounded-input px-3 text-left text-body-sm text-ink-invert-muted hover:bg-raised hover:text-ink-invert",
+        "tap flex w-full items-center gap-2 rounded-input px-3 text-left text-body-sm text-ink-invert-muted hover:bg-ink-invert/[0.08] hover:text-ink-invert",
         collapsed && "lg:justify-center lg:px-0",
       )}
     >
@@ -444,7 +444,7 @@ export function SidebarOpenButton({
       aria-controls="session-sidebar"
       aria-label="Show sessions"
       title="Show sessions"
-      className="tap inline-flex items-center justify-center rounded-input text-ink-invert-muted hover:bg-raised hover:text-ink-invert lg:hidden"
+      className="tap inline-flex items-center justify-center rounded-input text-ink-invert-muted hover:bg-ink-invert/[0.08] hover:text-ink-invert lg:hidden"
     >
       <PanelLeftOpen className="size-5" aria-hidden="true" />
     </button>

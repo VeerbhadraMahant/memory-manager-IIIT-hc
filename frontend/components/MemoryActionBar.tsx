@@ -92,7 +92,7 @@ export function MemoryActionBar({
             className={cn(
               "w-full rounded-input border p-3 text-body-sm",
               onLight
-                ? "border-outline-ink bg-white text-ink"
+                ? "border-outline-ink bg-sunken text-ink"
                 : "border-outline-strong bg-sunken text-ink-invert",
             )}
           />
