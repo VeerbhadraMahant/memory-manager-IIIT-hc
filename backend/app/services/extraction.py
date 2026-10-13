@@ -10,6 +10,7 @@ the reason this check is the first thing in the function rather than a filter la
 
 from __future__ import annotations
 
+import json
 import logging
 
 from app.db import pool
@@ -118,7 +119,11 @@ def run_extraction(message_id: str, chat_id: str, user_id: str) -> None:
                         (
                             new["id"],
                             "auto_accepted" if not d.needs_review else "surfaced_for_review",
-                            f'{{"reason": {d.reason!r}}}'.replace("'", '"'),
+                            # json.dumps, not string surgery: the reason routinely contains
+                            # apostrophes ("'x' isn't one of your blocks"), and the old
+                            # repr-and-replace produced invalid JSON that made the whole
+                            # insert — and so the whole extraction pass — fail.
+                            json.dumps({"reason": d.reason}),
                         ),
                     )
 

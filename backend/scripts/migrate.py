@@ -42,7 +42,10 @@ def main() -> int:
         print(f"no .sql files in {MIGRATIONS_DIR}")
         return 1
 
-    with psycopg.connect(settings.database_url, connect_timeout=15) as conn:
+    with psycopg.connect(settings.dsn, connect_timeout=15) as conn:
+        # Two replicas (or a deploy racing a manual run) must not apply the same file
+        # twice. Session-level advisory lock; released when the connection closes.
+        conn.execute("select pg_advisory_lock(7272740001)")
         done = _applied(conn)
         conn.commit()
 

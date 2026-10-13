@@ -18,10 +18,10 @@ debugging anything here.
 
 from __future__ import annotations
 
-import json
 import logging
 import random
 import re
+import threading
 import time
 from typing import Any, Literal
 
@@ -29,33 +29,85 @@ import httpx
 from pydantic import BaseModel, Field
 
 from app.config import settings
+from app.secrets import scrub
 
 log = logging.getLogger(__name__)
-
-_client: httpx.Client | None = None
 
 # Extraction on a large free model can genuinely take a while; the read timeout is
 # the one that matters and 120s is not generous. Shared by every provider.
 _TIMEOUT = httpx.Timeout(connect=10.0, read=120.0, write=30.0, pool=10.0)
+_LIMITS = httpx.Limits(max_connections=40, max_keepalive_connections=20, keepalive_expiry=30)
+
+_clients: dict[str, httpx.Client] = {}
+_clients_lock = threading.Lock()
+
+
+def _http(base_url: str, api_key: str | None, extra_headers: dict | None = None) -> httpx.Client:
+    """One pooled, keep-alive client per provider host.
+
+    The previous code built a new `httpx.Client` (new TLS handshake) for every chat
+    call. Credentials are set once on the client and sent as headers — never in the URL,
+    where HTTP libraries echo them into exception text and access logs.
+    """
+    key = base_url
+    with _clients_lock:
+        c = _clients.get(key)
+        if c is None:
+            headers = {"Content-Type": "application/json", **(extra_headers or {})}
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
+            c = httpx.Client(
+                base_url=base_url, headers=headers, timeout=_TIMEOUT, limits=_LIMITS,
+                follow_redirects=False,  # a redirect would replay the Authorization header
+            )
+            _clients[key] = c
+        return c
+
+
+def close_clients() -> None:
+    with _clients_lock:
+        for c in _clients.values():
+            c.close()
+        _clients.clear()
 
 
 def client() -> httpx.Client:
-    global _client
-    if _client is None:
-        if not settings.llm_api_key:
-            raise RuntimeError("LLM_API_KEY is not set")
-        _client = httpx.Client(
-            base_url=settings.llm_base_url,
-            headers={
-                "Authorization": f"Bearer {settings.llm_api_key}",
-                "Content-Type": "application/json",
-                # OpenRouter attributes traffic by these; harmless if absent.
-                "HTTP-Referer": "http://localhost:3000",
-                "X-Title": "Negotiated AI Memory",
-            },
-            timeout=_TIMEOUT,
-        )
-    return _client
+    if not settings.llm_key:
+        raise RuntimeError("LLM_API_KEY is not set")
+    return _http(
+        settings.llm_base_url,
+        settings.llm_key,
+        # OpenRouter attributes traffic by these; harmless elsewhere.
+        {"HTTP-Referer": settings.app_url, "X-Title": "Negotiated AI Memory"},
+    )
+
+
+class LLMError(RuntimeError):
+    """An upstream provider failure, already safe to show a client.
+
+    `str(e)` carries no URL, header, key or prompt text. The full detail is logged
+    server-side (scrubbed) at the point of failure.
+    """
+
+
+def public_error(e: Exception) -> str:
+    """Client-facing description of an LLM failure. Never includes upstream text."""
+    if isinstance(e, LLMError):
+        return str(e)
+    if isinstance(e, httpx.HTTPStatusError):
+        code = e.response.status_code
+        if code == 429:
+            return "the model provider is rate-limiting us — try again shortly"
+        if code in (401, 403):
+            return "the model provider rejected our credentials"
+        if code == 404:
+            return "the configured model is no longer available"
+        return f"the model provider returned HTTP {code}"
+    if isinstance(e, httpx.TimeoutException):
+        return "the model provider timed out"
+    if isinstance(e, httpx.TransportError):
+        return "could not reach the model provider"
+    return "the model call failed"
 
 
 # Gemini's explicit safety thresholds have no OpenRouter equivalent — there is no
@@ -109,7 +161,8 @@ def _post(path: str, payload: dict) -> dict:
     data = with_retry(call)
     if isinstance(data, dict) and data.get("error"):
         err = data["error"]
-        raise RuntimeError(f"OpenRouter error {err.get('code')}: {err.get('message')}")
+        log.warning("openrouter error body: %s", scrub(str(err))[:300])
+        raise LLMError(f"the model provider reported an error ({err.get('code')})")
     return data
 
 
@@ -234,7 +287,8 @@ def _content(data: dict) -> str:
     """Pull message text out of a completion, tolerating empty/fenced responses."""
     choices = data.get("choices") or []
     if not choices:
-        raise RuntimeError(f"no choices in response: {str(data)[:300]}")
+        log.warning("no choices in response: %s", scrub(str(data))[:300])
+        raise LLMError("the model returned no answer")
     msg = choices[0].get("message") or {}
     text = (msg.get("content") or "").strip()
     if text.startswith("```"):
@@ -375,21 +429,19 @@ def _openai_compatible_chat(
 
     Returns (reply, reasoning). Reasoning is "" unless the model actually emitted a
     <think> block."""
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    if "openrouter" in base_url:
-        headers |= {"HTTP-Referer": "http://localhost:3000", "X-Title": "Negotiated AI Memory"}
+    extra = {"HTTP-Referer": settings.app_url, "X-Title": "Negotiated AI Memory"} if "openrouter" in base_url else None
 
     def call():
-        with httpx.Client(base_url=base_url, headers=headers, timeout=_TIMEOUT) as c:
-            r = c.post("/chat/completions", json={
-                "model": model, "messages": messages, "temperature": 0.7,
-            })
-            r.raise_for_status()
-            return r.json()
+        r = _http(base_url, api_key, extra).post(
+            "/chat/completions", json={"model": model, "messages": messages, "temperature": 0.7}
+        )
+        r.raise_for_status()
+        return r.json()
 
     data = with_retry(call)
     if isinstance(data, dict) and data.get("error"):
-        raise RuntimeError(f"{label} error: {data['error'].get('message')}")
+        log.warning("%s error body: %s", label, scrub(str(data["error"]))[:300])
+        raise LLMError(f"{label} reported an error")
     return _split_reasoning(_content(data))
 
 
@@ -409,28 +461,27 @@ def _gemini_chat(*, api_key: str, model: str, system: str, history: list[dict]) 
     }
 
     def call():
-        with httpx.Client(timeout=_TIMEOUT) as c:
-            r = c.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-                params={"key": api_key},
-                json=body,
-            )
-            r.raise_for_status()
-            return r.json()
+        # Key travels in a header, not `?key=`: a query-string key is echoed into
+        # httpx's HTTPStatusError text, which this app used to return to the browser.
+        c = _http("https://generativelanguage.googleapis.com", None, {"x-goog-api-key": api_key})
+        r = c.post(f"/v1beta/models/{model}:generateContent", json=body)
+        r.raise_for_status()
+        return r.json()
 
     data = with_retry(call)
     if "error" in data:
-        raise RuntimeError(f"Gemini error {data['error'].get('code')}: {data['error'].get('message')}")
+        log.warning("gemini error body: %s", scrub(str(data["error"]))[:300])
+        raise LLMError(f"Gemini reported an error ({data['error'].get('code')})")
 
     cands = data.get("candidates") or []
     if not cands:
         # A safety block returns no candidates at all, with the reason at top level.
-        raise RuntimeError(f"Gemini returned no candidates: {str(data.get('promptFeedback'))[:200]}")
+        raise LLMError("Gemini returned no candidates (the prompt may have been blocked)")
     parts = (cands[0].get("content") or {}).get("parts") or []
     text = "".join(p.get("text", "") for p in parts).strip()
     if not text and cands[0].get("finishReason") == "MAX_TOKENS":
         # Gemini 3.x thinks by default and can spend the whole budget doing it.
-        raise RuntimeError("Gemini hit MAX_TOKENS before emitting text — raise maxOutputTokens")
+        raise LLMError("Gemini hit MAX_TOKENS before emitting text")
     return _strip_reasoning(text)
 
 
@@ -444,17 +495,17 @@ def available_providers() -> list[dict]:
         "id": "openrouter",
         "label": "OpenRouter",
         "model": settings.llm_chat_model,
-        "configured": bool(settings.llm_api_key),
+        "configured": bool(settings.llm_key),
     }, {
         "id": "gemini",
         "label": "Gemini",
         "model": settings.gemini_chat_model,
-        "configured": bool(settings.gemini_api_key),
+        "configured": bool(settings.gemini_key),
     }, {
         "id": "groq",
         "label": "Groq",
         "model": settings.groq_chat_model,
-        "configured": bool(settings.groq_api_key),
+        "configured": bool(settings.groq_key),
     }]
     return [p for p in out if p["configured"]]
 
@@ -488,11 +539,11 @@ def chat_response(
     chosen = resolve_provider(provider)
 
     if chosen == "gemini":
-        if not settings.gemini_api_key:
-            raise RuntimeError("GEMINI_API_KEY is not set")
+        if not settings.gemini_key:
+            raise LLMError("Gemini is not configured")
         reply, reasoning = _split_reasoning(
             _gemini_chat(
-                api_key=settings.gemini_api_key,
+                api_key=settings.gemini_key,
                 model=settings.gemini_chat_model,
                 system=system,
                 history=history,
@@ -509,22 +560,22 @@ def chat_response(
     ]
 
     if chosen == "groq":
-        if not settings.groq_api_key:
-            raise RuntimeError("GROQ_API_KEY is not set")
+        if not settings.groq_key:
+            raise LLMError("Groq is not configured")
         reply, reasoning = _openai_compatible_chat(
             base_url=settings.groq_base_url,
-            api_key=settings.groq_api_key,
+            api_key=settings.groq_key,
             model=settings.groq_chat_model,
             messages=messages,
             label="Groq",
         )
         return reply, "groq", settings.groq_chat_model, reasoning
 
-    if not settings.llm_api_key:
-        raise RuntimeError("LLM_API_KEY is not set")
+    if not settings.llm_key:
+        raise LLMError("OpenRouter is not configured")
     reply, reasoning = _openai_compatible_chat(
         base_url=settings.llm_base_url,
-        api_key=settings.llm_api_key,
+        api_key=settings.llm_key,
         model=settings.llm_chat_model,
         messages=messages,
         label="OpenRouter",
@@ -659,7 +710,7 @@ def embed(texts: list[str]) -> list[list[float]]:
 
     items = sorted(data.get("data") or [], key=lambda d: d.get("index", 0))
     if len(items) != len(texts):
-        raise RuntimeError(
+        raise LLMError(
             f"{settings.llm_embed_model} returned {len(items)} embeddings for "
             f"{len(texts)} inputs — it does not batch. Embed one at a time or switch model."
         )
@@ -668,10 +719,63 @@ def embed(texts: list[str]) -> list[list[float]]:
     for e in items:
         v = list(e["embedding"])
         if len(v) != settings.embedding_dim:
-            raise RuntimeError(
+            raise LLMError(
                 f"expected {settings.embedding_dim}-dim embedding, got {len(v)}. "
                 "The pgvector column and settings.embedding_dim must agree."
             )
         norm = sum(x * x for x in v) ** 0.5
         out.append([x / norm for x in v] if norm else v)
     return out
+
+
+# ----------------------------------------------------------------- node summary
+
+
+class NodeSummary(BaseModel):
+    title: str = Field(description="Under eight words.")
+    summary: str = Field(description="One or two sentences. Only what the notes say.")
+    key_points: list[str]
+
+
+SUMMARY_SCHEMA = _strict_schema(NodeSummary)
+
+SUMMARY_PROMPT = """\
+Summarise one memory and its child notes for the person who owns them.
+
+Use only what is written below. Do not add facts, infer feelings, or fill gaps. Keep the
+status exactly: if the memory says something is in progress, the summary must not
+describe it as finished.
+
+MEMORY ({status}): {content}
+
+CHILD NOTES
+{notes}
+"""
+
+
+def summarize_item(content: str, status: str, notes: list[str]) -> NodeSummary | None:
+    """LLM summary of an item and its subnodes, or None when it cannot be produced.
+
+    Callers fall back to a deterministic summary, so a provider outage degrades the
+    graph's hover card instead of breaking it.
+    """
+    data = _post("/chat/completions", {
+        "model": settings.llm_extract_model,
+        "messages": [{"role": "user", "content": SUMMARY_PROMPT.format(
+            status=status, content=content,
+            notes="\n".join(f"- {n}" for n in notes) or "(none)",
+        )}],
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {"name": "node_summary", "strict": True, "schema": SUMMARY_SCHEMA},
+        },
+        "temperature": 0.1,
+    })
+    text = _content(data)
+    if not text:
+        return None
+    try:
+        return NodeSummary.model_validate_json(text)
+    except Exception:
+        log.warning("node summary returned unparseable JSON")
+        return None

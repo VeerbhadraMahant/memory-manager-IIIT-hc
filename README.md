@@ -7,7 +7,11 @@ memories shaped each response.
 HCI hackathon project (SIGCHI-supported). Design rationale is a first-class deliverable; the
 architecture notes, phase plan and decision log are kept alongside this repo rather than in it.
 
-**Current phase: P0, P1, P2, P3 and P6 complete** — the whole demo spine. Say something, get a reply
+**Backend status: production-ready.** Authentication (Supabase JWT / Google), per-user data
+isolation, secrets handling for confidential-compute deployments, Docker, CI and a pytest suite
+are in place — see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) and [docs/TEE.md](docs/TEE.md).
+
+**Feature phase: P0, P1, P2, P3 and P6 complete** — the whole demo spine. Say something, get a reply
 that shows which memories shaped it, correct the classification in one tap, drop a memory and watch
 the answer change, and ask for a high-stakes draft that refuses to write up unfinished work as
 finished. Remaining: P4 (complete list view), P7 (pre-send PII), P5 (deletion-preview graph),
@@ -23,6 +27,17 @@ The design principles this is judged on are enforced in code, not just described
 > Embeddings have no free option, but cost fractions of a cent per session.
 
 ---
+
+## Production
+
+```bash
+docker compose up --build                                        # local stack: API + pgvector Postgres
+docker compose -f deploy/docker-compose.prod.yml up -d --build   # secrets as files, read-only fs
+make install && make db && make test                             # pytest suite against real Postgres
+```
+
+Activating Supabase, auth modes, env vars, health endpoints: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+Keeping API keys inside a TEE (and what a TEE does *not* protect): [docs/TEE.md](docs/TEE.md).
 
 ## Setup
 
@@ -125,20 +140,27 @@ validate the key.
 ```
 backend/
   app/
-    main.py           FastAPI app, CORS, /health
-    config.py         env-driven settings, model choices
+    main.py           FastAPI app, middleware, probes (/healthz /readyz /health /tee)
+    config.py         env-driven settings, production validation, model choices
+    secrets.py        file/env secret loading, log redaction, TEE detection
+    auth.py           request identity (Supabase JWT, session token, demo fallback)
+    ratelimit.py      per-user sliding-window limits
+    middleware.py     request ids, security headers, body-size cap
     db.py             psycopg3 connection pool
     models.py         Pydantic mirrors of the DB vocabulary
     routers/
+      auth.py         POST /auth/google, /auth/logout, GET /auth/config
+      account.py      /me, /me/export, DELETE /me
       chats.py        chats, messages, the full turn, candidates, regenerate, verified draft
-      memory.py       memory items, blocks, filters, accept/reject/edit/rescope/confirm
+      memory.py       memory items, blocks, filters, accept/reject/edit/rescope/confirm,
+                      cascade delete, subnodes, summary, prune, relevance
     services/
       llm.py          three chat providers, extraction, verified draft, embeddings, backoff
       classify.py     heuristic cross-check; the overstatement detector, as a pure function
       policy.py       interruption budget, restrictive fallback, session default
       extraction.py   post-turn pass; enforces the ephemeral skip
       retrieval.py    similarity + scope + review-state filter + staleness
-  migrations/         001 schema, 002 seed, 003 extraction status, 004 review reason
+  migrations/         001-007 schema history, 008 subnodes + row-level security
   scripts/
     migrate.py        apply .sql files once each, transactionally
     smoke_p0.py       P0 acceptance check

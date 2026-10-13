@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import json
+import logging
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
-from app.config import settings
-from app.db import db_cursor
+from app.auth import User, current_user
+from app.db import db_cursor, pool
 from app.models import (
     AssertionStatus,
     CandidatesResponse,
@@ -25,13 +26,16 @@ from app.models import (
     TurnResponse,
     VerifiedDraft,
 )
+from app.ratelimit import general_limit, llm_limit
 from app.routers.memory import ITEM_SELECT, _audit
 from app.services import llm
 from app.services.classify import check_claim
 from app.services.extraction import run_extraction
-from app.services.retrieval import pinned_trace, retrieve, retrieve_traced
+from app.services.retrieval import embed_query, pinned, retrieve, retrieve_traced
 
-router = APIRouter(prefix="/chats", tags=["chats"])
+log = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/chats", tags=["chats"], dependencies=[Depends(general_limit)])
 
 HISTORY_TURNS = 12
 
@@ -48,10 +52,10 @@ def list_providers():
 
 
 @router.post("", response_model=Chat, status_code=201)
-def create_chat(payload: ChatCreate, cur=Depends(db_cursor)):
+def create_chat(payload: ChatCreate, user: User = Depends(current_user), cur=Depends(db_cursor)):
     cur.execute(
         "insert into chats (user_id, title) values (%s, %s) returning *",
-        (settings.demo_user_id, payload.title),
+        (user.id, payload.title),
     )
     row = cur.fetchone()
     cur.connection.commit()
@@ -59,22 +63,22 @@ def create_chat(payload: ChatCreate, cur=Depends(db_cursor)):
 
 
 @router.get("", response_model=list[Chat])
-def list_chats(cur=Depends(db_cursor)):
+def list_chats(user: User = Depends(current_user), cur=Depends(db_cursor)):
     cur.execute(
         """select * from chats
             where user_id = %s and deleted_at is null
             order by created_at desc""",
-        (settings.demo_user_id,),
+        (user.id,),
     )
     return cur.fetchall()
 
 
 @router.patch("/{chat_id}", response_model=Chat)
-def rename_chat(chat_id: UUID, payload: ChatUpdate, cur=Depends(db_cursor)):
-    _assert_chat(cur, chat_id)
+def rename_chat(chat_id: UUID, payload: ChatUpdate, user: User = Depends(current_user), cur=Depends(db_cursor)):
+    _assert_chat(cur, chat_id, user.id)
     cur.execute(
-        "update chats set title = %s where id = %s returning *",
-        (payload.title, chat_id),
+        "update chats set title = %s where id = %s and user_id = %s returning *",
+        (payload.title, chat_id, user.id),
     )
     row = cur.fetchone()
     cur.connection.commit()
@@ -82,7 +86,7 @@ def rename_chat(chat_id: UUID, payload: ChatUpdate, cur=Depends(db_cursor)):
 
 
 @router.delete("/{chat_id}", response_model=ChatDeleted)
-def delete_chat(chat_id: UUID, cur=Depends(db_cursor)):
+def delete_chat(chat_id: UUID, user: User = Depends(current_user), cur=Depends(db_cursor)):
     """Tombstone a chat, and with it the memories that were confined to it.
 
     Not a row delete — see migration 006 for why the schema forbids one. The split
@@ -99,14 +103,14 @@ def delete_chat(chat_id: UUID, cur=Depends(db_cursor)):
     Each tombstoned item gets an audit row naming the chat, so "why did this
     disappear" has an answer that is not "we assume the chat deletion did it".
     """
-    _assert_chat(cur, chat_id)
+    _assert_chat(cur, chat_id, user.id)
 
     cur.execute(
         """update memory_items
               set deleted_at = now()
             where user_id = %s and session_chat_id = %s and deleted_at is null
         returning id""",
-        (settings.demo_user_id, chat_id),
+        (user.id, chat_id),
     )
     removed = [row["id"] for row in cur.fetchall()]
     for item_id in removed:
@@ -119,7 +123,7 @@ def delete_chat(chat_id: UUID, cur=Depends(db_cursor)):
              from memory_items mi
              join messages m on m.id = mi.source_message_id
             where mi.user_id = %s and m.chat_id = %s and mi.deleted_at is null""",
-        (settings.demo_user_id, chat_id),
+        (user.id, chat_id),
     )
     kept = cur.fetchone()["n"]
 
@@ -134,19 +138,19 @@ def delete_chat(chat_id: UUID, cur=Depends(db_cursor)):
 
 
 @router.get("/{chat_id}/messages", response_model=list[Message])
-def list_messages(chat_id: UUID, cur=Depends(db_cursor)):
+def list_messages(chat_id: UUID, user: User = Depends(current_user), cur=Depends(db_cursor)):
     # Guarded like every other chat route. Without this it happily served the
     # transcript of a chat the user had deleted — harmless while there is one
     # hardcoded user, a cross-account read the moment there is more than one.
-    _assert_chat(cur, chat_id)
+    _assert_chat(cur, chat_id, user.id)
     cur.execute("select * from messages where chat_id = %s order by created_at", (chat_id,))
     return cur.fetchall()
 
 
 @router.post("/{chat_id}/messages", response_model=Message, status_code=201)
-def add_message(chat_id: UUID, payload: MessageCreate, cur=Depends(db_cursor)):
+def add_message(chat_id: UUID, payload: MessageCreate, user: User = Depends(current_user), cur=Depends(db_cursor)):
     """Raw append, no LLM and no extraction. Kept for tests and seeding."""
-    _assert_chat(cur, chat_id)
+    _assert_chat(cur, chat_id, user.id)
     cur.execute(
         """insert into messages (chat_id, role, content, session_ephemeral)
            values (%s, %s, %s, %s) returning *""",
@@ -157,12 +161,12 @@ def add_message(chat_id: UUID, payload: MessageCreate, cur=Depends(db_cursor)):
     return row
 
 
-@router.post("/{chat_id}/message", response_model=TurnResponse)
+@router.post("/{chat_id}/message", response_model=TurnResponse, dependencies=[Depends(llm_limit)])
 def chat_turn(
     chat_id: UUID,
     payload: TurnRequest,
     background: BackgroundTasks,
-    cur=Depends(db_cursor),
+    user: User = Depends(current_user),
 ):
     """One full turn.
 
@@ -170,50 +174,50 @@ def chat_turn(
     after. Extraction costs ~9s on Flash and putting it inline would make every turn
     feel broken (SYSTEM_DESIGN §5). The cost of async is that candidates arrive a
     moment after the reply, which the UI shows explicitly rather than hiding.
+
+    Database connections are held only around database work. The two network calls
+    (embedding, chat completion) take seconds each; holding a pooled connection across
+    them meant `db_pool_max` concurrent turns exhausted the pool and everything else
+    queued behind LLM latency.
     """
-    _assert_chat(cur, chat_id)
+    uid, cid = str(user.id), str(chat_id)
 
-    # An ephemeral turn is marked at write time, so even a crash between here and the
-    # extraction pass leaves a row that can never be extracted from.
-    extraction_status = (
-        ExtractionStatus.skipped if payload.session_ephemeral else ExtractionStatus.pending
-    )
-    cur.execute(
-        """insert into messages (chat_id, role, content, session_ephemeral, extraction_status)
-           values (%s, 'user', %s, %s, %s) returning *""",
-        (chat_id, payload.content, payload.session_ephemeral, extraction_status.value),
-    )
-    user_msg = cur.fetchone()
-    cur.connection.commit()
+    with pool.connection() as conn, conn.cursor() as cur:
+        _assert_chat(cur, chat_id, user.id)
 
-    if payload.selected_memory_ids:
+        # An ephemeral turn is marked at write time, so even a crash between here and
+        # the extraction pass leaves a row that can never be extracted from.
+        extraction_status = (
+            ExtractionStatus.skipped if payload.session_ephemeral else ExtractionStatus.pending
+        )
         cur.execute(
-            """select mi.id, mi.content, mi.status, mi.scope, mi.sensitivity, b.name as block_name, 0.0 as distance
-               from memory_items mi
-               left join blocks b on b.id = mi.block_id
-               where mi.id = any(%s)""",
-            ([str(i) for i in payload.selected_memory_ids],),
+            """insert into messages (chat_id, role, content, session_ephemeral, extraction_status)
+               values (%s, 'user', %s, %s, %s) returning *""",
+            (chat_id, payload.content, payload.session_ephemeral, extraction_status.value),
         )
-        selected_rows = cur.fetchall()
-        if selected_rows:
-            used = selected_rows
-            trace = pinned_trace(payload.content, selected_rows)
-        else:
-            used, trace = retrieve_traced(
-                cur, str(settings.demo_user_id), str(chat_id), payload.content
-            )
-    else:
-        used, trace = retrieve_traced(
-            cur, str(settings.demo_user_id), str(chat_id), payload.content
-        )
+        user_msg = cur.fetchone()
 
-    cur.execute(
-        """select role, content from messages
-           where chat_id = %s and role in ('user','assistant')
-           order by created_at desc limit %s""",
-        (chat_id, HISTORY_TURNS),
-    )
-    history = list(reversed(cur.fetchall()))
+        used: list[dict] = []
+        trace = None
+        if payload.selected_memory_ids:
+            used, trace = pinned(
+                cur, uid, cid, payload.content, [str(i) for i in payload.selected_memory_ids]
+            )
+
+        cur.execute(
+            """select role, content from messages
+               where chat_id = %s and role in ('user','assistant')
+               order by created_at desc limit %s""",
+            (chat_id, HISTORY_TURNS),
+        )
+        history = list(reversed(cur.fetchall()))
+
+    if trace is None or not used:
+        vec = embed_query(payload.content)  # network, no connection held
+        with pool.connection() as conn, conn.cursor() as cur:
+            used, trace = retrieve_traced(cur, uid, cid, payload.content, vec=vec)
+            if vec is None:
+                trace.embedding_failed = True
 
     # The provider is chosen per turn, but the memory above was already retrieved —
     # switching models carries the memory across rather than re-deriving it (D32).
@@ -222,30 +226,24 @@ def chat_turn(
             history, used, payload.provider
         )
     except Exception as e:
-        raise HTTPException(502, f"LLM call failed: {type(e).__name__}: {e}") from e
+        log.exception("chat completion failed")
+        raise HTTPException(502, f"LLM call failed: {llm.public_error(e)}") from e
 
-    cur.execute(
-        """insert into messages (chat_id, role, content, extraction_status)
-           values (%s, 'assistant', %s, 'skipped') returning *""",
-        (chat_id, reply),
-    )
-    assistant_msg = cur.fetchone()
-
-    # Attribution rows are written now, at use time. P6 builds the revoke-and-regenerate
-    # UI on top of these; recording them here costs nothing and means the history is
-    # complete from the first turn rather than starting when P6 lands.
-    for m in used:
+    with pool.connection() as conn, conn.cursor() as cur:
         cur.execute(
-            """insert into attributions (message_id, memory_item_id) values (%s, %s)
-               on conflict do nothing""",
-            (assistant_msg["id"], m["id"]),
+            """insert into messages (chat_id, role, content, extraction_status)
+               values (%s, 'assistant', %s, 'skipped') returning *""",
+            (chat_id, reply),
         )
-    cur.connection.commit()
+        assistant_msg = cur.fetchone()
+
+        # Attribution rows are written now, at use time. P6 builds the revoke-and-regenerate
+        # UI on top of these; recording them here costs nothing and means the history is
+        # complete from the first turn rather than starting when P6 lands.
+        _record_attributions(cur, assistant_msg["id"], used)
 
     if not payload.session_ephemeral:
-        background.add_task(
-            run_extraction, str(user_msg["id"]), str(chat_id), str(settings.demo_user_id)
-        )
+        background.add_task(run_extraction, str(user_msg["id"]), cid, uid)
 
     return {
         "user_message": user_msg,
@@ -266,15 +264,24 @@ def chat_turn(
     }
 
 
+def _record_attributions(cur, message_id, used: list[dict]) -> None:
+    if used:
+        cur.executemany(
+            """insert into attributions (message_id, memory_item_id) values (%s, %s)
+               on conflict do nothing""",
+            [(message_id, m["id"]) for m in used],
+        )
+
+
 @router.get("/{chat_id}/candidates", response_model=CandidatesResponse)
-def turn_candidates(chat_id: UUID, message_id: UUID, cur=Depends(db_cursor)):
+def turn_candidates(chat_id: UUID, message_id: UUID, user: User = Depends(current_user), cur=Depends(db_cursor)):
     """What extraction produced for one message. Polled by the review card.
 
     Splitting pending from auto-accepted in the response is the interruption budget
     made visible: the user sees what was taken silently, without being asked to
     approve it. Principle 2 is about not prompting, not about hiding.
     """
-    _assert_chat(cur, chat_id)
+    _assert_chat(cur, chat_id, user.id)
     cur.execute(
         "select extraction_status, extraction_error from messages where id = %s and chat_id = %s",
         (message_id, chat_id),
@@ -298,8 +305,8 @@ def turn_candidates(chat_id: UUID, message_id: UUID, cur=Depends(db_cursor)):
     }
 
 
-@router.post("/{chat_id}/regenerate", response_model=RegenerateResponse)
-def regenerate(chat_id: UUID, payload: RegenerateRequest, cur=Depends(db_cursor)):
+@router.post("/{chat_id}/regenerate", response_model=RegenerateResponse, dependencies=[Depends(llm_limit)])
+def regenerate(chat_id: UUID, payload: RegenerateRequest, user: User = Depends(current_user)):
     """Answer the same turn again, without the memories the user just revoked.
 
     Revoking is a memory-level act, not a display filter: the items are rejected and
@@ -307,78 +314,78 @@ def regenerate(chat_id: UUID, payload: RegenerateRequest, cur=Depends(db_cursor)
     and new answers side by side is the point — "here is what I would have said
     without that" is the thing that makes the influence legible.
     """
-    _assert_chat(cur, chat_id)
+    uid, cid = str(user.id), str(chat_id)
 
-    cur.execute(
-        "select * from messages where id = %s and chat_id = %s and role = 'assistant'",
-        (payload.message_id, chat_id),
-    )
-    target = cur.fetchone()
-    if not target:
-        raise HTTPException(404, "assistant message not found in this chat")
+    with pool.connection() as conn, conn.cursor() as cur:
+        _assert_chat(cur, chat_id, user.id)
 
-    revoked: list[dict] = []
-    for item_id in payload.revoke_item_ids:
         cur.execute(
-            """update memory_items
-               set review_state = 'rejected', deleted_at = now()
-               where id = %s and user_id = %s and deleted_at is null
-               returning id, content, status, scope, sensitivity, block_id""",
-            (item_id, settings.demo_user_id),
+            "select * from messages where id = %s and chat_id = %s and role = 'assistant'",
+            (payload.message_id, chat_id),
         )
-        row = cur.fetchone()
-        if row:
-            revoked.append({**row, "block_name": None, "distance": 0.0, "is_stale": False})
+        target = cur.fetchone()
+        if not target:
+            raise HTTPException(404, "assistant message not found in this chat")
+
+        # The user turn this reply answered.
+        cur.execute(
+            """select content from messages
+               where chat_id = %s and role = 'user' and created_at < %s
+               order by created_at desc limit 1""",
+            (chat_id, target["created_at"]),
+        )
+        prompt_row = cur.fetchone()
+        if not prompt_row:
+            raise HTTPException(422, "no user turn precedes that reply")
+
+        revoked: list[dict] = []
+        for item_id in payload.revoke_item_ids:
             cur.execute(
-                """insert into audit_log (memory_item_id, action, actor, detail)
-                   values (%s, 'revoked_at_use_time', 'user', %s)""",
-                (item_id, json.dumps({"message_id": str(payload.message_id)})),
+                """update memory_items
+                   set review_state = 'rejected', deleted_at = now()
+                   where id = %s and user_id = %s and deleted_at is null
+                   returning id, content, status, scope, sensitivity, block_id""",
+                (item_id, user.id),
             )
-        cur.execute("delete from attributions where memory_item_id = %s", (item_id,))
-    cur.connection.commit()
+            row = cur.fetchone()
+            if row:
+                revoked.append({**row, "block_name": None, "distance": 0.0, "is_stale": False})
+                cur.execute(
+                    """insert into audit_log (memory_item_id, action, actor, detail)
+                       values (%s, 'revoked_at_use_time', 'user', %s)""",
+                    (item_id, json.dumps({"message_id": str(payload.message_id)})),
+                )
+                cur.execute("delete from attributions where memory_item_id = %s", (item_id,))
 
-    # The user turn this reply answered.
-    cur.execute(
-        """select content from messages
-           where chat_id = %s and role = 'user' and created_at < %s
-           order by created_at desc limit 1""",
-        (chat_id, target["created_at"]),
-    )
-    prompt_row = cur.fetchone()
-    if not prompt_row:
-        raise HTTPException(422, "no user turn precedes that reply")
+        cur.execute(
+            """select role, content from messages
+               where chat_id = %s and role in ('user','assistant') and created_at < %s
+               order by created_at desc limit %s""",
+            (chat_id, target["created_at"], HISTORY_TURNS),
+        )
+        history = list(reversed(cur.fetchall()))
 
-    used = retrieve(
-        cur, str(settings.demo_user_id), str(chat_id), prompt_row["content"],
-        exclude={str(i) for i in payload.revoke_item_ids},
-    )
-
-    cur.execute(
-        """select role, content from messages
-           where chat_id = %s and role in ('user','assistant') and created_at < %s
-           order by created_at desc limit %s""",
-        (chat_id, target["created_at"], HISTORY_TURNS),
-    )
-    history = list(reversed(cur.fetchall()))
+    vec = embed_query(prompt_row["content"])
+    with pool.connection() as conn, conn.cursor() as cur:
+        used = retrieve(
+            cur, uid, cid, prompt_row["content"],
+            exclude={str(i) for i in payload.revoke_item_ids}, vec=vec,
+        )
 
     try:
         reply, _, _, _ = llm.chat_response(history, used, payload.provider)
     except Exception as e:
-        raise HTTPException(502, f"chat call failed: {type(e).__name__}: {e}") from e
+        log.exception("regenerate completion failed")
+        raise HTTPException(502, f"chat call failed: {llm.public_error(e)}") from e
 
-    cur.execute(
-        "update messages set content = %s where id = %s returning *",
-        (reply, target["id"]),
-    )
-    updated = cur.fetchone()
-    cur.execute("delete from attributions where message_id = %s", (target["id"],))
-    for m in used:
+    with pool.connection() as conn, conn.cursor() as cur:
         cur.execute(
-            """insert into attributions (message_id, memory_item_id) values (%s, %s)
-               on conflict do nothing""",
-            (target["id"], m["id"]),
+            "update messages set content = %s where id = %s returning *",
+            (reply, target["id"]),
         )
-    cur.connection.commit()
+        updated = cur.fetchone()
+        cur.execute("delete from attributions where message_id = %s", (target["id"],))
+        _record_attributions(cur, target["id"], used)
 
     return {
         "previous": target["content"],
@@ -389,8 +396,8 @@ def regenerate(chat_id: UUID, payload: RegenerateRequest, cur=Depends(db_cursor)
     }
 
 
-@router.post("/{chat_id}/verified-draft", response_model=VerifiedDraft)
-def verified_draft(chat_id: UUID, payload: DraftRequest, cur=Depends(db_cursor)):
+@router.post("/{chat_id}/verified-draft", response_model=VerifiedDraft, dependencies=[Depends(llm_limit)])
+def verified_draft(chat_id: UUID, payload: DraftRequest, user: User = Depends(current_user)):
     """High-stakes output. Every memory-derived claim is checked before it lands.
 
     The model drafts the text and labels how complete each of its own sentences sounds.
@@ -398,15 +405,16 @@ def verified_draft(chat_id: UUID, payload: DraftRequest, cur=Depends(db_cursor))
     asking a model whether it overstated something is the check that fails quietly, and
     this is the exact failure the project exists to prevent.
     """
-    _assert_chat(cur, chat_id)
-
-    memories = retrieve(
-        cur, str(settings.demo_user_id), str(chat_id), payload.instruction
-    )
+    with pool.connection() as conn, conn.cursor() as cur:
+        _assert_chat(cur, chat_id, user.id)
+    vec = embed_query(payload.instruction)
+    with pool.connection() as conn, conn.cursor() as cur:
+        memories = retrieve(cur, str(user.id), str(chat_id), payload.instruction, vec=vec)
     try:
         result = llm.verified_draft(payload.instruction, memories)
     except Exception as e:
-        raise HTTPException(502, f"draft call failed: {type(e).__name__}: {e}") from e
+        log.exception("verified draft failed")
+        raise HTTPException(502, f"draft call failed: {llm.public_error(e)}") from e
     if result is None:
         raise HTTPException(502, "draft could not be parsed")
 
@@ -445,7 +453,7 @@ def verified_draft(chat_id: UUID, payload: DraftRequest, cur=Depends(db_cursor))
 
 
 @router.get("/{chat_id}/scope-report", response_model=ScopeReport)
-def scope_report(chat_id: UUID, cur=Depends(db_cursor)):
+def scope_report(chat_id: UUID, user: User = Depends(current_user), cur=Depends(db_cursor)):
     """What this session can and cannot reach.
 
     Session scoping is enforced in two different places for two different reasons,
@@ -458,7 +466,7 @@ def scope_report(chat_id: UUID, cur=Depends(db_cursor)):
       `session_chat_id`. `hidden_session_items` is what a *different* chat holds that
       this one cannot use.
     """
-    _assert_chat(cur, chat_id)
+    _assert_chat(cur, chat_id, user.id)
     live = "deleted_at is null and review_state in ('accepted','auto_accepted')"
 
     cur.execute(
@@ -466,7 +474,7 @@ def scope_report(chat_id: UUID, cur=Depends(db_cursor)):
               count(*) filter (where scope = 'persistent') as persistent,
               count(*) filter (where scope = 'session' and session_chat_id = %s) as session
             from memory_items where user_id = %s and {live}""",
-        (chat_id, settings.demo_user_id),
+        (chat_id, user.id),
     )
     visible = cur.fetchone()
 
@@ -479,7 +487,7 @@ def scope_report(chat_id: UUID, cur=Depends(db_cursor)):
               and mi.scope = 'session'
               and mi.session_chat_id is distinct from %s
             order by mi.created_at desc""",
-        (settings.demo_user_id, chat_id),
+        (user.id, chat_id),
     )
     hidden = cur.fetchall()
 
@@ -492,7 +500,8 @@ def scope_report(chat_id: UUID, cur=Depends(db_cursor)):
     cur.execute(
         """select count(*) as n from memory_items mi
            join messages m on m.id = mi.source_message_id
-           where m.session_ephemeral"""
+           where m.session_ephemeral and mi.user_id = %s""",
+        (user.id,),
     )
     from_ephemeral = cur.fetchone()["n"]
 
@@ -507,7 +516,7 @@ def scope_report(chat_id: UUID, cur=Depends(db_cursor)):
 
 
 @router.post("/{chat_id}/purge-ephemeral", response_model=dict)
-def purge_ephemeral(chat_id: UUID, cur=Depends(db_cursor)):
+def purge_ephemeral(chat_id: UUID, user: User = Depends(current_user), cur=Depends(db_cursor)):
     """Redact the text of off-the-record turns in this chat.
 
     Off the record governs *persistence*, not the current conversation: an ephemeral
@@ -519,7 +528,7 @@ def purge_ephemeral(chat_id: UUID, cur=Depends(db_cursor)):
     Rows are redacted rather than deleted so the transcript still shows that
     something was said and withdrawn, instead of silently reshaping the history.
     """
-    _assert_chat(cur, chat_id)
+    _assert_chat(cur, chat_id, user.id)
     cur.execute(
         """update messages set content = '[redacted — off the record]'
            where chat_id = %s and session_ephemeral
@@ -532,11 +541,11 @@ def purge_ephemeral(chat_id: UUID, cur=Depends(db_cursor)):
     return {"redacted_turns": redacted}
 
 
-def _assert_chat(cur, chat_id: UUID) -> None:
+def _assert_chat(cur, chat_id: UUID, user_id: UUID) -> None:
     cur.execute(
         """select 1 from chats
             where id = %s and user_id = %s and deleted_at is null""",
-        (chat_id, settings.demo_user_id),
+        (chat_id, user_id),
     )
     if not cur.fetchone():
         raise HTTPException(404, "chat not found")

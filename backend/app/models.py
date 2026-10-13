@@ -13,6 +13,11 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
+# Upper bounds on free text. A turn is a chat message, a memory is a one-sentence fact;
+# unbounded fields are an invitation to run up the embedding and completion bill.
+MAX_TEXT = 8000
+MAX_MEMORY = 2000
+
 
 class SourceType(str, Enum):
     stated = "stated"
@@ -70,7 +75,7 @@ class ExtractionStatus(str, Enum):
 # ------------------------------------------------------------------ chat
 
 class ChatCreate(BaseModel):
-    title: str | None = None
+    title: str | None = Field(default=None, max_length=200)
 
 
 class ChatUpdate(BaseModel):
@@ -124,13 +129,16 @@ class Me(BaseModel):
 
     id: UUID
     handle: str
+    email: str | None = None
+    name: str | None = None
+    avatar_url: str | None = None
     created_at: datetime
     is_demo_user: bool
 
 
 class MessageCreate(BaseModel):
     role: MessageRole = MessageRole.user
-    content: str
+    content: str = Field(min_length=1, max_length=MAX_TEXT)
     # P3: marks the turn as never eligible for extraction.
     session_ephemeral: bool = False
 
@@ -149,7 +157,7 @@ class Message(BaseModel):
 # ------------------------------------------------------------------ memory
 
 class MemoryItemCreate(BaseModel):
-    content: str = Field(min_length=1)
+    content: str = Field(min_length=1, max_length=MAX_MEMORY)
     source_type: SourceType
     status: AssertionStatus
     sensitivity: Sensitivity
@@ -264,7 +272,7 @@ class ProvenanceGraph(BaseModel):
 # ------------------------------------------------------------------ P1 turn
 
 class TurnRequest(BaseModel):
-    content: str = Field(min_length=1)
+    content: str = Field(min_length=1, max_length=MAX_TEXT)
     # P3: excludes this turn from extraction entirely, not from the UI.
     session_ephemeral: bool = False
 
@@ -277,7 +285,7 @@ class TurnRequest(BaseModel):
     # were read by chats.chat_turn but never declared here, so every turn raised
     # AttributeError on TurnRequest and the conversation could not proceed —
     # which is why no review card or attribution chip ever rendered.
-    selected_memory_ids: list[UUID] | None = None
+    selected_memory_ids: list[UUID] | None = Field(default=None, max_length=50)
 
 
 class UsedMemory(BaseModel):
@@ -364,7 +372,7 @@ class CandidatesResponse(BaseModel):
 
 class RegenerateRequest(BaseModel):
     message_id: UUID
-    revoke_item_ids: list[UUID] = Field(default_factory=list)
+    revoke_item_ids: list[UUID] = Field(default_factory=list, max_length=50)
     # Same switchable-chat rule as a normal turn (D32). Regenerating on a different
     # model than answered originally is legitimate — the revoked memory is the
     # variable under test, and holding the model fixed is not required for that.
@@ -380,7 +388,7 @@ class RegenerateResponse(BaseModel):
 
 
 class DraftRequest(BaseModel):
-    instruction: str = Field(min_length=1)
+    instruction: str = Field(min_length=1, max_length=MAX_TEXT)
     # Deliberately no `provider`, unlike a chat turn (D32/D33). The draft's claim
     # decomposition is the input to the overstatement check, so which model produces
     # it must not be a dropdown — that would make the P6 guarantee non-reproducible.
@@ -436,7 +444,7 @@ class ScopeReport(BaseModel):
 
 class MemoryItemEdit(BaseModel):
     """All fields optional — the review card edits one thing at a time."""
-    content: str | None = None
+    content: str | None = Field(default=None, min_length=1, max_length=MAX_MEMORY)
     status: AssertionStatus | None = None
     sensitivity: Sensitivity | None = None
     block_name: str | None = None
@@ -444,3 +452,48 @@ class MemoryItemEdit(BaseModel):
 
 class RescopeRequest(BaseModel):
     scope: Scope
+
+
+# ------------------------------------------------------------------ subnodes (graph)
+
+class SubnodeCreate(BaseModel):
+    content: str = Field(min_length=1, max_length=MAX_MEMORY)
+    confidence: float = Field(default=0.9, ge=0.0, le=1.0)
+    category: str | None = Field(default=None, max_length=50)
+
+
+class SubnodeEdit(BaseModel):
+    content: str | None = Field(default=None, min_length=1, max_length=MAX_MEMORY)
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    category: str | None = Field(default=None, max_length=50)
+
+
+class Subnode(BaseModel):
+    id: UUID
+    memory_item_id: UUID
+    content: str
+    confidence: float
+    category: str | None
+    created_at: datetime
+
+
+class NodeSummary(BaseModel):
+    memory_item_id: UUID
+    title: str
+    summary: str
+    key_points: list[str]
+    subnode_count: int
+
+
+class PruneResponse(BaseModel):
+    pruned_count: int
+    message: str
+
+
+class RelevanceRequest(BaseModel):
+    prompt: str = Field(min_length=1, max_length=MAX_TEXT)
+
+
+class RelevanceResponse(BaseModel):
+    # item id -> 0..1, only for memories retrieval would actually consider.
+    scores: dict[str, float]

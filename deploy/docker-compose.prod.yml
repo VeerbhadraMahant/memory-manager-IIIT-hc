@@ -1,0 +1,50 @@
+# Production / confidential-compute shape.   docker compose -f deploy/docker-compose.prod.yml up -d
+#
+# Differences from the dev stack, all deliberate:
+#   * every credential is a Docker secret mounted as a file and read via NAME_FILE —
+#     nothing sensitive is in `environment:`, in an env_file, or in `docker inspect`;
+#   * read-only root filesystem, all capabilities dropped, no privilege escalation;
+#   * no database container — DATABASE_URL points at Supabase (or any managed Postgres);
+#   * AUTH_REQUIRED is on and the app refuses to boot if the config is unsafe.
+#
+# Create ./deploy/secrets/*.txt first (see deploy/secrets/README.md). In a TEE, have your
+# attested secrets broker write those files to tmpfs instead of keeping them on disk.
+services:
+  backend:
+    image: ${NAM_IMAGE:-nam-backend:latest}
+    build: ../backend
+    restart: unless-stopped
+    read_only: true
+    tmpfs: ["/tmp"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 256
+    mem_limit: 1g
+    cpus: 2
+    ports: ["127.0.0.1:8000:8000"]   # put a TLS-terminating proxy in front; do not expose directly
+    environment:
+      ENVIRONMENT: production
+      AUTH_REQUIRED: "true"
+      RUN_MIGRATIONS: "${RUN_MIGRATIONS:-true}"
+      WEB_CONCURRENCY: "${WEB_CONCURRENCY:-2}"
+      CORS_ORIGINS: ${CORS_ORIGINS:?set CORS_ORIGINS to your frontend origin(s)}
+      TRUSTED_HOSTS: ${TRUSTED_HOSTS:?set TRUSTED_HOSTS to your API hostname(s)}
+      APP_URL: ${APP_URL:?set APP_URL}
+      SUPABASE_URL: ${SUPABASE_URL:-}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      DB_DISABLE_PREPARED_STATEMENTS: "${DB_DISABLE_PREPARED_STATEMENTS:-false}"
+      REQUIRE_TEE: "${REQUIRE_TEE:-false}"
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-127.0.0.1}
+      DATABASE_URL_FILE: /run/secrets/database_url
+      LLM_API_KEY_FILE: /run/secrets/llm_api_key
+      SESSION_SECRET_FILE: /run/secrets/session_secret
+      # Optional providers — create the secret file and uncomment to enable.
+      # GROQ_API_KEY_FILE: /run/secrets/groq_api_key
+      # GEMINI_API_KEY_FILE: /run/secrets/gemini_api_key
+      # SUPABASE_JWT_SECRET_FILE: /run/secrets/supabase_jwt_secret   # legacy HS256 projects only
+    secrets: [database_url, llm_api_key, session_secret]
+
+secrets:
+  database_url: { file: ./secrets/database_url.txt }
+  llm_api_key: { file: ./secrets/llm_api_key.txt }
+  session_secret: { file: ./secrets/session_secret.txt }

@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
-from uuid import UUID, uuid4
+import logging
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.config import settings
-from app.db import db_cursor
+from app.auth import User, current_user
+from app.db import db_cursor, pool
 from app.models import (
     AssertionStatus,
     Block,
@@ -16,18 +16,26 @@ from app.models import (
     MemoryItem,
     MemoryItemCreate,
     MemoryItemEdit,
+    NodeSummary,
     ProvenanceGraph,
+    PruneResponse,
+    RelevanceRequest,
+    RelevanceResponse,
     RescopeRequest,
     ReviewState,
     Scope,
     Sensitivity,
+    Subnode,
+    SubnodeCreate,
+    SubnodeEdit,
 )
+from app.ratelimit import general_limit, llm_limit, spend_llm
 from app.services import llm
+from app.services.retrieval import MAX_DISTANCE, embed_query
 
-router = APIRouter(prefix="/memory", tags=["memory"])
+log = logging.getLogger(__name__)
 
-# In-memory backing store for interactive subnodes (persists during backend runtime)
-SUBNODES_STORE: dict[str, list[dict]] = {}
+router = APIRouter(prefix="/memory", tags=["memory"], dependencies=[Depends(general_limit)])
 
 
 # Joined so the API never makes the client resolve a block id to a human label.
@@ -39,7 +47,7 @@ left join blocks b on b.id = mi.block_id
 
 
 @router.get("/blocks", response_model=list[Block])
-def list_blocks(cur=Depends(db_cursor)):
+def list_blocks(user: User = Depends(current_user), cur=Depends(db_cursor)):
     cur.execute(
         """
         select id, name, default_sensitivity, restrictive_rank, is_fallback,
@@ -47,13 +55,13 @@ def list_blocks(cur=Depends(db_cursor)):
         from blocks where user_id = %s
         order by restrictive_rank
         """,
-        (settings.demo_user_id,),
+        (user.id,),
     )
     return cur.fetchall()
 
 
 @router.patch("/blocks/{name}/privacy", response_model=Block)
-def set_block_privacy(name: str, payload: BlockPrivacy, cur=Depends(db_cursor)):
+def set_block_privacy(name: str, payload: BlockPrivacy, user: User = Depends(current_user), cur=Depends(db_cursor)):
     """Mark a block private, or lift it.
 
     Private means retrieval excludes the block, so its memories are never written into
@@ -68,7 +76,7 @@ def set_block_privacy(name: str, payload: BlockPrivacy, cur=Depends(db_cursor)):
     """
     cur.execute(
         "select is_fallback from blocks where user_id = %s and name = %s",
-        (settings.demo_user_id, name),
+        (user.id, name),
     )
     row = cur.fetchone()
     if not row:
@@ -85,7 +93,7 @@ def set_block_privacy(name: str, payload: BlockPrivacy, cur=Depends(db_cursor)):
             where user_id = %s and name = %s
         returning id, name, default_sensitivity, restrictive_rank, is_fallback,
                   coalesce(private, false) as private""",
-        (payload.private, settings.demo_user_id, name),
+        (payload.private, user.id, name),
     )
     updated = cur.fetchone()
     cur.connection.commit()
@@ -94,7 +102,7 @@ def set_block_privacy(name: str, payload: BlockPrivacy, cur=Depends(db_cursor)):
 
 @router.get("/items", response_model=list[MemoryItem])
 def list_items(
-    cur=Depends(db_cursor),
+    user: User = Depends(current_user), cur=Depends(db_cursor),
     block: str | None = None,
     status: AssertionStatus | None = None,
     sensitivity: Sensitivity | None = None,
@@ -106,7 +114,7 @@ def list_items(
 ):
     """Backs the P4 list view. Filters compose; all are optional."""
     where = ["mi.user_id = %s"]
-    params: list = [settings.demo_user_id]
+    params: list = [user.id]
 
     # Tombstoned items are invisible unless explicitly asked for (cascade policy §3).
     if not include_deleted:
@@ -139,17 +147,17 @@ def list_items(
 
 
 @router.get("/items/{item_id}", response_model=MemoryItem)
-def get_item(item_id: UUID, cur=Depends(db_cursor)):
+def get_item(item_id: UUID, user: User = Depends(current_user), cur=Depends(db_cursor)):
     cur.execute(f"{ITEM_SELECT} where mi.id = %s and mi.user_id = %s",
-                (item_id, settings.demo_user_id))
+                (item_id, user.id))
     row = cur.fetchone()
     if not row:
         raise HTTPException(404, "memory item not found")
     return row
 
 
-@router.post("/items", response_model=MemoryItem, status_code=201)
-def create_item(payload: MemoryItemCreate, cur=Depends(db_cursor)):
+@router.post("/items", response_model=MemoryItem, status_code=201, dependencies=[Depends(llm_limit)])
+def create_item(payload: MemoryItemCreate, user: User = Depends(current_user)):
     """Direct insert. P1 replaces this as the *primary* path with extraction-driven
     candidate creation; it stays for tests and manual entry."""
 
@@ -159,55 +167,72 @@ def create_item(payload: MemoryItemCreate, cur=Depends(db_cursor)):
     if payload.scope is Scope.persistent and payload.session_chat_id is not None:
         raise HTTPException(422, "persistent items must not carry session_chat_id")
 
-    # Unknown or unnamed block -> the fallback block, which is the *most* restrictive
-    # one, not a neutral bucket (D3).
-    if payload.block_name:
-        cur.execute("select id from blocks where user_id = %s and name = %s",
-                    (settings.demo_user_id, payload.block_name))
-        row = cur.fetchone()
-        if not row:
-            raise HTTPException(422, f"unknown block: {payload.block_name}")
-        block_id = row["id"]
-    else:
-        cur.execute("select id from blocks where user_id = %s and is_fallback",
-                    (settings.demo_user_id,))
-        block_id = cur.fetchone()["id"]
-
-    # Embed on create. Without this the item exists but is invisible to retrieval,
-    # which is a confusing half-state: it shows in the list and never influences a
-    # response. Extraction has always embedded; this path had not.
+    # Embed on create, before taking a connection. Without this the item exists but is
+    # invisible to retrieval, which is a confusing half-state: it shows in the list and
+    # never influences a response.
     try:
         vec = str(llm.embed([payload.content])[0])
     except Exception as e:
-        raise HTTPException(502, f"could not embed content: {e}") from e
+        log.exception("embedding failed on create")
+        raise HTTPException(502, f"could not embed content: {llm.public_error(e)}") from e
 
-    cur.execute(
-        """
-        insert into memory_items (
-            user_id, block_id, content, source_type, status, sensitivity, scope,
-            confidence, source_message_id, session_chat_id, review_state, needs_review,
-            embedding
-        ) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-        returning id
-        """,
-        (
-            settings.demo_user_id, block_id, payload.content,
-            payload.source_type.value, payload.status.value,
-            payload.sensitivity.value, payload.scope.value, payload.confidence,
-            payload.source_message_id, payload.session_chat_id,
-            payload.review_state.value, payload.needs_review, vec,
-        ),
-    )
-    new_id = cur.fetchone()["id"]
+    with pool.connection() as conn, conn.cursor() as cur:
+        # Both references must belong to the caller. The schema's foreign keys only
+        # prove the rows exist, not whose they are — without this a user could attach
+        # a memory to another user's message or chat.
+        cur.execute(
+            """select 1 from messages m join chats c on c.id = m.chat_id
+                where m.id = %s and c.user_id = %s""",
+            (payload.source_message_id, user.id),
+        )
+        if not cur.fetchone():
+            raise HTTPException(422, "source_message_id does not refer to one of your messages")
+        if payload.session_chat_id is not None:
+            cur.execute(
+                "select 1 from chats where id = %s and user_id = %s and deleted_at is null",
+                (payload.session_chat_id, user.id),
+            )
+            if not cur.fetchone():
+                raise HTTPException(422, "session_chat_id does not refer to one of your chats")
 
-    cur.execute(
-        "insert into audit_log (memory_item_id, action, actor, detail) values (%s,%s,%s,%s)",
-        (new_id, "created", "system", '{"via": "POST /memory/items"}'),
-    )
-    cur.connection.commit()
+        # Unknown or unnamed block -> the fallback block, which is the *most* restrictive
+        # one, not a neutral bucket (D3).
+        if payload.block_name:
+            cur.execute("select id from blocks where user_id = %s and name = %s",
+                        (user.id, payload.block_name))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(422, f"unknown block: {payload.block_name}")
+            block_id = row["id"]
+        else:
+            cur.execute("select id from blocks where user_id = %s and is_fallback", (user.id,))
+            block_id = cur.fetchone()["id"]
 
-    cur.execute(f"{ITEM_SELECT} where mi.id = %s", (new_id,))
-    return cur.fetchone()
+        cur.execute(
+            """
+            insert into memory_items (
+                user_id, block_id, content, source_type, status, sensitivity, scope,
+                confidence, source_message_id, session_chat_id, review_state, needs_review,
+                embedding
+            ) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            returning id
+            """,
+            (
+                user.id, block_id, payload.content,
+                payload.source_type.value, payload.status.value,
+                payload.sensitivity.value, payload.scope.value, payload.confidence,
+                payload.source_message_id, payload.session_chat_id,
+                payload.review_state.value, payload.needs_review, vec,
+            ),
+        )
+        new_id = cur.fetchone()["id"]
+
+        cur.execute(
+            "insert into audit_log (memory_item_id, action, actor, detail) values (%s,%s,%s,%s)",
+            (new_id, "created", "system", '{"via": "POST /memory/items"}'),
+        )
+        cur.execute(f"{ITEM_SELECT} where mi.id = %s", (new_id,))
+        return cur.fetchone()
 
 
 # --------------------------------------------------------------------------
@@ -216,10 +241,10 @@ def create_item(payload: MemoryItemCreate, cur=Depends(db_cursor)):
 # page (D1). They are also plain REST, so P4's list view reuses them unchanged.
 # --------------------------------------------------------------------------
 
-def _load(cur, item_id: UUID) -> dict:
+def _load(cur, item_id: UUID, user_id: UUID) -> dict:
     cur.execute(
         "select * from memory_items where id = %s and user_id = %s and deleted_at is null",
-        (item_id, settings.demo_user_id),
+        (item_id, user_id),
     )
     row = cur.fetchone()
     if not row:
@@ -240,8 +265,8 @@ def _return(cur, item_id: UUID):
 
 
 @router.post("/items/{item_id}/accept", response_model=MemoryItem)
-def accept_item(item_id: UUID, cur=Depends(db_cursor)):
-    _load(cur, item_id)
+def accept_item(item_id: UUID, user: User = Depends(current_user), cur=Depends(db_cursor)):
+    _load(cur, item_id, user.id)
     cur.execute(
         """update memory_items
            set review_state = 'accepted', needs_review = false, last_confirmed_at = now()
@@ -254,7 +279,7 @@ def accept_item(item_id: UUID, cur=Depends(db_cursor)):
 
 
 @router.post("/items/{item_id}/reject", response_model=MemoryItem)
-def reject_item(item_id: UUID, cur=Depends(db_cursor)):
+def reject_item(item_id: UUID, user: User = Depends(current_user), cur=Depends(db_cursor)):
     """Rejection tombstones rather than deletes.
 
     The audit trail is the point: "the system proposed this and the user said no" is
@@ -262,7 +287,7 @@ def reject_item(item_id: UUID, cur=Depends(db_cursor)):
     items are excluded from retrieval by review_state, so this costs nothing at
     use time.
     """
-    _load(cur, item_id)
+    _load(cur, item_id, user.id)
     cur.execute(
         "update memory_items set review_state = 'rejected', deleted_at = now() where id = %s",
         (item_id,),
@@ -274,68 +299,75 @@ def reject_item(item_id: UUID, cur=Depends(db_cursor)):
 
 
 @router.patch("/items/{item_id}", response_model=MemoryItem)
-def edit_item(item_id: UUID, payload: MemoryItemEdit, cur=Depends(db_cursor)):
+def edit_item(item_id: UUID, payload: MemoryItemEdit, user: User = Depends(current_user)):
     """Correct the item in place.
 
     A correction is an acceptance: the user has looked at it and said what it should
     say, so there is no reason to make them press accept afterwards. Editing the
     content re-embeds, or retrieval would keep matching the wording the user rejected.
     """
-    before = _load(cur, item_id)
+    vec: str | None = None
+    if payload.content is not None:
+        with pool.connection() as conn, conn.cursor() as cur:
+            before = _load(cur, item_id, user.id)
+        if payload.content != before["content"]:
+            spend_llm(user)
+            try:
+                vec = str(llm.embed([payload.content])[0])
+            except Exception as e:
+                log.exception("re-embedding failed on edit")
+                raise HTTPException(502, f"could not re-embed edited content: {llm.public_error(e)}") from e
 
-    sets: list[str] = []
-    params: list = []
-    changed: dict = {}
+    with pool.connection() as conn, conn.cursor() as cur:
+        before = _load(cur, item_id, user.id)
 
-    if payload.content is not None and payload.content != before["content"]:
-        sets.append("content = %s")
-        params.append(payload.content)
-        changed["content"] = {"from": before["content"], "to": payload.content}
-        try:
-            sets.append("embedding = %s")
-            params.append(str(llm.embed([payload.content])[0]))
-        except Exception as e:
-            raise HTTPException(502, f"could not re-embed edited content: {e}") from e
+        sets: list[str] = []
+        params: list = []
+        changed: dict = {}
 
-    for field in ("status", "sensitivity"):
-        val = getattr(payload, field)
-        if val is not None and val.value != before[field]:
-            sets.append(f"{field} = %s")
-            params.append(val.value)
-            changed[field] = {"from": before[field], "to": val.value}
+        if payload.content is not None and payload.content != before["content"]:
+            sets += ["content = %s", "embedding = %s"]
+            params += [payload.content, vec]
+            changed["content"] = {"from": before["content"], "to": payload.content}
 
-    if payload.block_name is not None:
-        cur.execute(
-            "select id, name from blocks where user_id = %s and name = %s",
-            (settings.demo_user_id, payload.block_name),
-        )
-        blk = cur.fetchone()
-        if not blk:
-            raise HTTPException(422, f"unknown block: {payload.block_name}")
-        if blk["id"] != before["block_id"]:
-            sets.append("block_id = %s")
-            params.append(blk["id"])
-            changed["block"] = payload.block_name
+        for field in ("status", "sensitivity"):
+            val = getattr(payload, field)
+            if val is not None and val.value != before[field]:
+                sets.append(f"{field} = %s")
+                params.append(val.value)
+                changed[field] = {"from": before[field], "to": val.value}
 
-    if not sets:
+        if payload.block_name is not None:
+            cur.execute(
+                "select id, name from blocks where user_id = %s and name = %s",
+                (user.id, payload.block_name),
+            )
+            blk = cur.fetchone()
+            if not blk:
+                raise HTTPException(422, f"unknown block: {payload.block_name}")
+            if blk["id"] != before["block_id"]:
+                sets.append("block_id = %s")
+                params.append(blk["id"])
+                changed["block"] = payload.block_name
+
+        if not sets:
+            return _return(cur, item_id)
+
+        sets += ["review_state = 'accepted'", "needs_review = false", "last_confirmed_at = now()"]
+        params.append(item_id)
+        cur.execute(f"update memory_items set {', '.join(sets)} where id = %s", params)
+        _audit(cur, item_id, "edited", changed)
         return _return(cur, item_id)
-
-    sets += ["review_state = 'accepted'", "needs_review = false", "last_confirmed_at = now()"]
-    params.append(item_id)
-    cur.execute(f"update memory_items set {', '.join(sets)} where id = %s", params)
-    _audit(cur, item_id, "edited", changed)
-    cur.connection.commit()
-    return _return(cur, item_id)
 
 
 @router.post("/items/{item_id}/rescope", response_model=MemoryItem)
-def rescope_item(item_id: UUID, payload: RescopeRequest, cur=Depends(db_cursor)):
+def rescope_item(item_id: UUID, payload: RescopeRequest, user: User = Depends(current_user), cur=Depends(db_cursor)):
     """Move an item between session and persistent.
 
     Demoting to session needs a chat to anchor to (D14); the source message's chat is
     the only defensible choice, since that is the conversation the fact was disclosed in.
     """
-    before = _load(cur, item_id)
+    before = _load(cur, item_id, user.id)
     if before["scope"] == payload.scope.value:
         return _return(cur, item_id)
 
@@ -360,7 +392,7 @@ def rescope_item(item_id: UUID, payload: RescopeRequest, cur=Depends(db_cursor))
 # --------------------------------------------------------------------------
 
 @router.post("/items/{item_id}/confirm", response_model=MemoryItem)
-def confirm_item(item_id: UUID, cur=Depends(db_cursor)):
+def confirm_item(item_id: UUID, user: User = Depends(current_user), cur=Depends(db_cursor)):
     """"Yes, this is still true." Resets the decay clock.
 
     Decay is not deletion — a stale item is still used, just never asserted as current
@@ -368,7 +400,7 @@ def confirm_item(item_id: UUID, cur=Depends(db_cursor)):
     point: the alternative to a one-tap confirm is silent reuse of a fact that has
     quietly stopped being true (D4).
     """
-    _load(cur, item_id)
+    _load(cur, item_id, user.id)
     cur.execute(
         "update memory_items set last_confirmed_at = now(), needs_review = false where id = %s",
         (item_id,),
@@ -493,7 +525,7 @@ def _cascade(cur, root_id: UUID) -> tuple[CascadePreview, set[UUID]]:
 
 
 @router.get("/graph", response_model=ProvenanceGraph)
-def full_graph(cur=Depends(db_cursor), limit: int = Query(GRAPH_NODE_CAP, le=500)):
+def full_graph(user: User = Depends(current_user), cur=Depends(db_cursor), limit: int = Query(GRAPH_NODE_CAP, le=500)):
     """Every live item and every edge between them — the graph view's backing data.
 
     Capped, and it reports when it capped. A view that silently shows 150 of 400
@@ -502,7 +534,7 @@ def full_graph(cur=Depends(db_cursor), limit: int = Query(GRAPH_NODE_CAP, le=500
     cur.execute(
         f"{GRAPH_SELECT} where mi.user_id = %s and mi.deleted_at is null "
         f"and mi.review_state <> 'rejected' order by mi.created_at desc limit %s",
-        (settings.demo_user_id, limit + 1),
+        (user.id, limit + 1),
     )
     rows = cur.fetchall()
     truncated = len(rows) > limit
@@ -522,9 +554,9 @@ def full_graph(cur=Depends(db_cursor), limit: int = Query(GRAPH_NODE_CAP, le=500
 
 
 @router.get("/items/{item_id}/graph", response_model=ProvenanceGraph)
-def item_graph(item_id: UUID, cur=Depends(db_cursor)):
+def item_graph(item_id: UUID, user: User = Depends(current_user), cur=Depends(db_cursor)):
     """The deletion preview, as data. Answers exactly one question."""
-    _load(cur, item_id)
+    _load(cur, item_id, user.id)
     cascade, touched = _cascade(cur, item_id)
 
     ids = list(touched)
@@ -541,6 +573,220 @@ def item_graph(item_id: UUID, cur=Depends(db_cursor)):
     )
 
 
-@router.delete("/items/{item_id}")
-def delete_item(item_id: UUID):
-    _todo("P5", "tombstone + cascade per SYSTEM_DESIGN §3")
+@router.delete("/items/{item_id}", response_model=CascadePreview)
+def delete_item(item_id: UUID, user: User = Depends(current_user), cur=Depends(db_cursor)):
+    """Tombstone an item and everything that exists only because of it.
+
+    Executes exactly the preview `GET /items/{id}/graph` showed — same `_cascade`
+    walk — so what the user was told and what happened cannot diverge.
+
+    * the root and every dependent with no other support are tombstoned;
+    * dependents that still have independent support survive, flagged for review —
+      they are NOT re-derived, and the UI says so;
+    * the far end of a `contradicts` / `updates` edge is true independently, so it is
+      kept and flagged, because the statement about the pair lost one side;
+    * past assistant messages are not rewritten. `attribution_count` says how many
+      used these memories, so nobody assumes deleting rewrites history.
+    """
+    root = _load(cur, item_id, user.id)
+    cascade, _ = _cascade(cur, item_id)
+
+    doomed = [item_id, *cascade.cascade_delete]
+    cur.execute(
+        "update memory_items set deleted_at = now() where id = any(%s) and user_id = %s and deleted_at is null",
+        (doomed, user.id),
+    )
+    _audit(cur, item_id, "deleted", {"cascade_delete": [str(i) for i in cascade.cascade_delete]})
+    for dep in cascade.cascade_delete:
+        _audit(cur, dep, "deleted_by_cascade", {"root": str(item_id)})
+
+    reason = f"a memory this relied on was deleted: {root['content'][:120]}"
+    flagged = [*cascade.flag_for_review, *cascade.relationship_affected]
+    if flagged:
+        cur.execute(
+            "update memory_items set needs_review = true, review_reason = %s where id = any(%s) and user_id = %s",
+            (reason, flagged, user.id),
+        )
+        for f in flagged:
+            _audit(cur, f, "flagged_for_review", {"because_deleted": str(item_id)})
+    return cascade
+
+
+# --------------------------------------------------------------------------
+# Subnodes: the child notes a user hangs off a memory in the graph view.
+# --------------------------------------------------------------------------
+
+MAX_SUBNODES_PER_ITEM = 200
+PRUNE_BELOW_CONFIDENCE = 0.5
+
+SUBNODE_COLS = "id, memory_item_id, content, confidence, category, created_at"
+
+
+@router.get("/items/{item_id}/subnodes", response_model=list[Subnode])
+def list_subnodes(item_id: UUID, user: User = Depends(current_user), cur=Depends(db_cursor)):
+    _load(cur, item_id, user.id)
+    cur.execute(
+        f"select {SUBNODE_COLS} from memory_subnodes where memory_item_id = %s and user_id = %s order by created_at",
+        (item_id, user.id),
+    )
+    return cur.fetchall()
+
+
+@router.post("/items/{item_id}/subnodes", response_model=Subnode, status_code=201)
+def create_subnode(
+    item_id: UUID, payload: SubnodeCreate,
+    user: User = Depends(current_user), cur=Depends(db_cursor),
+):
+    _load(cur, item_id, user.id)
+    cur.execute("select count(*) as n from memory_subnodes where memory_item_id = %s", (item_id,))
+    if cur.fetchone()["n"] >= MAX_SUBNODES_PER_ITEM:
+        raise HTTPException(422, f"a memory can hold at most {MAX_SUBNODES_PER_ITEM} child notes")
+    cur.execute(
+        f"""insert into memory_subnodes (memory_item_id, user_id, content, confidence, category)
+            values (%s, %s, %s, %s, %s) returning {SUBNODE_COLS}""",
+        (item_id, user.id, payload.content, payload.confidence, payload.category),
+    )
+    row = cur.fetchone()
+    _audit(cur, item_id, "subnode_added", {"subnode_id": str(row["id"])})
+    return row
+
+
+@router.patch("/subnodes/{subnode_id}", response_model=Subnode)
+def edit_subnode(
+    subnode_id: UUID, payload: SubnodeEdit,
+    user: User = Depends(current_user), cur=Depends(db_cursor),
+):
+    fields = payload.model_dump(exclude_unset=True, exclude_none=True)
+    if not fields:
+        cur.execute(
+            f"select {SUBNODE_COLS} from memory_subnodes where id = %s and user_id = %s",
+            (subnode_id, user.id),
+        )
+    else:
+        sets = ", ".join(f"{k} = %s" for k in fields)  # keys come from the model, not the client
+        cur.execute(
+            f"""update memory_subnodes set {sets}, updated_at = now()
+                where id = %s and user_id = %s returning {SUBNODE_COLS}""",
+            (*fields.values(), subnode_id, user.id),
+        )
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(404, "subnode not found")
+    return row
+
+
+@router.delete("/subnodes/{subnode_id}")
+def delete_subnode(subnode_id: UUID, user: User = Depends(current_user), cur=Depends(db_cursor)):
+    cur.execute(
+        "delete from memory_subnodes where id = %s and user_id = %s returning memory_item_id",
+        (subnode_id, user.id),
+    )
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(404, "subnode not found")
+    _audit(cur, row["memory_item_id"], "subnode_deleted", {"subnode_id": str(subnode_id)})
+    return {"status": "deleted", "id": str(subnode_id)}
+
+
+@router.post("/items/{item_id}/prune", response_model=PruneResponse)
+def prune_subnodes(item_id: UUID, user: User = Depends(current_user), cur=Depends(db_cursor)):
+    """Drop child notes that are low-confidence or duplicates of an earlier one.
+
+    Deterministic and explainable on purpose — no model decides what the user's notes
+    were worth. Confidence below `PRUNE_BELOW_CONFIDENCE` goes; of notes with identical
+    text (case/whitespace-insensitive) the earliest stays.
+    """
+    _load(cur, item_id, user.id)
+    cur.execute(
+        """delete from memory_subnodes s
+            where s.memory_item_id = %s and s.user_id = %s
+              and (s.confidence < %s
+                   or exists (select 1 from memory_subnodes o
+                               where o.memory_item_id = s.memory_item_id
+                                 and lower(btrim(o.content)) = lower(btrim(s.content))
+                                 and (o.created_at, o.id) < (s.created_at, s.id)))
+        returning s.id""",
+        (item_id, user.id, PRUNE_BELOW_CONFIDENCE),
+    )
+    n = len(cur.fetchall())
+    if n:
+        _audit(cur, item_id, "subnodes_pruned", {"count": n})
+    return PruneResponse(
+        pruned_count=n,
+        message=f"Removed {n} child note{'s' if n != 1 else ''}." if n else "Nothing to prune.",
+    )
+
+
+def _fallback_summary(item: dict, notes: list[str]) -> tuple[str, str, list[str]]:
+    title = item["content"].strip().split("\n")[0][:60]
+    summary = f"{item['content'].strip()} (status: {item['status'].replace('_', ' ')})"
+    return title, summary, notes[:5]
+
+
+@router.get("/items/{item_id}/summary", response_model=NodeSummary)
+def node_summary(item_id: UUID, user: User = Depends(current_user)):
+    """Hover-card summary of a memory and its child notes.
+
+    Uses the model when it can and a plain restatement when it cannot, so an LLM outage
+    degrades the card rather than breaking it. A memory in a **private block is never
+    sent to a model** — the same rule retrieval enforces — so it always gets the
+    deterministic summary.
+    """
+    with pool.connection() as conn, conn.cursor() as cur:
+        item = _load(cur, item_id, user.id)
+        cur.execute(
+            "select coalesce(private, false) as private from blocks where id = %s", (item["block_id"],)
+        )
+        blk = cur.fetchone()
+        private = bool(blk and blk["private"])
+        cur.execute(
+            "select content from memory_subnodes where memory_item_id = %s and user_id = %s order by created_at",
+            (item_id, user.id),
+        )
+        notes = [r["content"] for r in cur.fetchall()]
+
+    title, summary, points = _fallback_summary(item, notes)
+    if not private:
+        spend_llm(user)
+        try:
+            result = llm.summarize_item(item["content"], item["status"], notes)
+            if result:
+                title, summary, points = result.title, result.summary, result.key_points
+        except Exception:
+            log.exception("node summary failed; serving the deterministic summary")
+    return NodeSummary(
+        memory_item_id=item_id, title=title, summary=summary,
+        key_points=points, subnode_count=len(notes),
+    )
+
+
+@router.post("/relevance", response_model=RelevanceResponse, dependencies=[Depends(llm_limit)])
+def relevance(payload: RelevanceRequest, user: User = Depends(current_user)):
+    """Per-memory relevance to a prompt, for the graph's retrieval highlight.
+
+    Mirrors what retrieval would consider: persistent, accepted, live, and not in a
+    private block. Highlighting a private memory as "would be used" would be a false
+    claim about what the model can see.
+    """
+    vec = embed_query(payload.prompt)
+    if vec is None:
+        raise HTTPException(502, "could not embed the prompt")
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """select mi.id, mi.embedding <=> %s::vector as distance
+                 from memory_items mi
+                 left join blocks b on b.id = mi.block_id
+                where mi.user_id = %s and mi.deleted_at is null
+                  and mi.review_state in ('accepted', 'auto_accepted')
+                  and mi.scope = 'persistent'
+                  and mi.embedding is not null
+                  and not coalesce(b.private, false)""",
+            (str(vec), user.id),
+        )
+        rows = cur.fetchall()
+    scores = {
+        str(r["id"]): round(1.0 - float(r["distance"]) / MAX_DISTANCE, 3)
+        for r in rows
+        if float(r["distance"]) < MAX_DISTANCE
+    }
+    return RelevanceResponse(scores=scores)
