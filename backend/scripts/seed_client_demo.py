@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import psycopg
@@ -30,7 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.config import settings  # noqa: E402
 from app.services import llm  # noqa: E402
 
-NOW = datetime.now(timezone.utc)
+NOW = datetime.now(UTC)
 
 
 # ---------------------------------------------------------------------------
@@ -425,7 +425,7 @@ def main() -> int:
             vectors = llm.embed([m[0] for m in MEMORIES])
 
             # Insert memory items
-            for i, (row, vec) in enumerate(zip(MEMORIES, vectors, strict=True)):
+            for row, vec in zip(MEMORIES, vectors, strict=True):
                 (content, block, source, status, sens, conf,
                  review, days, scope, session_idx) = row
 
