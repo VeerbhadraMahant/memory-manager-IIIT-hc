@@ -651,7 +651,7 @@ function GraphInner({
         <div
           role="menu"
           style={{ top: contextMenu.y, left: contextMenu.x }}
-          className="fixed z-50 w-52 rounded-card border border-outline-strong bg-elevated p-1.5"
+          className="fixed z-50 w-52 rounded-card bg-elevated p-1.5 shadow-pop"
         >
           <button
             type="button"

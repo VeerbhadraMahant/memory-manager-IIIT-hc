@@ -34,8 +34,8 @@ export function SectionHeading({
     <div className={cn("max-w-2xl", align === "center" && "mx-auto text-center")}>
       <h2
         className={cn(
-          "text-headline-lg font-light",
-          emphasis ? "text-stated" : "text-ink-invert",
+          "text-headline-lg font-normal",
+          emphasis ? "text-ink" : "text-ink-invert",
         )}
       >
         {children}

@@ -12,7 +12,7 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 const button = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-input " +
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-pill " +
     "font-medium transition-colors disabled:pointer-events-none disabled:opacity-50 " +
     // §7 disabled-states: opacity plus a cursor change, and `disabled` is the
     // real attribute so it is announced rather than merely looking inert.
@@ -20,15 +20,14 @@ const button = cva(
   {
     variants: {
       variant: {
-        // §4: one primary CTA per surface. Ash fill with Void text (13.8:1) — the style
-        // forbids promoting teal or mint to the CTA colour, and teal-on-white would be
-        // 2.4:1 anyway. Teal is the voice of everything *else* you can press.
+        // §4: one primary CTA per surface. Ink pill, white text (17:1). Paired with a
+        // ghost/outline pill on the same row (Steep).
         //
-        // The disabled treatment stays a neutral outline rather than a faded fill: a
-        // half-strength light fill on a dark page reads as a different colour, not as a
-        // control waiting for input.
+        // The disabled treatment is a neutral outline rather than a faded fill: a
+        // half-strength ink fill reads as a different colour, not as a control waiting
+        // for input.
         primary:
-          "bg-action text-on-action hover:brightness-90 active:brightness-75 " +
+          "bg-action text-on-action hover:opacity-85 active:opacity-70 " +
           "disabled:bg-transparent disabled:opacity-100 disabled:border disabled:border-outline-strong " +
           "disabled:text-ink-invert-muted",
         // On the app background.

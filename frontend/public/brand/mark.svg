@@ -1,8 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Negotiated AI Memory">
-  <rect width="128" height="128" rx="24" fill="#e4cbf2"/>
-  <polygon points="18.0,104.0 60.0,30.0 60.0,104.0" fill="#f4706b"/>
-  <polygon points="60.0,30.0 112.0,104.0 60.0,104.0" fill="#d9525f"/>
-  <polygon points="60.0,30.0 38.0,70.0 60.0,74.0" fill="#f9988f"/>
-  <polygon points="60.0,30.0 84.0,66.0 62.0,80.0" fill="#e8605f"/>
-  <circle cx="60" cy="19" r="5" fill="#0be291"/>
+  <rect width="128" height="128" rx="32" fill="#17191c"/>
+  <circle cx="50" cy="64" r="26" fill="#fbe1d1"/>
+  <circle cx="78" cy="64" r="26" fill="none" stroke="#fbe1d1" stroke-width="5"/>
 </svg>

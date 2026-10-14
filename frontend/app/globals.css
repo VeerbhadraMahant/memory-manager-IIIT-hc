@@ -2,110 +2,96 @@
 @import "@xyflow/react/dist/style.css";
 
 /* ============================================================ §1 Tokens
- * Dark theme, on the "Tableland" style from styles.refero.design: a green-black developer
- * surface with one painted moment (the lavender-and-coral hero, public/brand/hero.svg).
+ * Light theme, on the "Steep" style from styles.refero.design: serif headlines on warm
+ * paper, near-monochrome, one peach accent, flat cards, pill controls.
  *
- *   #101e1e Void     page canvas            #75b6b5 Abyss Teal   interactive voice
- *   #162929 Slate    cards, hairline fills  #0be291 Mint Beacon  emphasis
- *   #3b4949 Graphite overlays only              #f4706b Coral Ember  warmth / warnings
- *   #1a1a1a Carbon   terminals, inputs      #e4cbf2 Lavender     the hero, and "inferred"
- *   #e5e7eb Ash      hairlines, primary CTA #ffffff Paper        primary text
+ *   #ffffff Paper   canvas             #17191c Ink    text, primary CTA, interactive
+ *   #f2f2f3 Mist    cards              #fafafb Fog    sidebar, inputs, bands
+ *   #fbe1d1 Peach   the one accent     #5d2a1a Sienna ink on peach only
  *
- * The rules from the previous light theme survive the swap, which is what made it cheap:
- * components spend tokens rather than hex, fill colours are never used as small type, and
- * every pair is measured. Only the values below moved.
+ * Components spend tokens rather than hex, so this block is the whole re-skin; the
+ * previous dark "Tableland" theme was swapped out the same way.
  *
- * What follows the style as written: Poppins with weight 300 on display headings, no
- * shadows (depth is surface steps and hairlines), 4px buttons/inputs, 8px cards, 16px
- * elevated surfaces, pills only for tags and icon containers, no pure black, teal for
- * everything interactive.
+ * Departures from the style as written (a product UI, not a marketing page):
  *
- * Where a product UI forced a deliberate departure from a marketing-site style guide:
+ *   - MUTED TEXT is #62666F, not Slate #777B86 (4.2:1 on white, 3.7 on Mist — under AA).
+ *   - FONTS: Signifier and Söhne are commercial. Source Serif 4 (display, 400) and Inter
+ *     are the style's own named fallbacks.
+ *   - STATED / INFERRED: the style allows no chromatic colour, and this product's central
+ *     distinction needs one that is not hue alone. Stated = ink on a grey wash, inferred
+ *     = sienna on peach; both always carry a text label.
+ *   - DANGER is a muted brick (#B3341E). The palette has no red, but a delete button that
+ *     looks like every other button breaks "friction proportional to irreversibility".
+ *     Alert (caution) is sienna on peach and is told apart from danger by icon and label.
+ *   - Cards are 16px (the style's smallCards), not 24px: dense lists at 24px read as
+ *     bubbles. Landing cards use 24px explicitly.
+ *   - Shadow only on floating surfaces (dialogs, popovers), per the style.
  *
- *   - MUTED TEXT is #A8BEBE, not Fog #718B8B. Fog measures 4.17:1 on Slate and 2.58:1 on
- *     Graphite — under AA — and this app puts 12-14px secondary text on both. Fog stays
- *     available as --fog for non-text strokes and disabled glyphs.
- *   - MINT is not only for headings. "You said this" (stated) is the one distinction this
- *     product exists to make, and it needs a colour that is not the interactive teal. The
- *     pair is mint (stated) / lavender (inferred), both always paired with a text label.
- *   - HAIRLINES are Ash at low alpha, not solid Ash: a dense UI drawn in solid #E5E7EB
- *     boxes is loud. The meaning (1px, one colour, the only border) is unchanged.
- *   - DANGER and ALERT both use Coral (the palette has no red or amber and adds none).
- *     They are told apart by icon, label and fill: danger is a filled/destructive
- *     treatment, alert is an outlined caution.
- *
- * Measured, worst case on the surface each token actually lands on:
- *
- *   --ink             #FFFFFF  17.1 void · 15.2 slate · 9.4 graphite
- *   --ink-muted       #A8BEBE   8.8 void ·  7.8 slate · 4.8 graphite
- *   --accent (teal)   #75B6B5   7.4 void ·  6.6 slate · 4.1 graphite (graphite: large/graphic only)
- *   --stated (mint)   #0BE291  10.0 void ·  8.9 slate · 5.5 graphite
- *   --inferred (lav)  #E4CBF2  11.5 void · 10.2 slate · 6.3 graphite
- *   --danger (coral)  #F4706B   6.0 void ·  5.3 slate · 3.3 graphite (do not place small
- *                              coral text on graphite)
- *   primary button    Void on Ash 13.8
+ * Measured contrast (worst case on the surface the token lands on):
+ *   --ink #17191C 17.0 white · 15.0 mist     --ink-muted #62666F 5.7 white · 5.0 mist
+ *   --inferred #5D2A1A on peach 8.5          --danger #B3341E 6.4 white · 5.6 mist
+ *   primary button: white on ink 17.0
  */
 
 :root {
-  /* Surfaces, darkest-but-one up. Never pure black; every dark is green-tinted. */
-  --bg:                #101E1E;  /* Void — the canvas */
-  --surface:           #162929;  /* Slate — cards, panels, floating surfaces */
-  --surface-raised:    #162929;  /* Slate again: cards sit on the same tier as panels */
-  --surface-elevated:  #3B4949;  /* Graphite — overlays only: tooltips, menus, popovers */
-  --surface-sunken:    #1A1A1A;  /* Carbon — inputs, terminals, the sidebar */
+  --bg:                #FFFFFF;  /* Paper — the canvas */
+  --surface:           #F2F2F3;  /* Mist — cards, panels */
+  --surface-raised:    #FFFFFF;  /* floating artifacts sit above Mist */
+  --surface-elevated:  #FFFFFF;  /* overlays: tooltips, menus, popovers (they carry the shadow) */
+  --surface-sunken:    #FAFAFB;  /* Fog — inputs, the sidebar, terminals */
 
-  /* Interactive. Teal is the app's voice for anything you can press or follow. It is
-   * not a fill for the primary action (the style forbids it, and white-on-teal is 2.4:1):
-   * the primary button is Ash with Void text, below. */
-  --accent:            #75B6B5;
-  --accent-dim:        rgb(117 182 181 / 0.14);
-  --action:            #E5E7EB;  /* Ash fill, primary CTA */
-  --on-action:         #101E1E;  /* Void on Ash — 13.8 */
+  /* Interactive: ink. Links get their affordance from underline-on-hover and arrows. */
+  --accent:            #17191C;
+  --accent-dim:        rgb(23 25 28 / 0.06);
+  --action:            #17191C;
+  --on-action:         #FFFFFF;
 
-  /* Memory semantics — fills, strokes and (because they all clear AA on every surface
-   * they land on) text. The -ink / -on-bg names are kept because components spend both. */
-  --stated:            #0BE291;
-  --inferred:          #E4CBF2;
-  --stated-ink:        #0BE291;
-  --stated-on-bg:      #0BE291;
-  --inferred-ink:      #E4CBF2;
-  --inferred-on-bg:    #E4CBF2;
-  --stated-dim:        rgb(11 226 145 / 0.12);
-  --inferred-dim:      rgb(228 203 242 / 0.12);
+  /* Memory semantics. */
+  --stated:            #17191C;
+  --inferred:          #5D2A1A;
+  --stated-ink:        #17191C;
+  --stated-on-bg:      #17191C;
+  --inferred-ink:      #5D2A1A;
+  --inferred-on-bg:    #5D2A1A;
+  --stated-dim:        rgb(23 25 28 / 0.07);
+  --inferred-dim:      #FBE1D1;
 
   /* Text */
-  --ink:               #FFFFFF;
-  --ink-muted:         #A8BEBE;
-  --ink-invert:        #FFFFFF;  /* "invert" is a historical name: text on --bg. Same value. */
-  --ink-invert-muted:  #A8BEBE;
-  --fog:               #718B8B;  /* the style's Fog: strokes and disabled glyphs, never text */
+  --ink:               #17191C;
+  --ink-muted:         #62666F;
+  --ink-invert:        #17191C;  /* historical name: text on --bg. Same value as --ink. */
+  --ink-invert-muted:  #62666F;
+  --fog:               #A3A6AF;  /* Smoke: strokes, placeholders, disabled glyphs — not text */
 
-  /* The hero band only — the style's one painted moment. Never used for app chrome.
-   * Carbon on Lavender 11.7; Graphite on Lavender 6.1. */
-  --lavender:          #E4CBF2;
-  --hero-ink:          #1A1A1A;
-  --hero-ink-muted:    #3B4949;
+  /* Peach card: used once per page, for editorial emphasis. */
+  --lavender:          #FBE1D1;
+  --hero-ink:          #5D2A1A;
+  --hero-ink-muted:    #7A4636;
 
-  /* Lines — Ash at alpha. */
-  --outline:           rgb(229 231 235 / 0.12);
-  --outline-strong:    rgb(229 231 235 / 0.32);
-  --outline-ink:       rgb(229 231 235 / 0.16);
+  /* Lines */
+  --outline:           #ECECEE;
+  --outline-strong:    #D9DADE;
+  --outline-ink:       #E2E3E6;
 
-  /* Status. Coral is the palette's only warm colour, so it carries both. */
-  --alert:             #F4706B;
-  --alert-ink:         #F4706B;
-  --alert-dim:         rgb(244 112 107 / 0.10);
+  /* Status */
+  --alert:             #5D2A1A;
+  --alert-ink:         #5D2A1A;
+  --alert-dim:         #FBE1D1;
 
-  --danger:            #F4706B;
-  --danger-ink:        #F4706B;
-  --danger-on-bg:      #F4706B;
-  --danger-dim:        rgb(244 112 107 / 0.12);
+  --danger:            #B3341E;
+  --danger-ink:        #B3341E;
+  --danger-on-bg:      #B3341E;
+  --danger-dim:        rgb(179 52 30 / 0.08);
 
-  /* Radius — buttons/inputs/code 4, cards 8, elevated 16; pills only for tags. */
-  --radius-input:    0.25rem;
-  --radius-card:     0.5rem;
-  --radius-elevated: 1rem;
+  /* Radius — pills for buttons, 16 inputs/cards, 20 elevated. */
+  --radius-input:    1rem;
+  --radius-card:     1rem;
+  --radius-elevated: 1.25rem;
   --radius-pill:     999px;
+
+  /* Shadows — floating surfaces only. */
+  --shadow-float: 0 0 0 1px rgb(4 23 43 / 0.05), 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+  --shadow-pop:   0 0 0 1px rgb(0 0 0 / 0.05), 0 4px 24px 0 rgb(0 0 0 / 0.08);
 
   /* Motion (§5). One place, so the reduced-motion override below is total. */
   --motion-micro: 180ms;
@@ -161,15 +147,15 @@
   --color-danger-on-bg:    var(--danger-on-bg);
   --color-danger-dim:      var(--danger-dim);
 
-  /* Type. One family: Poppins, weights 300/400/500/700. JetBrains Mono stays strictly for
+  /* Type. Source Serif 4 at weight 400 for h1/h2, Inter for everything else. JetBrains Mono stays strictly for
    * machine-generated metadata — that rule is semantic, not decorative. */
-  --font-display: var(--font-poppins), ui-sans-serif, system-ui, sans-serif;
-  --font-sans:    var(--font-poppins), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-serif), ui-serif, Georgia, serif;
+  --font-sans:    var(--font-inter), ui-sans-serif, system-ui, sans-serif;
   --font-mono:    var(--font-jetbrains), ui-monospace, monospace;
 
-  --text-display: 3rem;           /* 48/48 — hero only */
-  --text-display--line-height: 1;
-  --text-headline-lg: 1.875rem;   /* 30/36 */
+  --text-display: 4.5rem;         /* 72/80 — hero only */
+  --text-display--line-height: 1.1;
+  --text-headline-lg: 2.5rem;     /* 40/48 */
   --text-headline-lg--line-height: 1.2;
   --text-headline-md: 1.375rem;   /* 22/32 */
   --text-headline-md--line-height: 1.43;
@@ -187,6 +173,9 @@
   --radius-elevated: var(--radius-elevated);
   --radius-pill: var(--radius-pill);
 
+  --shadow-float: var(--shadow-float);
+  --shadow-pop: var(--shadow-pop);
+
   --container-shell: 1200px;      /* §1 container max */
   --container-conversation: 800px;/* §1 conversation column max */
 }
@@ -194,8 +183,8 @@
 /* display and headline-lg step down on small screens (§1). */
 @media (max-width: 767px) {
   :root {
-    --text-display: 2.25rem;
-    --text-headline-lg: 1.625rem;
+    --text-display: 2.75rem;
+    --text-headline-lg: 1.875rem;
   }
 }
 
@@ -203,7 +192,7 @@
 
 html {
   background: var(--bg);
-  color-scheme: dark;
+  color-scheme: light;
   /* §6: 200% zoom without loss. Nothing here fixes a px viewport width. */
   -webkit-text-size-adjust: 100%;
 }
@@ -216,14 +205,15 @@ body {
   line-height: 1.5;
 }
 
-/* The whisper-weight is the signature voice: Poppins 300 on display and section
- * headings, 500 for the small headings inside cards. Nothing above 500 on a heading. */
+/* Serif at weight 400 on h1/h2 is the signature; tighter tracking as size grows. */
 h1, h2 {
-  font-family: var(--font-display), ui-sans-serif, system-ui, sans-serif;
-  font-weight: 300;
+  font-family: var(--font-display), ui-serif, Georgia, serif;
+  font-weight: 400;
+  letter-spacing: -0.015em;
 }
+h1 { letter-spacing: -0.025em; }
 h3, h4 {
-  font-family: var(--font-display), ui-sans-serif, system-ui, sans-serif;
+  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
   font-weight: 500;
 }
 

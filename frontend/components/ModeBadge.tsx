@@ -54,7 +54,7 @@ export function ModeBadge({
         <Info className="size-3.5 shrink-0 opacity-70 group-hover:opacity-100" aria-hidden="true" />
         <span
           role="tooltip"
-          className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 w-72 -translate-x-1/2 rounded-card border border-outline-strong bg-elevated px-3.5 py-3 text-left text-body-sm font-normal text-ink opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
+          className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 w-72 -translate-x-1/2 rounded-card bg-elevated shadow-pop px-3.5 py-3 text-left text-body-sm font-normal text-ink opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
         >
           <span className="mb-1 block font-medium">{tipTitle}</span>
           {tip}

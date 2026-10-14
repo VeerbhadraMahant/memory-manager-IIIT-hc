@@ -36,7 +36,7 @@ export function SignIn({
       <section aria-labelledby="signin-title" className="flex flex-col px-5 py-8 md:px-16">
         <Logo />
         <div className="my-auto w-full max-w-sm py-16">
-          <h1 id="signin-title" className="text-headline-lg font-light text-ink-invert">
+          <h1 id="signin-title" className="text-headline-lg font-normal text-ink-invert">
             Sign in to your memory
           </h1>
           <p className="mt-4 text-body-md text-ink-invert-muted">

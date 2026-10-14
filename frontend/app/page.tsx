@@ -16,6 +16,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { Logo } from "@/components/landing/Logo";
+import PatternWaves from "@/components/landing/PatternWaves";
 import { Feature, Section, SectionHeading } from "@/components/landing/Section";
 import { Button } from "@/components/ui/button";
 import { Chip, SourceChip } from "@/components/ui/chip";
@@ -44,25 +45,25 @@ export default function Landing() {
       </a>
 
       {/* ───────── nav: 64px, 1px hairline, teal links, one ghost pill ───────── */}
-      <header className="border-b border-outline-strong">
+      <header>
         <nav
           aria-label="Primary"
           className="mx-auto flex h-16 w-full max-w-[1200px] items-center justify-between px-5 md:px-20"
         >
           <Logo />
           <div className="flex items-center gap-1 sm:gap-4">
-            <a href="#how" className="tap hidden items-center px-2 text-body-sm text-accent hover:opacity-70 sm:inline-flex">
+            <a href="#how" className="tap hidden items-center px-2 text-body-sm text-ink hover:underline underline-offset-4 sm:inline-flex">
               How it works
             </a>
-            <a href="#principles" className="tap hidden items-center px-2 text-body-sm text-accent hover:opacity-70 md:inline-flex">
+            <a href="#principles" className="tap hidden items-center px-2 text-body-sm text-ink hover:underline underline-offset-4 md:inline-flex">
               Principles
             </a>
-            <a href={REPO} className="tap hidden items-center px-2 text-body-sm text-accent hover:opacity-70 md:inline-flex">
+            <a href={REPO} className="tap hidden items-center px-2 text-body-sm text-ink hover:underline underline-offset-4 md:inline-flex">
               Source
             </a>
             <Link
               href="/app"
-              className="tap inline-flex items-center whitespace-nowrap rounded-pill border border-ink-invert px-5 text-body-sm font-medium text-ink-invert transition-colors hover:bg-action hover:text-on-action"
+              className="tap inline-flex items-center whitespace-nowrap rounded-pill bg-action px-5 text-body-sm font-medium text-on-action transition-opacity hover:opacity-85"
             >
               Open workspace
             </Link>
@@ -71,43 +72,69 @@ export default function Landing() {
       </header>
 
       <main id="top">
-        {/* ───────── hero: the single painted moment ───────── */}
-        <div className="relative isolate overflow-hidden bg-lavender text-hero-ink">
-          {/* Decorative — the meaning is in the headline. Anchored bottom-right so the
-              peaks bleed off the right edge; on narrow screens it sits under the text. */}
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src="/brand/hero.svg"
-            alt=""
-            aria-hidden="true"
-            className="absolute inset-0 -z-10 h-full w-full object-cover object-[75%_100%] md:object-right-bottom"
-          />
-          <div className="mx-auto w-full max-w-[1200px] px-5 pb-72 pt-16 md:px-20 md:pb-40 md:pt-24">
-            <div className="max-w-[34rem]">
-              <p className="meta text-hero-ink-muted">
-                Memory you <strong className="font-bold text-hero-ink">negotiate</strong>
+        {/* ───────── hero: serif headline on paper, one floating product artifact ───────── */}
+        <div className="relative isolate overflow-hidden">
+          <div className="absolute inset-0 -z-10" aria-hidden="true">
+            <PatternWaves preset="silk" color="#B9BCC4" backgroundColor="#FFFFFF" fade="edges" interactive cursorSize={50} cursorStrength={0.6} />
+          </div>
+        <div className="mx-auto w-full max-w-[1200px] px-5 pb-20 pt-16 md:px-20 md:pb-28 md:pt-24">
+          <div className="mx-auto max-w-[52rem] text-center">
+            <p className="text-body-sm text-ink-muted">Memory you negotiate</p>
+            <h1 className="mt-4 text-display text-ink">
+              Memory that is <em>agreed</em>, not silently piled up.
+            </h1>
+            <p className="mx-auto mt-6 max-w-[34rem] text-body-lg text-ink-muted">
+              A chat where you see what is being remembered as it forms, correct it, keep it to one
+              conversation, and see exactly which memories shaped each reply.
+            </p>
+            <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
+              <Link
+                href="/app"
+                className="tap inline-flex items-center gap-2 rounded-pill bg-action px-6 text-body-sm font-medium text-on-action transition-opacity hover:opacity-85"
+              >
+                Open the workspace
+                <ArrowRight className="size-4" aria-hidden="true" />
+              </Link>
+              <a
+                href="#how"
+                className="tap inline-flex items-center rounded-pill border border-ink px-6 text-body-sm font-medium text-ink transition-colors hover:bg-accent-dim"
+              >
+                How it works
+              </a>
+            </div>
+          </div>
+          <div className="mx-auto mt-16 max-w-md md:mt-20">
+            <div className="rounded-elevated bg-raised p-6 text-left shadow-float" aria-label="Example review card">
+              <p className="meta text-ink-muted">Review · 1 of 3</p>
+              <p className="mt-3 text-body-lg font-normal text-ink">
+                Takes 20mg of sertraline, started in March
               </p>
-              <h1 className="mt-4 text-display font-light text-hero-ink">
-                Memory that is <strong className="font-bold">agreed</strong>, not silently piled up.
-              </h1>
-              <p className="mt-6 max-w-[30rem] text-body-lg font-light text-hero-ink">
-                A chat where you see what is being remembered as it forms, correct it, keep it to one
-                conversation, and see exactly which memories shaped each reply.
+              <blockquote className="mt-3 border-l border-outline-strong pl-3 text-body-sm text-ink-muted">
+                “…taking 20mg of sertraline since March.”
+              </blockquote>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <SourceChip source="stated" />
+                <Chip tone="alert">Special category</Chip>
+                <Chip>This chat only</Chip>
+                <Chip>Health</Chip>
+              </div>
+              <p className="mt-4 text-body-sm text-ink-muted">
+                Special category — kept to this session unless you choose to keep it.
               </p>
-              <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-3">
-                <Link
-                  href="/app"
-                  className="tap inline-flex items-center gap-2 rounded-input bg-bg px-6 text-body-sm font-medium text-ink-invert transition-colors hover:bg-sunken"
-                >
-                  Open the workspace
-                  <ArrowRight className="size-4" aria-hidden="true" />
-                </Link>
-                <a href="#how" className="tap inline-flex items-center text-body-sm font-medium text-hero-ink underline underline-offset-4">
-                  How it works
-                </a>
+              <div className="mt-5 flex flex-wrap gap-2">
+                <Button variant="primary" size="sm" tabIndex={-1}>
+                  Keep beyond this chat
+                </Button>
+                <Button variant="outline" size="sm" tabIndex={-1}>
+                  Edit
+                </Button>
+                <Button variant="ghost" size="sm" tabIndex={-1}>
+                  Discard
+                </Button>
               </div>
             </div>
           </div>
+        </div>
         </div>
 
         {/* ───────── how it works: four flat features ───────── */}
@@ -141,37 +168,16 @@ export default function Landing() {
         {/* ───────── product peek: the review card ───────── */}
         <Section className="pt-0">
           <div className="grid items-center gap-12 lg:grid-cols-2 lg:gap-20">
-            <div className="rounded-card border border-outline-strong bg-surface p-6" aria-label="Example review card">
-              <p className="meta text-ink-muted">Review · 1 of 3</p>
-              <p className="mt-3 text-body-lg font-light text-ink">
-                Takes 20mg of sertraline, started in March
+            <div className="rounded-[1.5rem] bg-lavender p-8 text-hero-ink md:p-10" aria-label="What a sensitive disclosure does">
+              <p className="text-body-sm">Health · special category</p>
+              <p className="mt-4 font-display text-headline-md leading-snug">
+                “Takes 20mg of sertraline, started in March” is kept to this chat — unless you choose
+                to keep it.
               </p>
-              <blockquote className="mt-3 border-l border-outline-strong pl-3 text-body-sm text-ink-muted">
-                “…taking 20mg of sertraline since March.”
-              </blockquote>
-              <div className="mt-4 flex flex-wrap gap-2">
-                <SourceChip source="stated" />
-                <Chip tone="alert">Special category</Chip>
-                <Chip>This chat only</Chip>
-                <Chip>Health</Chip>
-              </div>
-              <p className="mt-4 text-body-sm text-ink-muted">
-                Special category — kept to this session unless you choose to keep it.
-              </p>
-              <div className="mt-5 flex flex-wrap gap-2">
-                <Button variant="primary" size="sm" tabIndex={-1}>
-                  Keep beyond this chat
-                </Button>
-                <Button variant="outline" size="sm" tabIndex={-1}>
-                  Edit
-                </Button>
-                <Button variant="ghost" size="sm" tabIndex={-1}>
-                  Discard
-                </Button>
-              </div>
+              <p className="mt-6 text-body-sm text-hero-ink-muted">Stated by you · from your message, not inferred</p>
             </div>
             <div>
-              <h2 className="text-headline-lg font-light">You see it before it is kept</h2>
+              <h2 className="text-headline-lg font-normal">You see it before it is kept</h2>
               <p className="mt-4 max-w-md text-body-md text-ink-invert-muted">
                 Health, money and relationships are never filed away silently. They arrive in the
                 conversation with the sentence they came from and the reason they need you — and the
@@ -189,7 +195,7 @@ export default function Landing() {
         <Section className="pt-0">
           <div className="grid items-center gap-12 lg:grid-cols-2 lg:gap-20">
             <div className="lg:order-2">
-              <h2 className="text-headline-lg font-light">Unfinished work is never written up as finished</h2>
+              <h2 className="text-headline-lg font-normal">Unfinished work is never written up as finished</h2>
               <p className="mt-4 max-w-md text-body-md text-ink-invert-muted">
                 A paper you are still writing is stored as <code className="font-mono text-body-sm text-accent">in_progress</code>.
                 For high-stakes drafts every claim is compared with what the memory actually says — in
@@ -203,7 +209,7 @@ export default function Landing() {
                 <span className="size-2 rounded-pill bg-accent" />
                 <span className="meta ml-3 text-ink-muted">verified-draft</span>
               </div>
-              <pre className="overflow-x-auto p-6 font-mono text-label-sm font-light text-ink" tabIndex={0}>
+              <pre className="overflow-x-auto p-6 font-mono text-label-sm font-normal text-ink" tabIndex={0}>
 {`instruction  "Write my bio for the CHI submission"
 
 claim 1  "has published a paper on memory negotiation"
@@ -253,7 +259,7 @@ claim 2  "is writing a paper on memory negotiation"
 
         {/* ───────── closing call ───────── */}
         <Section className="border-t border-outline pt-24 text-center md:pt-32">
-          <h2 className="mx-auto max-w-2xl text-headline-lg font-light text-stated">
+          <h2 className="mx-auto max-w-2xl text-headline-lg font-normal text-ink">
             Start a conversation you can audit.
           </h2>
           <p className="mx-auto mt-4 max-w-md text-body-md text-ink-invert-muted">
@@ -262,14 +268,14 @@ claim 2  "is writing a paper on memory negotiation"
           <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
             <Link
               href="/app"
-              className="tap inline-flex items-center gap-2 rounded-input bg-action px-6 text-body-sm font-medium text-on-action transition-colors hover:brightness-90"
+              className="tap inline-flex items-center gap-2 rounded-pill bg-action px-6 text-body-sm font-medium text-on-action transition-colors hover:brightness-90"
             >
               Open the workspace
               <ArrowRight className="size-4" aria-hidden="true" />
             </Link>
             <a
               href={REPO}
-              className="tap inline-flex items-center rounded-input border border-outline-strong px-6 text-body-sm font-medium text-ink-invert transition-colors hover:bg-ink-invert/[0.08]"
+              className="tap inline-flex items-center rounded-pill border border-ink px-6 text-body-sm font-medium text-ink-invert transition-colors hover:bg-ink-invert/[0.08]"
             >
               Read the source
             </a>
