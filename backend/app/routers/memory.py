@@ -444,15 +444,12 @@ def _cascade(cur, root_id: UUID) -> tuple[CascadePreview, set[UUID]]:
     Returns the preview and the full set of item ids touched, so the caller can
     render exactly the subgraph the preview describes rather than a different one.
     """
-    cascade_delete: list[UUID] = []
-    flag_for_review: list[UUID] = []
-    touched: set[UUID] = {root_id}
-
-    # BFS, not recursion: a `derived_from` chain is user-generated data and a
-    # cycle would be a stack overflow rather than a bug report. `seen` also makes
-    # a diamond (two paths to the same dependent) resolve once.
-    frontier = [root_id]
+    # Pass 1: everything reachable along derivation edges. BFS, not recursion: a
+    # `derived_from` chain is user-generated data and a cycle would be a stack
+    # overflow rather than a bug report. `order` keeps the result deterministic.
+    order: list[UUID] = []
     seen: set[UUID] = {root_id}
+    frontier = [root_id]
     while frontier:
         current = frontier.pop(0)
         cur.execute(
@@ -460,32 +457,51 @@ def _cascade(cur, root_id: UUID) -> tuple[CascadePreview, set[UUID]]:
                from memory_edges e
                join memory_items mi on mi.id = e.to_item_id
                where e.from_item_id = %s and e.relation = any(%s)
-                 and mi.deleted_at is null""",
+                 and mi.deleted_at is null
+               order by mi.created_at, mi.id""",
             (current, list(DERIVING)),
         )
         for row in cur.fetchall():
             dependent = row["to_item_id"]
-            touched.add(dependent)
-            if dependent in seen:
-                continue
-            seen.add(dependent)
-
-            # Does anything *other than what we are deleting* still support it?
-            cur.execute(
-                """select count(*) as n
-                   from memory_edges e
-                   join memory_items mi on mi.id = e.from_item_id
-                   where e.to_item_id = %s and e.relation = any(%s)
-                     and not (e.from_item_id = any(%s)) and mi.deleted_at is null""",
-                (dependent, list(DERIVING), list(seen)),
-            )
-            if cur.fetchone()["n"] > 0:
-                # Survives, but on a thinner evidence base than it was written on.
-                # Not re-derived — flagged, and the UI says so (SYSTEM_DESIGN §3 step 2).
-                flag_for_review.append(dependent)
-            else:
-                cascade_delete.append(dependent)
+            if dependent not in seen:
+                seen.add(dependent)
+                order.append(dependent)
                 frontier.append(dependent)
+
+    # Every live item each reachable dependent was derived from.
+    parents: dict[UUID, set[UUID]] = {d: set() for d in order}
+    if order:
+        cur.execute(
+            """select e.to_item_id, e.from_item_id
+               from memory_edges e
+               join memory_items mi on mi.id = e.from_item_id
+               where e.to_item_id = any(%s) and e.relation = any(%s)
+                 and mi.deleted_at is null""",
+            (order, list(DERIVING)),
+        )
+        for row in cur.fetchall():
+            parents[row["to_item_id"]].add(row["from_item_id"])
+
+    # Pass 2: an item goes only when *everything* it was derived from goes. Iterated
+    # to a fixpoint rather than decided once per item during the walk: deciding in
+    # walk order counted a sibling as surviving support before the walk had reached
+    # it, and counted an item already flagged-but-surviving as gone, so the verdict
+    # depended on traversal order. A cycle that supports itself is kept and flagged —
+    # deletion is the irreversible direction, so ambiguity resolves away from it.
+    deleting: set[UUID] = {root_id}
+    changed = True
+    while changed:
+        changed = False
+        for d in order:
+            if d not in deleting and parents[d] <= deleting:
+                deleting.add(d)
+                changed = True
+
+    cascade_delete = [d for d in order if d in deleting]
+    # Survives, but on a thinner evidence base than it was written on. Not
+    # re-derived — flagged, and the UI says so (SYSTEM_DESIGN §3 step 2).
+    flag_for_review = [d for d in order if d not in deleting and parents[d] & deleting]
+    touched: set[UUID] = {root_id, *cascade_delete, *flag_for_review}
 
     # Relationship edges in either direction: the other end is still true, but the
     # statement "these two disagree" / "this supersedes that" loses one of its ends.
