@@ -83,7 +83,7 @@ export function MemoryPanel({
         <div
           aria-hidden="true"
           onClick={onToggle}
-          className="fixed inset-0 z-30 bg-[color:var(--ink)]/40 xl:hidden"
+          className="fixed inset-0 z-30 bg-sunken/80 xl:hidden"
         />
       )}
 
@@ -97,7 +97,7 @@ export function MemoryPanel({
           aria-controls="memory-panel"
           aria-label={open ? "Collapse the memory panel" : "Open the memory panel"}
           title={open ? "Collapse memory" : "Open memory"}
-          className="tap inline-flex items-center justify-center rounded-input text-ink-invert-muted hover:bg-raised hover:text-ink-invert"
+          className="tap inline-flex items-center justify-center rounded-input text-ink-invert-muted hover:bg-ink-invert/[0.08] hover:text-ink-invert"
         >
           {open ? (
             <PanelRightClose className="size-5" aria-hidden="true" />
@@ -121,14 +121,14 @@ export function MemoryPanel({
           // Tailwind v4 sorts arbitrary values *after* named ones of the same
           // utility, so a bare w-[min(…)] outranks xl:w-0 and the panel never
           // collapses. Non-overlapping variants cannot lose that race.
-          "fixed inset-y-0 right-0 z-40 max-xl:w-[min(420px,calc(100vw-3rem))] overflow-hidden border-l border-outline bg-bg shadow-2xl",
+          "fixed inset-y-0 right-0 z-40 max-xl:w-[min(420px,calc(100vw-3rem))] overflow-hidden border-l border-outline bg-bg",
           open ? "visible translate-x-0" : "invisible translate-x-full",
           // …and a column of the shell from 1280px up, where it collapses to
           // nothing rather than sliding away. `invisible` when closed is what
           // keeps a zero-width panel out of the tab order — `overflow: hidden`
           // clips it visually and would otherwise leave fifty focusable
           // controls behind a 0px wall.
-          "xl:static xl:z-auto xl:translate-x-0 xl:border-l-0 xl:shadow-none",
+          "xl:static xl:z-auto xl:translate-x-0 xl:border-l-0",
           open ? "xl:w-[420px]" : "xl:w-0",
           animate && "transition-[width,transform] duration-[var(--motion-state)]",
         )}
@@ -137,7 +137,7 @@ export function MemoryPanel({
             contents to 0 and back — the graph would have to re-measure and
             re-fit every time the panel opened. */}
         <div className="flex h-full w-full flex-col gap-4 overflow-y-auto p-4 xl:w-[420px]">
-          <div className="flex shrink-0 items-center justify-end xl:hidden">
+          <div className="flex shrink-0 items-center justify-end max-xl:-order-2 xl:hidden">
             <button
               type="button"
               onClick={onToggle}
@@ -145,7 +145,7 @@ export function MemoryPanel({
               aria-controls="memory-panel"
               aria-label="Close the memory panel"
               title="Close memory"
-              className="tap inline-flex items-center justify-center rounded-input text-ink-invert-muted hover:bg-raised hover:text-ink-invert"
+              className="tap inline-flex items-center justify-center rounded-input text-ink-invert-muted hover:bg-ink-invert/[0.08] hover:text-ink-invert"
             >
               <PanelRightClose className="size-5" aria-hidden="true" />
             </button>
@@ -178,11 +178,16 @@ export function MemoryPanel({
             </div>
           </div>
 
-          <MemoryWorkspace
-            relevance={relevance}
-            chatId={chatId}
-            sourceMessageId={sourceMessageId}
-          />
+          {/* On a phone the panel is a full-height sheet, and the memories are why it was
+              opened — so they come first there. From xl the panel is a side column where
+              the settings above them cost nothing, and the DOM order stands. */}
+          <div className="max-xl:-order-1">
+            <MemoryWorkspace
+              relevance={relevance}
+              chatId={chatId}
+              sourceMessageId={sourceMessageId}
+            />
+          </div>
         </div>
       </aside>
     </>

@@ -17,13 +17,12 @@ import type { SourceType } from "@/lib/api";
 
 type Tone = "neutral" | "stated" | "inferred" | "alert" | "danger";
 
-// Two maps, one per surface family. They are near-identical now that the app is
-// light throughout — the pair is kept because it is what makes the fill/text
-// split enforceable, and `alert` is the reason it still earns its place: it used
-// to borrow the stated tokens, which on this palette would paint "not confirmed
-// recently" green. It has its own amber now.
+// Two maps, one per surface family. They are identical now that the app is one dark
+// family throughout — the pair is kept because it is what makes the fill/text split
+// enforceable. Tone is never the only signal: every chip also carries a mono word, and
+// stated/inferred also carry a dot-vs-ring glyph, so meaning survives greyscale.
 const TONE_ON_BG: Record<Tone, string> = {
-  neutral: "bg-black/5 text-ink-invert-muted ring-outline",
+  neutral: "bg-ink-invert/[0.06] text-ink-invert-muted ring-outline",
   stated: "bg-stated-dim text-stated-on-bg ring-stated/40",
   inferred: "bg-inferred-dim text-inferred-on-bg ring-inferred/50",
   alert: "bg-alert-dim text-alert-ink ring-alert/50",
@@ -31,7 +30,7 @@ const TONE_ON_BG: Record<Tone, string> = {
 };
 
 const TONE_ON_LIGHT: Record<Tone, string> = {
-  neutral: "bg-black/5 text-ink-muted ring-outline-ink",
+  neutral: "bg-ink-invert/[0.06] text-ink-muted ring-outline-ink",
   stated: "bg-stated-dim text-stated-ink ring-stated/40",
   inferred: "bg-inferred-dim text-inferred-ink ring-inferred/50",
   alert: "bg-alert-dim text-alert-ink ring-alert/50",

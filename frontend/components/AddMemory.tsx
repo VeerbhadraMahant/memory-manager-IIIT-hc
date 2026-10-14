@@ -156,7 +156,7 @@ export function AddMemoryButton({
                 onChange={(e) => set("content", e.target.value)}
                 rows={3}
                 autoFocus
-                className="w-full rounded-input border border-outline-ink bg-white p-3 text-body-md text-ink"
+                className="w-full rounded-input border border-outline-ink bg-sunken p-3 text-body-md text-ink"
               />
             </label>
 
@@ -166,7 +166,7 @@ export function AddMemoryButton({
                 <select
                   value={form.status}
                   onChange={(e) => set("status", e.target.value as AssertionStatus)}
-                  className="min-h-11 w-full rounded-input border border-outline-ink bg-white px-3 text-body-sm text-ink"
+                  className="min-h-11 w-full rounded-input border border-outline-ink bg-sunken px-3 text-body-sm text-ink"
                 >
                   <option value="">Choose…</option>
                   {STATUSES.map((s) => (
@@ -182,7 +182,7 @@ export function AddMemoryButton({
                 <select
                   value={form.sensitivity}
                   onChange={(e) => set("sensitivity", e.target.value as Sensitivity)}
-                  className="min-h-11 w-full rounded-input border border-outline-ink bg-white px-3 text-body-sm text-ink"
+                  className="min-h-11 w-full rounded-input border border-outline-ink bg-sunken px-3 text-body-sm text-ink"
                 >
                   <option value="">Choose…</option>
                   {SENSITIVITIES.map((s) => (
@@ -202,7 +202,7 @@ export function AddMemoryButton({
                 <select
                   value={form.block}
                   onChange={(e) => set("block", e.target.value)}
-                  className="min-h-11 w-full rounded-input border border-outline-ink bg-white px-3 text-body-sm text-ink"
+                  className="min-h-11 w-full rounded-input border border-outline-ink bg-sunken px-3 text-body-sm text-ink"
                 >
                   {/* Empty means "let the server decide", and the server's
                       choice is the most restrictive block, not a neutral one
@@ -221,7 +221,7 @@ export function AddMemoryButton({
                 <select
                   value={form.scope}
                   onChange={(e) => set("scope", e.target.value as Scope)}
-                  className="min-h-11 w-full rounded-input border border-outline-ink bg-white px-3 text-body-sm text-ink"
+                  className="min-h-11 w-full rounded-input border border-outline-ink bg-sunken px-3 text-body-sm text-ink"
                 >
                   {SCOPES.map((s) => (
                     <option key={s} value={s}>

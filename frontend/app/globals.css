@@ -2,108 +2,110 @@
 @import "@xyflow/react/dist/style.css";
 
 /* ============================================================ §1 Tokens
- * Light theme, on the supplied palette:
+ * Dark theme, on the "Tableland" style from styles.refero.design: a green-black developer
+ * surface with one painted moment (the lavender-and-coral hero, public/brand/hero.svg).
  *
- *   #5542D0 indigo · #EBF4EF pale mint · #82A1D7 soft blue · #1E8757 green
- *   #F2F2F2 grey (the app background, given)
+ *   #101e1e Void     page canvas            #75b6b5 Abyss Teal   interactive voice
+ *   #162929 Slate    cards, hairline fills  #0be291 Mint Beacon  emphasis
+ *   #3b4949 Graphite overlays only              #f4706b Coral Ember  warmth / warnings
+ *   #1a1a1a Carbon   terminals, inputs      #e4cbf2 Lavender     the hero, and "inferred"
+ *   #e5e7eb Ash      hairlines, primary CTA #ffffff Paper        primary text
  *
- * This replaces the Dark Slate palette in frontend_design_guideline.md §1. The
- * *rules* from §1 survive the swap and are what made the swap cheap: components
- * spend tokens rather than hex, fill colours are never used as type, and every
- * pair is measured. Only the values below moved.
+ * The rules from the previous light theme survive the swap, which is what made it cheap:
+ * components spend tokens rather than hex, fill colours are never used as small type, and
+ * every pair is measured. Only the values below moved.
  *
- * Mapping, and why each one:
+ * What follows the style as written: Poppins with weight 300 on display headings, no
+ * shadows (depth is surface steps and hairlines), 4px buttons/inputs, 8px cards, 16px
+ * elevated surfaces, pills only for tags and icon containers, no pure black, teal for
+ * everything interactive.
  *
- *   indigo  → --accent. Interactive, not semantic: buttons, focus ring, the
- *             active session. It is the palette's loudest colour and pressing
- *             things is what the user does most.
- *   green   → --stated. "You said this" is the grounded end of the pair.
- *   blue    → --inferred. Cooler and quieter than green, and — the actual
- *             reason — distinguishable from it, which #5542D0 would not have
- *             been. A stated/inferred pair that is two blues fails the one job
- *             it has.
- *   mint    → --surface-sunken. Note it is the same *luminance* as --bg
- *             (0.886 vs 0.888), so it separates by hue, not by value. Zones
- *             using it therefore also need a border; shading alone is invisible.
- *   white   → --surface / --surface-raised. On #F2F2F2 the only step up that is
- *             not a tint is white, so those two collapse into one value.
+ * Where a product UI forced a deliberate departure from a marketing-site style guide:
  *
- * Two colours are NOT in the palette and are added as status, not brand: a red
- * for destructive and an amber for the tier-2 PII warning. Both carry meaning
- * that no palette hue can stand in for — a green "not confirmed recently" row
- * says the opposite of what it means, and danger has to read as danger.
+ *   - MUTED TEXT is #A8BEBE, not Fog #718B8B. Fog measures 4.17:1 on Slate and 2.58:1 on
+ *     Graphite — under AA — and this app puts 12-14px secondary text on both. Fog stays
+ *     available as --fog for non-text strokes and disabled glyphs.
+ *   - MINT is not only for headings. "You said this" (stated) is the one distinction this
+ *     product exists to make, and it needs a colour that is not the interactive teal. The
+ *     pair is mint (stated) / lavender (inferred), both always paired with a text label.
+ *   - HAIRLINES are Ash at low alpha, not solid Ash: a dense UI drawn in solid #E5E7EB
+ *     boxes is loud. The meaning (1px, one colour, the only border) is unchanged.
+ *   - DANGER and ALERT both use Coral (the palette has no red or amber and adds none).
+ *     They are told apart by icon, label and fill: danger is a filled/destructive
+ *     treatment, alert is an outlined caution.
  *
- * Measured, not eyeballed. Ratios below are computed against the surface each
- * token actually lands on, worst case. Three results worth keeping in view:
+ * Measured, worst case on the surface each token actually lands on:
  *
- *   --inferred  #82A1D7 as text  2.34 on --bg. Fill and stroke only, as before.
- *   --stated    #1E8757 as text  4.03 on --bg. Under AA, so the -ink variant
- *                                exists for exactly the same reason the orange
- *                                needed one.
- *   --alert     #B26A00 as text  3.79 on --bg. Same treatment.
- *
- * Unlike the old palette, --accent and --danger DO clear 4.5:1 as type on
- * --bg, so there is no separate ink token for either.
+ *   --ink             #FFFFFF  17.1 void · 15.2 slate · 9.4 graphite
+ *   --ink-muted       #A8BEBE   8.8 void ·  7.8 slate · 4.8 graphite
+ *   --accent (teal)   #75B6B5   7.4 void ·  6.6 slate · 4.1 graphite (graphite: large/graphic only)
+ *   --stated (mint)   #0BE291  10.0 void ·  8.9 slate · 5.5 graphite
+ *   --inferred (lav)  #E4CBF2  11.5 void · 10.2 slate · 6.3 graphite
+ *   --danger (coral)  #F4706B   6.0 void ·  5.3 slate · 3.3 graphite (do not place small
+ *                              coral text on graphite)
+ *   primary button    Void on Ash 13.8
  */
 
 :root {
-  /* Surfaces */
-  --bg:                #F2F2F2;  /* app background — the conversation sits here */
-  --surface:           #FFFFFF;  /* cards, panels, floating surfaces */
-  --surface-raised:    #FFFFFF;  /* one step up from bg; on light that is white */
-  --surface-sunken:    #EBF4EF;  /* tinted recess — sidebar, memory panel, inputs */
+  /* Surfaces, darkest-but-one up. Never pure black; every dark is green-tinted. */
+  --bg:                #101E1E;  /* Void — the canvas */
+  --surface:           #162929;  /* Slate — cards, panels, floating surfaces */
+  --surface-raised:    #162929;  /* Slate again: cards sit on the same tier as panels */
+  --surface-elevated:  #3B4949;  /* Graphite — overlays only: tooltips, menus, popovers */
+  --surface-sunken:    #1A1A1A;  /* Carbon — inputs, terminals, the sidebar */
 
-  /* Interactive. Not a memory semantic: nothing about a memory is indigo. */
-  --accent:            #5542D0;  /* on --bg  — 6.10 AA · white on it — 6.83 AA */
-  --accent-dim:        rgb(85 66 208 / 0.10);
+  /* Interactive. Teal is the app's voice for anything you can press or follow. It is
+   * not a fill for the primary action (the style forbids it, and white-on-teal is 2.4:1):
+   * the primary button is Ash with Void text, below. */
+  --accent:            #75B6B5;
+  --accent-dim:        rgb(117 182 181 / 0.14);
+  --action:            #E5E7EB;  /* Ash fill, primary CTA */
+  --on-action:         #101E1E;  /* Void on Ash — 13.8 */
 
-  /* Memory semantics — fills and strokes */
-  --stated:            #1E8757;  /* on --bg  — 4.03, ≥3 graphical */
-  --inferred:          #82A1D7;  /* on --bg  — 2.34, fill only */
-
-  /* Memory semantics — text. Never use the fill tokens for type.
-   *
-   * -ink and -on-bg are the same value now: the app has one background family,
-   * so "on a light card" and "on the app background" are the same problem. Both
-   * names are kept because both are spent across the components, and the pair
-   * is what stops a fill colour being used as type by accident. */
-  --stated-ink:        #166B45;  /* on --surface — 6.51 AA · on --bg — 5.82 AA */
-  --stated-on-bg:      #166B45;
-  --inferred-ink:      #2E4A7D;  /* on --surface — 8.78 AAA · on --bg — 7.84 AAA */
-  --inferred-on-bg:    #2E4A7D;
-
-  /* Tinted backgrounds. Alpha, so they compose over any of the three surfaces.
-   * Lighter than the old 12% washes: over white these barely move the
-   * luminance, which is what keeps the -ink values above the floor on them. */
-  --stated-dim:        rgb(30 135 87 / 0.10);
-  --inferred-dim:      rgb(130 161 215 / 0.16);
+  /* Memory semantics — fills, strokes and (because they all clear AA on every surface
+   * they land on) text. The -ink / -on-bg names are kept because components spend both. */
+  --stated:            #0BE291;
+  --inferred:          #E4CBF2;
+  --stated-ink:        #0BE291;
+  --stated-on-bg:      #0BE291;
+  --inferred-ink:      #E4CBF2;
+  --inferred-on-bg:    #E4CBF2;
+  --stated-dim:        rgb(11 226 145 / 0.12);
+  --inferred-dim:      rgb(228 203 242 / 0.12);
 
   /* Text */
-  --ink:               #0F1419;  /* on --surface — 17.04 AAA */
-  --ink-muted:         #4A5560;  /* on --surface — 7.61  AAA */
-  --ink-invert:        #0F1419;  /* on --bg      — 15.20 AAA */
-  --ink-invert-muted:  #4A5560;  /* on --bg      — 6.80  AA  */
+  --ink:               #FFFFFF;
+  --ink-muted:         #A8BEBE;
+  --ink-invert:        #FFFFFF;  /* "invert" is a historical name: text on --bg. Same value. */
+  --ink-invert-muted:  #A8BEBE;
+  --fog:               #718B8B;  /* the style's Fog: strokes and disabled glyphs, never text */
 
-  /* Lines. Dark alphas now — the old light alphas were sized to sit on Dark
-   * Slate and are invisible on #F2F2F2. */
-  --outline:           rgb(15 20 25 / 0.10);
-  --outline-strong:    rgb(15 20 25 / 0.22);
-  --outline-ink:       rgb(15 20 25 / 0.12);
+  /* The hero band only — the style's one painted moment. Never used for app chrome.
+   * Carbon on Lavender 11.7; Graphite on Lavender 6.1. */
+  --lavender:          #E4CBF2;
+  --hero-ink:          #1A1A1A;
+  --hero-ink-muted:    #3B4949;
 
-  /* Status — added, not from the palette. See the note above. */
-  --alert:             #B26A00;  /* fill/stroke only — 3.79 on --bg */
-  --alert-ink:         #8A5200;  /* on --surface — 6.38 AA · on --bg — 5.71 AA */
-  --alert-dim:         rgb(178 106 0 / 0.10);
+  /* Lines — Ash at alpha. */
+  --outline:           rgb(229 231 235 / 0.12);
+  --outline-strong:    rgb(229 231 235 / 0.32);
+  --outline-ink:       rgb(229 231 235 / 0.16);
 
-  --danger:            #C62828;  /* on --bg — 5.03 AA, so it doubles as type */
-  --danger-ink:        #93000A;  /* on --bg — 8.36 AAA */
-  --danger-on-bg:      #93000A;
-  --danger-dim:        rgb(198 40 40 / 0.09);
+  /* Status. Coral is the palette's only warm colour, so it carries both. */
+  --alert:             #F4706B;
+  --alert-ink:         #F4706B;
+  --alert-dim:         rgb(244 112 107 / 0.10);
 
-  /* Radius (§1) */
-  --radius-card:  0.5rem;
-  --radius-input: 0.5rem;
-  --radius-pill:  999px;
+  --danger:            #F4706B;
+  --danger-ink:        #F4706B;
+  --danger-on-bg:      #F4706B;
+  --danger-dim:        rgb(244 112 107 / 0.12);
+
+  /* Radius — buttons/inputs/code 4, cards 8, elevated 16; pills only for tags. */
+  --radius-input:    0.25rem;
+  --radius-card:     0.5rem;
+  --radius-elevated: 1rem;
+  --radius-pill:     999px;
 
   /* Motion (§5). One place, so the reduced-motion override below is total. */
   --motion-micro: 180ms;
@@ -120,10 +122,17 @@
   --color-bg:              var(--bg);
   --color-surface:         var(--surface);
   --color-raised:          var(--surface-raised);
+  --color-elevated:        var(--surface-elevated);
   --color-sunken:          var(--surface-sunken);
 
   --color-accent:          var(--accent);
   --color-accent-dim:      var(--accent-dim);
+  --color-action:          var(--action);
+  --color-on-action:       var(--on-action);
+  --color-fog:             var(--fog);
+  --color-lavender:        var(--lavender);
+  --color-hero-ink:        var(--hero-ink);
+  --color-hero-ink-muted:  var(--hero-ink-muted);
 
   --color-stated:          var(--stated);
   --color-stated-ink:      var(--stated-ink);
@@ -152,37 +161,41 @@
   --color-danger-on-bg:    var(--danger-on-bg);
   --color-danger-dim:      var(--danger-dim);
 
-  /* Type (§1). Hanken for headings, Inter for body, JetBrains strictly for
-   * machine-generated metadata — that last one is semantic, not decorative. */
-  --font-display: var(--font-hanken), ui-sans-serif, system-ui, sans-serif;
-  --font-sans:    var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  /* Type. One family: Poppins, weights 300/400/500/700. JetBrains Mono stays strictly for
+   * machine-generated metadata — that rule is semantic, not decorative. */
+  --font-display: var(--font-poppins), ui-sans-serif, system-ui, sans-serif;
+  --font-sans:    var(--font-poppins), ui-sans-serif, system-ui, sans-serif;
   --font-mono:    var(--font-jetbrains), ui-monospace, monospace;
 
-  --text-headline-lg: 2rem;       /* 32/40 */
-  --text-headline-lg--line-height: 2.5rem;
-  --text-headline-md: 1.25rem;    /* 20/28 */
-  --text-headline-md--line-height: 1.75rem;
+  --text-display: 3rem;           /* 48/48 — hero only */
+  --text-display--line-height: 1;
+  --text-headline-lg: 1.875rem;   /* 30/36 */
+  --text-headline-lg--line-height: 1.2;
+  --text-headline-md: 1.375rem;   /* 22/32 */
+  --text-headline-md--line-height: 1.43;
   --text-body-lg: 1.125rem;       /* 18/28 */
-  --text-body-lg--line-height: 1.75rem;
-  --text-body-md: 1rem;           /* 16/24 — floor for body text (§6) */
-  --text-body-md--line-height: 1.5rem;
+  --text-body-lg--line-height: 1.56;
+  --text-body-md: 1rem;           /* 16/25 — floor for body text (§6) */
+  --text-body-md--line-height: 1.56;
   --text-body-sm: 0.875rem;       /* 14/20 — supporting text, never prose */
-  --text-body-sm--line-height: 1.25rem;
+  --text-body-sm--line-height: 1.45;
   --text-label-sm: 0.75rem;       /* 12/16 — mono chips only */
-  --text-label-sm--line-height: 1rem;
+  --text-label-sm--line-height: 1.33;
 
-  --radius-card: var(--radius-card);
   --radius-input: var(--radius-input);
+  --radius-card: var(--radius-card);
+  --radius-elevated: var(--radius-elevated);
+  --radius-pill: var(--radius-pill);
 
   --container-shell: 1200px;      /* §1 container max */
   --container-conversation: 800px;/* §1 conversation column max */
 }
 
-/* headline-lg drops to 24/32 on mobile (§1). */
+/* display and headline-lg step down on small screens (§1). */
 @media (max-width: 767px) {
   :root {
-    --text-headline-lg: 1.5rem;
-    --text-headline-lg--line-height: 2rem;
+    --text-display: 2.25rem;
+    --text-headline-lg: 1.625rem;
   }
 }
 
@@ -190,6 +203,7 @@
 
 html {
   background: var(--bg);
+  color-scheme: dark;
   /* §6: 200% zoom without loss. Nothing here fixes a px viewport width. */
   -webkit-text-size-adjust: 100%;
 }
@@ -202,10 +216,15 @@ body {
   line-height: 1.5;
 }
 
-h1, h2, h3, h4 {
+/* The whisper-weight is the signature voice: Poppins 300 on display and section
+ * headings, 500 for the small headings inside cards. Nothing above 500 on a heading. */
+h1, h2 {
   font-family: var(--font-display), ui-sans-serif, system-ui, sans-serif;
-  font-weight: 600;
-  letter-spacing: -0.01em;
+  font-weight: 300;
+}
+h3, h4 {
+  font-family: var(--font-display), ui-sans-serif, system-ui, sans-serif;
+  font-weight: 500;
 }
 
 /* §6: focus visible everywhere, 2px minimum, never removed. Set globally so an
@@ -314,9 +333,12 @@ h1, h2, h3, h4 {
 .react-flow__handle { opacity: 0; pointer-events: none; }
 .react-flow__attribution { display: none; }
 .react-flow__controls-button {
-  background: var(--surface-raised);
+  background: var(--surface);
   border-bottom: 1px solid var(--outline);
   fill: var(--ink-invert);
 }
-.react-flow__controls-button:hover { background: var(--surface-sunken); }
+.react-flow__controls-button:hover { background: var(--surface-elevated); }
+.react-flow__controls { box-shadow: none; border: 1px solid var(--outline); border-radius: var(--radius-input); overflow: hidden; }
+.react-flow__minimap { background: var(--surface); border: 1px solid var(--outline); }
+.react-flow__background { background: var(--bg); }
 .react-flow__panel { margin: 12px; }

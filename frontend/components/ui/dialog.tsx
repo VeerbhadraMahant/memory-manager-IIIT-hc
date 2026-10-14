@@ -29,15 +29,14 @@ export function DialogContent({
 }) {
   return (
     <DialogPrimitive.Portal>
-      {/* Scrim: --ink at 40%, strong enough to isolate the foreground, which is
-          the point of a modal — §4.6 blur-purpose, not decoration. It used to be
-          --surface-sunken, which was the darkest surface in the old palette and
-          is the *lightest* one now; a light wash over a light page dims nothing. */}
-      <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-[color:var(--ink)]/40 backdrop-blur-[2px]" />
+      {/* Scrim: Carbon at 80%, strong enough to isolate the foreground, which is the
+          point of a modal — §4.6 blur-purpose, not decoration. No shadow on the dialog
+          itself: the style separates by surface step and hairline, not depth. */}
+      <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-sunken/80 backdrop-blur-[2px]" />
       <DialogPrimitive.Content
         className={cn(
           "fixed left-1/2 top-1/2 z-50 w-[calc(100vw-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2",
-          "on-surface anim-enter overflow-hidden rounded-card bg-surface text-ink shadow-2xl",
+          "on-surface anim-enter overflow-hidden rounded-elevated border border-outline bg-surface text-ink",
           "max-h-[calc(100dvh-2rem)] overflow-y-auto",
           accent === "danger" && "border-t-4 border-t-danger",
           className,
@@ -47,7 +46,7 @@ export function DialogContent({
         {children}
         {showClose && (
           <DialogPrimitive.Close
-            className="tap absolute right-2 top-2 inline-flex items-center justify-center rounded-input text-ink-muted hover:bg-black/5 hover:text-ink"
+            className="tap absolute right-2 top-2 inline-flex items-center justify-center rounded-input text-ink-muted hover:bg-ink-invert/[0.08] hover:text-ink"
             aria-label="Close"
           >
             <X className="size-4" aria-hidden="true" />

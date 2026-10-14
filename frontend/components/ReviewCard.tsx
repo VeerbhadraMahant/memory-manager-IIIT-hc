@@ -82,7 +82,7 @@ export function ReviewCard({
         // Mobile: sticky bottom sheet. Sticky rather than fixed so it cannot
         // cover the transcript permanently or fight the composer for the
         // bottom edge.
-        "sticky bottom-2 z-20 shadow-xl sm:static sm:z-auto sm:shadow-none",
+        "sticky bottom-2 z-20 sm:static sm:z-auto",
         pending.length > 0 && "ring-2 ring-[color:var(--stated)]",
       )}
     >
@@ -224,7 +224,7 @@ function PendingItem({
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               rows={2}
-              className="w-full rounded-input border border-outline-ink bg-white p-3 text-body-md text-ink"
+              className="w-full rounded-input border border-outline-ink bg-sunken p-3 text-body-md text-ink"
             />
           </label>
           <label className="flex flex-wrap items-center gap-2">
@@ -232,7 +232,7 @@ function PendingItem({
             <select
               value={status}
               onChange={(e) => setStatus(e.target.value as AssertionStatus)}
-              className="min-h-11 rounded-input border border-outline-ink bg-white px-3 text-body-sm text-ink"
+              className="min-h-11 rounded-input border border-outline-ink bg-sunken px-3 text-body-sm text-ink"
             >
               {STATUSES.map((s) => (
                 <option key={s} value={s}>

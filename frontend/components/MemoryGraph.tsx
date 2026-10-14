@@ -596,7 +596,7 @@ function GraphInner({
         <div
           role="dialog"
           aria-label={`Inspector: ${inspectorNode.content}`}
-          className="fixed right-6 top-24 z-50 max-h-[70dvh] w-96 overflow-y-auto rounded-card border border-outline-strong bg-raised p-5 shadow-xl"
+          className="fixed right-6 top-24 z-50 max-h-[70dvh] w-96 overflow-y-auto rounded-elevated border border-outline-strong bg-elevated p-5"
         >
           <div className="mb-4 flex items-center justify-between gap-2 border-b border-outline pb-3">
             <h3 className="meta text-stated-on-bg">
@@ -651,7 +651,7 @@ function GraphInner({
         <div
           role="menu"
           style={{ top: contextMenu.y, left: contextMenu.x }}
-          className="fixed z-50 w-52 rounded-card border border-outline-strong bg-raised p-1.5 shadow-xl"
+          className="fixed z-50 w-52 rounded-card border border-outline-strong bg-elevated p-1.5"
         >
           <button
             type="button"
@@ -703,7 +703,7 @@ function ModeButton({
       className={cn(
         "meta inline-flex min-h-11 items-center gap-1.5 rounded-pill px-3 ring-1 transition-colors duration-[var(--motion-micro)]",
         active
-          ? "bg-accent text-white ring-accent"
+          ? "bg-accent-dim text-accent ring-accent"
           : "bg-sunken text-ink-invert-muted ring-outline hover:text-ink-invert",
       )}
     >

@@ -142,7 +142,7 @@ function Step({
             type="button"
             onClick={() => setOpen((v) => !v)}
             aria-expanded={open}
-            className="tap flex w-full items-center gap-1.5 rounded-input px-1 text-left hover:bg-raised"
+            className="tap flex w-full items-center gap-1.5 rounded-input px-1 text-left hover:bg-ink-invert/[0.08]"
           >
             {head}
             <ChevronRight
