@@ -63,6 +63,66 @@ def test_delete_item_cascades_and_flags(client, db):
     assert client.delete(f"/memory/items/{root['id']}").status_code == 404
 
 
+def _derive(db, *pairs):
+    for frm, to in pairs:
+        db.execute(
+            "insert into memory_edges (from_item_id, to_item_id, relation) values (%s,%s,'derived_from')",
+            (frm["id"], to["id"]),
+        )
+
+
+def test_cascade_deletes_item_whose_other_support_is_also_deleted(client, db):
+    # X rests on root and on B; B rests only on root. B goes, so X has nothing left.
+    # X is created (and so walked) first: deciding per item in walk order counted B
+    # as surviving support before B itself was decided.
+    chat, msg = seed_chat_and_message(client)
+    root = create_memory(client, msg, content="root")
+    x = create_memory(client, msg, content="from root and b")
+    b = create_memory(client, msg, content="from root only")
+    _derive(db, (root, x), (root, b), (b, x))
+
+    body = client.delete(f"/memory/items/{root['id']}").json()
+    assert set(body["cascade_delete"]) == {x["id"], b["id"]}
+    assert body["flag_for_review"] == []
+
+
+def test_cascade_keeps_item_supported_by_a_flagged_survivor(client, db):
+    # F rests on root and an independent item, so F survives (flagged). X rests on
+    # root and F; F surviving means X still has support and must not be deleted.
+    chat, msg = seed_chat_and_message(client)
+    root = create_memory(client, msg, content="root")
+    other = create_memory(client, msg, content="independent")
+    f = create_memory(client, msg, content="from root and independent")
+    x = create_memory(client, msg, content="from root and f")
+    _derive(db, (root, f), (other, f), (root, x), (f, x))
+
+    preview = client.get(f"/memory/items/{root['id']}/graph").json()["cascade"]
+    body = client.delete(f"/memory/items/{root['id']}").json()
+    assert body["cascade_delete"] == preview["cascade_delete"] == []
+    assert set(body["flag_for_review"]) == {f["id"], x["id"]}
+    live = {i["id"] for i in client.get("/memory/items").json()}
+    assert {f["id"], x["id"], other["id"]} <= live
+
+
+def test_revoke_keeps_attributions_on_other_replies(client, llm_calls, db):
+    chat, msg = seed_chat_and_message(client)
+    item = create_memory(client, msg, content="Writing a CHI paper")
+    first = client.post(f"/chats/{chat['id']}/message", json={"content": "Writing a CHI paper"}).json()
+    second = client.post(f"/chats/{chat['id']}/message", json={"content": "Writing a CHI paper"}).json()
+    first_id, second_id = first["assistant_message"]["id"], second["assistant_message"]["id"]
+
+    r = client.post(f"/chats/{chat['id']}/regenerate",
+                    json={"message_id": second_id, "revoke_item_ids": [item["id"]]})
+    assert r.status_code == 200, r.text
+    assert r.json()["used_memories"] == []
+
+    rows = db.execute("select message_id from attributions where memory_item_id = %s",
+                      (item["id"],)).fetchall()
+    # The earlier reply was shaped by the memory, and revoking it now does not change
+    # that. The regenerated reply no longer used it.
+    assert {str(r["message_id"]) for r in rows} == {first_id}
+
+
 def test_chat_turn_retrieves_memory_and_writes_attribution(client, llm_calls, db):
     chat, msg = seed_chat_and_message(client)
     create_memory(client, msg, content="Writing a CHI paper")

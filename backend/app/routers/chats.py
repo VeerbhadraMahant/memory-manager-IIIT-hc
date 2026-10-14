@@ -355,7 +355,9 @@ def regenerate(chat_id: UUID, payload: RegenerateRequest, user: User = Depends(c
                        values (%s, 'revoked_at_use_time', 'user', %s)""",
                     (item_id, json.dumps({"message_id": str(payload.message_id)})),
                 )
-                cur.execute("delete from attributions where memory_item_id = %s", (item_id,))
+                # Attributions on *other* replies stay: those answers were shaped by
+                # this memory, and revoking it now does not change that. Only the
+                # regenerated reply's attributions are replaced, below.
 
         cur.execute(
             """select role, content from messages
