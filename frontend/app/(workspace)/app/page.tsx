@@ -728,7 +728,9 @@ function Workbench() {
                 Three mutually exclusive modes. Only the active one is coloured
                 (see components/ModeBadge.tsx); each explains itself in a tooltip.
             ─────────────────────────────────────────────────────────────── */}
-            <div className="mb-3 flex flex-wrap items-center gap-2">
+            {/* One scrollable row on a phone (three stacked pills took a third of the screen);
+                wraps normally from sm up, where the tooltips also have room to show. */}
+            <div className="-mx-1 mb-3 flex flex-nowrap items-center gap-2 overflow-x-auto px-1 pb-1 [scrollbar-width:none] sm:flex-wrap sm:overflow-visible">
               <ModeBadge
                 label="Short-term memory"
                 tone="danger"
@@ -836,7 +838,13 @@ function Workbench() {
                 </label>
               )}
 
-              <span className="text-body-sm text-ink-invert-muted">
+              {/* The keyboard hint is meaningless on a touch screen, and cost a full row. */}
+              <span
+                className={cn(
+                  "text-body-sm text-ink-invert-muted",
+                  !highStakes && !ephemeral && "max-sm:hidden",
+                )}
+              >
                 {highStakes
                   ? "every memory-derived claim is checked before it lands"
                   : ephemeral

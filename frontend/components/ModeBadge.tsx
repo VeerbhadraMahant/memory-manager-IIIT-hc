@@ -41,7 +41,7 @@ export function ModeBadge({
       onClick={onClick}
       aria-pressed={active}
       className={cn(
-        "group relative flex min-h-11 items-center gap-2 rounded-pill border px-3.5 text-body-sm transition-colors",
+        "group relative flex min-h-11 shrink-0 items-center gap-2 rounded-pill border px-3.5 text-body-sm transition-colors",
         active ? ACTIVE[tone] : INACTIVE,
       )}
     >

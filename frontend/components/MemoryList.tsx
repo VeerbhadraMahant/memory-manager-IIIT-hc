@@ -169,8 +169,9 @@ export function MemoryList({
           )}
         </div>
 
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <span className="meta flex items-center gap-1.5 text-ink-invert-muted">
+        {/* Two columns on a phone: five full-width 44px pills wrapped into five rows. */}
+        <div className="mt-3 grid grid-cols-2 items-center gap-2 sm:flex sm:flex-wrap">
+          <span className="meta col-span-2 flex items-center gap-1.5 text-ink-invert-muted sm:col-span-1">
             <Filter className="size-3.5" aria-hidden="true" />
             Filter
           </span>
@@ -187,6 +188,7 @@ export function MemoryList({
             onChange={(v) => set("status", v as AssertionStatus | null)}
           />
           <FilterSelect
+            wide
             label="Sensitivity"
             value={filters.sensitivity}
             options={SENSITIVITIES.map((s) => [s, SENSITIVITY_LABEL[s]] as const)}
@@ -431,7 +433,10 @@ function FilterSelect({
   value,
   options,
   onChange,
+  wide,
 }: {
+  /** Spans both columns on a phone, for labels too long for a half-width cell. */
+  wide?: boolean;
   label: string;
   value: string | null;
   options: readonly (readonly [string, string])[];
@@ -440,7 +445,8 @@ function FilterSelect({
   return (
     <label
       className={cn(
-        "meta inline-flex min-h-11 items-center gap-1.5 rounded-pill px-3 ring-1",
+        "meta inline-flex min-h-11 items-center justify-between gap-1.5 rounded-pill px-3 ring-1 max-sm:min-w-0",
+        wide && "max-sm:col-span-2",
         value ? "bg-accent-dim text-accent ring-accent/40" : "bg-ink-invert/[0.06] text-ink-invert-muted ring-outline",
       )}
     >
@@ -448,7 +454,7 @@ function FilterSelect({
       <select
         value={value ?? ""}
         onChange={(e) => onChange(e.target.value || null)}
-        className="meta cursor-pointer bg-transparent text-inherit outline-none"
+        className="meta min-w-0 cursor-pointer bg-transparent text-inherit outline-none"
         aria-label={`Filter by ${label.toLowerCase()}`}
       >
         <option value="">any</option>
@@ -479,7 +485,7 @@ function FilterToggle({
       aria-pressed={pressed}
       onClick={() => onPressedChange(!pressed)}
       className={cn(
-        "meta min-h-11 rounded-pill px-3 ring-1 transition-colors duration-[var(--motion-micro)]",
+        "meta min-h-11 rounded-pill px-3 ring-1 transition-colors duration-[var(--motion-micro)] max-sm:col-span-1",
         pressed
           ? "bg-accent-dim text-accent ring-accent/40"
           : "bg-ink-invert/[0.06] text-ink-invert-muted ring-outline hover:text-ink-invert",

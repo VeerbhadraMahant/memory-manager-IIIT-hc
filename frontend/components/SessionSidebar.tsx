@@ -83,7 +83,7 @@ export function SessionSidebar({
         <div
           aria-hidden="true"
           onClick={onToggle}
-          className="fixed inset-0 z-30 bg-[color:var(--ink)]/40 lg:hidden"
+          className="fixed inset-0 z-30 bg-sunken/80 lg:hidden"
         />
       )}
 

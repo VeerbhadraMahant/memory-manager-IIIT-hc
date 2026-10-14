@@ -83,7 +83,7 @@ export function MemoryPanel({
         <div
           aria-hidden="true"
           onClick={onToggle}
-          className="fixed inset-0 z-30 bg-[color:var(--ink)]/40 xl:hidden"
+          className="fixed inset-0 z-30 bg-sunken/80 xl:hidden"
         />
       )}
 
@@ -137,7 +137,7 @@ export function MemoryPanel({
             contents to 0 and back — the graph would have to re-measure and
             re-fit every time the panel opened. */}
         <div className="flex h-full w-full flex-col gap-4 overflow-y-auto p-4 xl:w-[420px]">
-          <div className="flex shrink-0 items-center justify-end xl:hidden">
+          <div className="flex shrink-0 items-center justify-end max-xl:-order-2 xl:hidden">
             <button
               type="button"
               onClick={onToggle}
@@ -178,11 +178,16 @@ export function MemoryPanel({
             </div>
           </div>
 
-          <MemoryWorkspace
-            relevance={relevance}
-            chatId={chatId}
-            sourceMessageId={sourceMessageId}
-          />
+          {/* On a phone the panel is a full-height sheet, and the memories are why it was
+              opened — so they come first there. From xl the panel is a side column where
+              the settings above them cost nothing, and the DOM order stands. */}
+          <div className="max-xl:-order-1">
+            <MemoryWorkspace
+              relevance={relevance}
+              chatId={chatId}
+              sourceMessageId={sourceMessageId}
+            />
+          </div>
         </div>
       </aside>
     </>
