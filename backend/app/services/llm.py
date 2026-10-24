@@ -183,6 +183,16 @@ class ExtractedCandidate(BaseModel):
     sensitivity: SensitivityL
     block: str = Field(description="One of the provided block names, or 'unclassified'.")
     confidence: float = Field(ge=0, le=1)
+    premises: list[str] = Field(
+        default_factory=list,
+        description="Labels like S1, S2 of stated candidates in this same turn that this "
+        "candidate was inferred from. Empty for stated candidates.",
+    )
+    abstracted: str | None = Field(
+        default=None,
+        description="For a third_party fact: the same fact with names and identifying "
+        "detail removed. Null otherwise.",
+    )
 
 
 class ExtractionResult(BaseModel):
@@ -270,6 +280,15 @@ block - the best fit from: {blocks}
   the lazy one.
 
 confidence - your certainty about the whole record, not just the wording.
+
+premises - for an inferred candidate, the labels of the stated candidates it rests on.
+  Number the stated candidates in the order you list them: the first stated candidate
+  is S1, the second S2, and so on (inferred candidates take no label). A candidate may
+  only cite labels of stated candidates in this same list. Use an empty list for stated
+  candidates and for inferences that rest on nothing you extracted.
+
+abstracted - only for status third_party: the same fact reworded with names and
+  identifying detail removed ("a colleague started a new treatment"). Null otherwise.
 
 NEVER EXTRACT
   Card numbers, CVVs, passwords, API keys, OTPs, government ID numbers, or account
