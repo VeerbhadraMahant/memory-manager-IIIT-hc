@@ -43,6 +43,9 @@ import {
 } from "@/components/ui/dialog";
 import { Chip } from "@/components/ui/chip";
 
+// "an Aadhaar number", "an ID number", but "a UPI handle": U here is said "you".
+const withArticle = (label: string) => `${/^[aeio]/i.test(label) ? "an" : "a"} ${label}`;
+
 /** Tier 1. Focus-trapped, and it always offers both ways out. */
 export function PiiModal({
   open,
@@ -69,7 +72,7 @@ export function PiiModal({
           <DialogTitle className="flex items-center gap-2">
             <ShieldAlert className="size-5 text-danger-ink" aria-hidden="true" />
             {categories.length === 1
-              ? `That looks like a ${CATEGORY_LABEL[categories[0]]}`
+              ? `That looks like ${withArticle(CATEGORY_LABEL[categories[0]])}`
               : "That message has some things you cannot take back"}
           </DialogTitle>
           {/* Principle 5: state what happens, offer the action, do not moralise.
