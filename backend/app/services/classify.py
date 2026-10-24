@@ -207,3 +207,26 @@ def status_disagreement(model_says: AssertionStatus, text: str) -> str | None:
         f"the wording reads as {supported}, but it was classified as "
         f"{model_says.value.replace('_', ' ')}"
     )
+
+
+# ------------------------------------------------------------- phase 9 contract
+# Signatures fixed in Wave 0 so callers in other modules can be written against them.
+# Bodies land with the extraction/classifier work (docs/RESEARCH_CONTRACT.md).
+
+
+def propose_relation(
+    new: dict, old: dict, distance: float
+) -> tuple[str, str] | None:
+    """Whether `new` looks like it updates or contradicts `old`, both live items in the
+    same block. Returns (relation, reason) with relation in {"updates", "contradicts"},
+    or None. Pure: no model call, no database. `new`/`old` carry at least `content`,
+    `status` and `block_name`; `distance` is their cosine distance."""
+    raise NotImplementedError
+
+
+def influence(full: str, ablated: str, repeats: list[str]) -> tuple[float, float]:
+    """(score, noise_floor) for one memory. noise_floor is the mean pairwise distance
+    among `repeats` (full-context regenerations); score is distance(full, ablated)
+    minus that floor. Pure text distance, no model call, so it is testable on
+    hand-written triples."""
+    raise NotImplementedError

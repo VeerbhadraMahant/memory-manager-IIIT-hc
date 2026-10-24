@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.models import ReviewState, Scope, Sensitivity, SourceType
+from app.models import AssertionStatus, ReviewState, Scope, Sensitivity, SourceType
 
 # Principle 2, interruption budget. Auto-accept is deliberately narrow: only facts
 # the user *said*, that we are confident about, in the least sensitive tier. Everything
@@ -49,6 +49,9 @@ def decide(
     proposed_block: str,
     known_blocks: set[str],
     fallback_block: str,
+    # Phase 9 contract: a fact about someone else is restricted by default. Optional so
+    # existing callers are unchanged until the policy rule lands.
+    status: AssertionStatus | None = None,
 ) -> Disposition:
     reasons: list[str] = []
 

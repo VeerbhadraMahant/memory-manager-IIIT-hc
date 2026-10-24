@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
@@ -63,6 +64,35 @@ class MessageRole(str, Enum):
     user = "user"
     assistant = "assistant"
     system = "system"
+
+
+class FlowDestination(str, Enum):
+    """Migration 009: the places retrieval feeds a model. A block lists the ones its
+    memories must never reach."""
+    chat = "chat"
+    draft = "draft"
+    summary = "summary"
+    relevance = "relevance"
+
+
+class EdgeState(str, Enum):
+    """Migration 011. Only `confirmed` edges count for cascade and retrieval."""
+    proposed = "proposed"
+    confirmed = "confirmed"
+    rejected = "rejected"
+
+
+class EdgeOrigin(str, Enum):
+    heuristic = "heuristic"
+    extraction = "extraction"
+    user = "user"
+
+
+class ContentOrigin(str, Enum):
+    """Migration 012: who worded the memory, as opposed to who asserted it."""
+    model_worded = "model_worded"
+    user_edited = "user_edited"
+    user_written = "user_written"
 
 
 class ExtractionStatus(str, Enum):
@@ -152,6 +182,10 @@ class Message(BaseModel):
     created_at: datetime
     extraction_status: ExtractionStatus = ExtractionStatus.skipped
     extraction_error: str | None = None
+    # Migration 010: who actually wrote an assistant message. None for user messages
+    # and for rows older than the migration.
+    provider: str | None = None
+    model: str | None = None
 
 
 # ------------------------------------------------------------------ memory
@@ -195,6 +229,10 @@ class MemoryItem(BaseModel):
     created_at: datetime
     last_confirmed_at: datetime | None
     deleted_at: datetime | None
+    # Migration 012. None = recorded before origin tracking existed.
+    content_origin: ContentOrigin | None = None
+    # For a fact about someone else: the same fact with identifying detail removed.
+    abstracted: str | None = None
 
 
 class Block(BaseModel):
@@ -207,10 +245,18 @@ class Block(BaseModel):
     # never placed in a prompt. Distinct from scope, which controls *which chats* may
     # use a memory; this controls whether the model may see it at all.
     private: bool = False
+    # Migration 009. Destinations this block's memories never reach. `private` still
+    # wins: a private block reaches none of them whatever this says.
+    denied_destinations: list[FlowDestination] = []
 
 
 class BlockPrivacy(BaseModel):
     private: bool
+
+
+class BlockFlows(BaseModel):
+    """PATCH /memory/blocks/{name}/flows. Replaces the whole deny-list."""
+    denied_destinations: list[FlowDestination] = Field(default_factory=list, max_length=4)
 
 
 # ------------------------------------------------------- P5 provenance graph
@@ -234,6 +280,7 @@ class GraphNode(BaseModel):
     confidence: float
     last_confirmed_at: datetime | None
     deleted_at: datetime | None
+    content_origin: ContentOrigin | None = None
 
 
 class GraphEdge(BaseModel):
@@ -242,6 +289,28 @@ class GraphEdge(BaseModel):
     from_item_id: UUID
     to_item_id: UUID
     relation: EdgeRelation
+    # Migration 011. Defaults match what an edge meant before it existed.
+    id: UUID | None = None
+    state: EdgeState = EdgeState.confirmed
+    origin: EdgeOrigin | None = None
+
+
+class EdgeProposal(BaseModel):
+    """GET /memory/edges?state=proposed. Carries both contents so the review card can
+    say "this looks like it updates X" without a second fetch."""
+    id: UUID
+    from_item_id: UUID
+    to_item_id: UUID
+    from_content: str
+    to_content: str
+    relation: EdgeRelation
+    origin: EdgeOrigin | None
+    created_at: datetime
+
+
+class EdgeDecision(BaseModel):
+    """PATCH /memory/edges/{id}. A user can confirm or reject; nothing un-decides."""
+    state: Literal["confirmed", "rejected"]
 
 
 class CascadePreview(BaseModel):
@@ -287,6 +356,11 @@ class TurnRequest(BaseModel):
     # which is why no review card or attribution chip ever rendered.
     selected_memory_ids: list[UUID] | None = Field(default=None, max_length=50)
 
+    # Guest turn: someone else is at the keyboard. Forces the turn ephemeral and
+    # retrieves only low-sensitivity memories. Not identity resolution — it relies on
+    # the owner choosing it, and the UI says so.
+    guest: bool = False
+
 
 class UsedMemory(BaseModel):
     """A memory item that was injected into the prompt for this response.
@@ -314,6 +388,8 @@ class RetrievalCandidate(BaseModel):
     block_name: str | None = None
     distance: float
     # injected | too_distant | private_block | revoked | pinned
+    # | context_denied (009 flow rule) | superseded (confirmed `updates` edge, 011)
+    # | guest_withheld (above the guest-turn sensitivity cap)
     verdict: str
 
 
@@ -338,6 +414,12 @@ class RetrievalTrace(BaseModel):
     not_embedded: int = 0
     max_distance: float = 0.0
     embedding_failed: bool = False
+    # Withheld by a block's flow rule for this destination (migration 009).
+    withheld_by_context: int = 0
+    # Replaced by a newer fact through a confirmed `updates` edge (migration 011).
+    superseded_count: int = 0
+    # Above the sensitivity cap of a guest turn.
+    withheld_by_guest: int = 0
 
 
 class TurnResponse(BaseModel):
@@ -377,6 +459,9 @@ class RegenerateRequest(BaseModel):
     # model than answered originally is legitimate — the revoked memory is the
     # variable under test, and holding the model fixed is not required for that.
     provider: str | None = None
+    # Answer once with *every* injected memory excluded, without revoking any of them.
+    # Unlike revoke this tombstones nothing: it is a comparison, not a decision.
+    exclude_all: bool = False
 
 
 class RegenerateResponse(BaseModel):
@@ -385,6 +470,32 @@ class RegenerateResponse(BaseModel):
     revoked: list[UsedMemory]
     used_memories: list[UsedMemory]
     assistant_message: Message
+
+
+class InfluenceRequest(BaseModel):
+    """POST /chats/{chat_id}/messages/{message_id}/influence. Costs k + repeats model
+    calls for k injected memories, so it runs only when the user asks."""
+    repeats: int = Field(default=2, ge=2, le=5)
+
+
+class MemoryInfluence(BaseModel):
+    memory_item_id: UUID
+    # Distance of the reply without this memory from the full reply, minus the noise
+    # floor. None when the ablation call failed.
+    score: float | None
+    verdict: Literal["changed_answer", "no_measurable_effect", "within_noise", "failed"]
+
+
+class InfluenceResponse(BaseModel):
+    """Measured, not asserted — but still not a causal proof. The UI says how it was
+    measured (k + repeats regenerations on the same model)."""
+    message_id: UUID
+    provider: str | None
+    model: str | None
+    # Mean pairwise distance among full-context repeats: what "no effect" looks like.
+    noise_floor: float
+    calls_made: int
+    results: list[MemoryInfluence]
 
 
 class DraftRequest(BaseModel):
@@ -440,6 +551,21 @@ class ScopeReport(BaseModel):
     # calling the LLM when a turn is ephemeral, so no row can reference one. Reported
     # rather than asserted because a number a judge can watch beats a promise.
     items_from_ephemeral_turns_global: int
+
+
+class DigestEntry(BaseModel):
+    memory_item_id: UUID
+    content: str
+    block_name: str | None
+    change: Literal["created", "auto_accepted", "edited", "stale", "flagged_for_review", "deleted"]
+    at: datetime
+
+
+class DigestResponse(BaseModel):
+    """GET /memory/digest?since=. Pure SQL over memory_items and audit_log, no model."""
+    since: datetime
+    entries: list[DigestEntry]
+    counts: dict[str, int]
 
 
 class MemoryItemEdit(BaseModel):
