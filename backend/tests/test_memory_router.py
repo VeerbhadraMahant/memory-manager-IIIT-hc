@@ -109,8 +109,21 @@ def test_proposed_edges_list_and_decision(client, db):
     assert r.json()["state"] == "confirmed" and r.json()["id"] == str(edge_id)
     assert client.get("/memory/edges").json() == []
     assert client.patch(f"/memory/edges/{edge_id}", json={"state": "rejected"}).status_code == 409
-    row = db.execute("select action, actor from audit_log where action like 'edge_%'").fetchall()
-    assert row == [{"action": "edge_confirmed", "actor": "user"}]
+    rows = db.execute("select memory_item_id, action, actor from audit_log where action like 'edge_%'"
+                      " order by memory_item_id").fetchall()
+    # Recorded on both ends, so each memory's history shows the link.
+    assert sorted(str(r["memory_item_id"]) for r in rows) == sorted([old["id"], new["id"]])
+    assert all((r["action"], r["actor"]) == ("edge_confirmed", "user") for r in rows)
+
+
+def test_edge_with_a_deleted_end_cannot_be_decided(client, db):
+    _, msg = seed_chat_and_message(client)
+    a = create_memory(client, msg, content="pqwe-2290 kept")
+    b = create_memory(client, msg, content="pqwe-2290 deleted")
+    edge_id = _edge(db, a, b)
+    client.delete(f"/memory/items/{b['id']}")
+    assert client.patch(f"/memory/edges/{edge_id}", json={"state": "confirmed"}).status_code == 409
+    assert db.execute("select state from memory_edges where id = %s", (edge_id,)).fetchone()["state"] == "proposed"
 
 
 def test_rejecting_an_edge_writes_audit_and_hides_it_from_graph(client, db):
@@ -212,3 +225,14 @@ def test_digest_validates_since(client):
     future = (datetime.now(UTC) + timedelta(days=1)).isoformat()
     assert client.get("/memory/digest", params={"since": future}).status_code == 422
     assert client.get("/memory/digest").status_code == 422
+
+
+# ------------------------------------------------------------------ F8 manual entry
+
+def test_manual_third_party_item_is_session_scoped_and_reviewed(client):
+    chat, msg = seed_chat_and_message(client)
+    item = create_memory(client, msg, content="lkjh-6604 colleague started treatment",
+                         status="third_party", review_state="accepted")
+    assert (item["scope"], item["session_chat_id"]) == ("session", chat["id"])
+    assert item["review_state"] == "pending" and item["needs_review"] is True
+    assert item["review_reason"] == "About someone else, who cannot see or remove this."

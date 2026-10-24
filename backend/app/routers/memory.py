@@ -44,6 +44,10 @@ from app.services.retrieval import MAX_DISTANCE, embed_query
 
 log = logging.getLogger(__name__)
 
+# shortcut: same text as policy.THIRD_PARTY_REASON (PR #6), which this branch does not
+# have yet; import it from app.services.policy once both are merged.
+THIRD_PARTY_REASON = "About someone else, who cannot see or remove this."
+
 router = APIRouter(prefix="/memory", tags=["memory"], dependencies=[Depends(general_limit)])
 
 
@@ -220,11 +224,12 @@ def create_item(payload: MemoryItemCreate, user: User = Depends(current_user)):
         # prove the rows exist, not whose they are — without this a user could attach
         # a memory to another user's message or chat.
         cur.execute(
-            """select 1 from messages m join chats c on c.id = m.chat_id
+            """select m.chat_id from messages m join chats c on c.id = m.chat_id
                 where m.id = %s and c.user_id = %s""",
             (payload.source_message_id, user.id),
         )
-        if not cur.fetchone():
+        source = cur.fetchone()
+        if not source:
             raise HTTPException(422, "source_message_id does not refer to one of your messages")
         if payload.session_chat_id is not None:
             cur.execute(
@@ -247,21 +252,29 @@ def create_item(payload: MemoryItemCreate, user: User = Depends(current_user)):
             cur.execute("select id from blocks where user_id = %s and is_fallback", (user.id,))
             block_id = cur.fetchone()["id"]
 
+        scope, session_chat_id = payload.scope, payload.session_chat_id
+        review_state, needs_review, reason = payload.review_state, payload.needs_review, None
+        if payload.status is AssertionStatus.third_party:
+            # Same rule as extraction's policy.decide (F8): a fact about someone else
+            # stays in the chat it came from and gets a review, however it was entered.
+            scope, session_chat_id = Scope.session, source["chat_id"]
+            review_state, needs_review, reason = ReviewState.pending, True, THIRD_PARTY_REASON
+
         cur.execute(
             """
             insert into memory_items (
                 user_id, block_id, content, source_type, status, sensitivity, scope,
                 confidence, source_message_id, session_chat_id, review_state, needs_review,
-                embedding, content_origin
-            ) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'user_written')
+                review_reason, embedding, content_origin
+            ) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'user_written')
             returning id
             """,
             (
                 user.id, block_id, payload.content,
                 payload.source_type.value, payload.status.value,
-                payload.sensitivity.value, payload.scope.value, payload.confidence,
-                payload.source_message_id, payload.session_chat_id,
-                payload.review_state.value, payload.needs_review, vec,
+                payload.sensitivity.value, scope.value, payload.confidence,
+                payload.source_message_id, session_chat_id,
+                review_state.value, needs_review, reason, vec,
             ),
         )
         new_id = cur.fetchone()["id"]
@@ -891,7 +904,8 @@ def decide_edge(edge_id: UUID, payload: EdgeDecision, user: User = Depends(curre
     """Confirm or reject a proposed edge. Only a proposed edge can be decided: a
     decision is not silently overwritten by a second one."""
     cur.execute(
-        """select e.state from memory_edges e
+        """select e.state, f.deleted_at is not null or t.deleted_at is not null as end_deleted
+             from memory_edges e
              join memory_items f on f.id = e.from_item_id
              join memory_items t on t.id = e.to_item_id
             where e.id = %s and f.user_id = %s and t.user_id = %s""",
@@ -900,6 +914,9 @@ def decide_edge(edge_id: UUID, payload: EdgeDecision, user: User = Depends(curre
     row = cur.fetchone()
     if not row:
         raise HTTPException(404, "edge not found")
+    # list_edges never shows these; a stale client must not confirm a link to a deleted memory.
+    if row["end_deleted"]:
+        raise HTTPException(409, "one of these memories was deleted, so this link cannot be decided")
     cur.execute(
         """update memory_edges set state = %s
             where id = %s and state = 'proposed'
@@ -909,8 +926,10 @@ def decide_edge(edge_id: UUID, payload: EdgeDecision, user: User = Depends(curre
     edge = cur.fetchone()
     if not edge:
         raise HTTPException(409, f"this link was already {row['state']}, so it cannot be decided again")
-    _audit(cur, edge["from_item_id"], f"edge_{payload.state}",
-           {"edge_id": str(edge_id), "to_item_id": str(edge["to_item_id"]), "relation": edge["relation"]})
+    # Both ends: the decision changes how each of them is retrieved and cascaded.
+    for item_id, other in ((edge["from_item_id"], "to_item_id"), (edge["to_item_id"], "from_item_id")):
+        _audit(cur, item_id, f"edge_{payload.state}",
+               {"edge_id": str(edge_id), other: str(edge[other]), "relation": edge["relation"]})
     cur.connection.commit()
     return edge
 
