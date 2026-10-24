@@ -33,6 +33,9 @@ jobs:
       - name: Lint
         working-directory: backend
         run: ruff check .
+      - name: Unit tests (no database, no model)
+        working-directory: backend
+        run: pytest -q tests_unit
       - name: Tests (real Postgres + pgvector, LLM mocked)
         working-directory: backend
         run: pytest -q
