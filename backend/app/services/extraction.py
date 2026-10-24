@@ -202,14 +202,16 @@ def run_extraction(message_id: str, chat_id: str, user_id: str) -> None:
                     (src, dst),
                 )
 
-            # F4: propose, never apply. Compare against items from before this batch.
-            batch = [i for i in item_ids if i]
-            for (c, d, _), vec, iid in zip(rows, vectors, item_ids, strict=True):
+            # F4: propose, never apply. Compare against older items and against the
+            # candidates listed before this one in the same turn ("I planned X; actually
+            # I finished it"), so each same-turn pair is checked once, earlier as `old`.
+            for pos, ((c, d, _), vec, iid) in enumerate(zip(rows, vectors, item_ids, strict=True)):
                 if not iid:
                     continue
+                later = [i for i in item_ids[pos:] if i]
                 cur.execute(
                     NEIGHBOUR_SQL,
-                    (user_id, d.block_name, batch, chat_id, str(vec), RELATION_NEIGHBOURS),
+                    (user_id, d.block_name, later, chat_id, str(vec), RELATION_NEIGHBOURS),
                 )
                 new_item = {"content": c.content, "status": c.status, "block_name": d.block_name}
                 for old in cur.fetchall():

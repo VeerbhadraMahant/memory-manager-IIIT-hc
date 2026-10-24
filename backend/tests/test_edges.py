@@ -57,6 +57,15 @@ def test_extraction_proposes_updates_edge_for_changed_dose(client, llm_calls, sa
     assert (e["relation"], e["state"], e["origin"]) == ("updates", "proposed", "heuristic")
 
 
+def test_same_turn_update_is_proposed_once_earlier_to_later(client, llm_calls, same_vector, db):
+    mid = turn(client, llm_calls, [
+        cand("Takes zorqel 20 units daily"), cand("Takes zorqel 10 units daily")])
+    ids = {i["content"]: i["id"] for i in items(db, mid)}
+    edges = db.execute("select from_item_id, to_item_id from memory_edges").fetchall()
+    assert [(e["from_item_id"], e["to_item_id"]) for e in edges] == [
+        (ids["Takes zorqel 20 units daily"], ids["Takes zorqel 10 units daily"])]
+
+
 def test_unrelated_items_get_no_edge(client, llm_calls, same_vector, db):
     turn(client, llm_calls, [cand("Takes zorqel 20 units daily")])
     turn(client, llm_calls, [cand("Writes the Brennick paper")])
