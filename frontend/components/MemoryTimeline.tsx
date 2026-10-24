@@ -19,10 +19,9 @@
 //   • The extraction step reflects `extraction_running`, which the server sets — not
 //     a client-side timer.
 //
-// The linking step is the honest one: `memory_edges` is real in the schema and read
-// by the deletion cascade, but **nothing writes it** — no pass detects that one
-// memory updates or contradicts another. So this reports that plainly rather than
-// drawing arrows between memories that the database does not relate.
+// The linking step states what extraction does, not a count: it proposes `updates` and
+// `contradicts` edges for the user to confirm, and writes `derived_from` edges from an
+// inference to its premises. The turn response carries no edge count, so none is shown.
 
 import { useState } from "react";
 import {
@@ -481,20 +480,19 @@ export function MemoryTimeline({
         )}
       </Step>
 
-      {/* 5 — the step that has to say "no", because the writer does not exist */}
+      {/* 5 — links proposed or written by extraction (no count: the response has none) */}
       {extraction?.status === "done" && stored.length + pending.length > 0 && (
         <Step
-          state="skipped"
+          state="done"
           icon={<Unlink className="size-3.5 shrink-0 text-ink-invert-muted" aria-hidden="true" />}
           label="linked"
-          detail="nothing — provenance edges are not written yet"
+          detail="possible updates are proposed for your review; inferences link to what they were inferred from"
         >
           <p className="text-body-sm text-ink-invert-muted">
-            The schema has <span className="meta">memory_edges</span> and the deletion
-            cascade reads it, but no pass writes one — nothing detects that a new fact
-            updates or contradicts an existing one. So these memories are stored
-            side-by-side and unrelated, and the deletion preview will correctly report
-            zero dependents. This is a gap, not a design.
+            A new fact that looks like it updates or contradicts an existing one is
+            proposed as a link for you to confirm; until you confirm it, it does not
+            affect deletion or retrieval. An inference is linked to the stated facts it
+            was inferred from. This turn&rsquo;s exact link count is not reported here.
           </p>
         </Step>
       )}
