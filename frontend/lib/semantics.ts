@@ -10,7 +10,9 @@
 
 import type {
   AssertionStatus,
+  ContentOrigin,
   MemoryItem,
+  ProvenanceGraph,
   ReviewState,
   Scope,
   Sensitivity,
@@ -54,6 +56,46 @@ export const SOURCE: Record<SourceType, SourceEncoding> = {
     description: "the model worked this out",
   },
 };
+
+export interface OriginEncoding {
+  /** Mono tag text. */
+  label: string;
+  /** Icon name rendered by <OriginTag>; the glyph channel, so colour never
+   *  carries the meaning alone. */
+  glyph: "bot" | "pencil" | "pen";
+  /** Plain-language phrase for the accessible name. */
+  description: string;
+}
+
+/** F9: who worded the stored text. Orthogonal to SOURCE, which says who the
+ *  claim came from. Null origin renders nothing. */
+export const ORIGIN: Record<ContentOrigin, OriginEncoding> = {
+  model_worded: {
+    label: "worded by the assistant",
+    glyph: "bot",
+    description: "worded by the assistant",
+  },
+  user_edited: {
+    label: "you edited this",
+    glyph: "pencil",
+    description: "you edited this",
+  },
+  user_written: {
+    label: "you wrote this",
+    glyph: "pen",
+    description: "you wrote this",
+  },
+};
+
+/** F7: contents of the confirmed premises an inferred item was derived from. */
+export function premisesOf(graph: ProvenanceGraph | null, id: string): string[] {
+  if (!graph) return [];
+  const byId = new Map(graph.nodes.map((n) => [n.id, n.content]));
+  return graph.edges
+    .filter((e) => e.relation === "derived_from" && e.state === "confirmed" && e.to_item_id === id)
+    .map((e) => byId.get(e.from_item_id))
+    .filter((c): c is string => !!c);
+}
 
 /** Order matters: this is the sequence the status filter renders in, and it runs
  *  most-live to least-live rather than alphabetically. */
@@ -166,6 +208,7 @@ export function describeMemory(item: {
   created_at?: string;
   needs_review?: boolean;
   review_state?: ReviewState;
+  content_origin?: ContentOrigin | null;
 }): string {
   const parts = [
     item.content,
@@ -174,6 +217,7 @@ export function describeMemory(item: {
     STATUS_CHIP[item.status],
     item.scope === "session" ? "this chat only" : "remembered across chats",
   ];
+  if (item.content_origin) parts.push(ORIGIN[item.content_origin].description);
   if (isStale({ ...item, last_confirmed_at: item.last_confirmed_at ?? null })) {
     parts.push("not confirmed recently");
   }

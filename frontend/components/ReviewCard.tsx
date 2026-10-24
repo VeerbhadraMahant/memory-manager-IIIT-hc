@@ -22,17 +22,25 @@
 // this chat only" says what happens. "Are you sure?" only transfers anxiety.
 
 import { useEffect, useRef, useState } from "react";
-import { Check, ChevronRight, Pencil, Undo2, X } from "lucide-react";
+import { Bot, Check, ChevronRight, Pencil, PenLine, Undo2, X } from "lucide-react";
 
 import {
   SCOPE_LABEL,
   SENSITIVITY_LABEL,
   type AssertionStatus,
+  type EdgeProposal,
   type MemoryItem,
   type Sensitivity,
 } from "@/lib/api";
 import { useMemoryActions, useMemoryStore } from "@/lib/memory-store";
-import { FALLBACK_BLOCKS, STATUSES, STATUS_CHIP, blockLabel } from "@/lib/semantics";
+import {
+  FALLBACK_BLOCKS,
+  ORIGIN,
+  STATUSES,
+  STATUS_CHIP,
+  blockLabel,
+  premisesOf,
+} from "@/lib/semantics";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Chip, SelectChip, SourceChip } from "@/components/ui/chip";
@@ -166,12 +174,19 @@ export function ReviewCard({
   );
 }
 
+export { PendingItem as ReviewItem };
+
 function PendingItem({
   item,
   onResolved,
+  queue,
 }: {
   item: MemoryItem;
   onResolved: (id: string) => void;
+  /** F11: set by the review queue. Makes the row a focus target that answers
+   *  single keys, but only while the row itself (not a control inside it) has
+   *  focus, so the keys cannot collide with typing or screen-reader commands. */
+  queue?: { onNavigate: (step: 1 | -1) => void; helpId: string };
 }) {
   const actions = useMemoryActions();
   const { blocks } = useMemoryStore();
@@ -213,8 +228,44 @@ function PendingItem({
     (b) => [b, blockLabel(b)] as const,
   );
 
+  // In the queue, choosing a scope is also the decision to keep: rescoping alone
+  // leaves the item pending, and the queue would bring it straight back.
+  const scopeAndResolve = async (scope: "session" | "persistent") => {
+    await actions.rescope(item.id, scope);
+    if (queue) await actions.accept(item.id);
+  };
+
+  const onQueueKey = (e: React.KeyboardEvent<HTMLLIElement>) => {
+    if (!queue || e.target !== e.currentTarget) return;
+    if (e.ctrlKey || e.metaKey || e.altKey || busy || editing) return;
+    const k = e.key.toLowerCase();
+    const go = (fn: () => void) => {
+      e.preventDefault();
+      fn();
+    };
+    if (e.key === "ArrowDown" || e.key === "ArrowRight") go(() => queue.onNavigate(1));
+    else if (e.key === "ArrowUp" || e.key === "ArrowLeft") go(() => queue.onNavigate(-1));
+    else if (k === "k") go(() => void run(() => actions.accept(item.id)));
+    else if (k === "d") go(() => void run(() => actions.reject(item.id)));
+    else if (k === "e") go(() => setEditing(true));
+    else if (k === "t" && item.scope !== "session")
+      go(() => void run(() => scopeAndResolve("session")));
+  };
+
   return (
-    <li className="px-4 py-4">
+    <li
+      className="px-4 py-4"
+      {...(queue
+        ? {
+            tabIndex: 0,
+            "data-queue-item": "",
+            "aria-label": "Memory to review",
+            "aria-describedby": queue.helpId,
+            "aria-keyshortcuts": "K D E T ArrowDown ArrowUp",
+            onKeyDown: onQueueKey,
+          }
+        : {})}
+    >
       {editing ? (
         <div className="space-y-3">
           <label className="block">
@@ -259,11 +310,14 @@ function PendingItem({
         <p className="mt-2 text-body-sm text-ink-muted">{item.review_reason}</p>
       )}
 
+      <MemoryInsights item={item} onDone={onResolved} />
+
       {/* P2 one-tap correction: the chips that *show* the classification are the
           controls that change it. Native selects — one interaction, keyboard
           operable, screen-reader labelled without a line of ARIA. */}
       <div className="mt-3 flex flex-wrap items-center gap-1.5">
         <SourceChip source={item.source_type} onLight />
+        <OriginTag origin={item.content_origin} onLight />
         <SelectChip
           label="Block"
           value={item.block_name ?? "unclassified"}
@@ -378,10 +432,7 @@ function PendingItem({
               disabled={busy}
               onClick={() =>
                 run(() =>
-                  actions.rescope(
-                    item.id,
-                    item.scope === "session" ? "persistent" : "session",
-                  ),
+                  scopeAndResolve(item.scope === "session" ? "persistent" : "session"),
                 )
               }
             >
@@ -400,3 +451,250 @@ function PendingItem({
 const SENSITIVITIES_OPTIONS = (
   ["low", "medium", "high", "special_category"] as Sensitivity[]
 ).map((s) => [s, SENSITIVITY_LABEL[s]] as const);
+
+/** F9: who worded the stored text. Text plus glyph, never colour alone; renders
+ *  nothing when the origin is unknown. */
+export function OriginTag({
+  origin,
+  onLight,
+}: {
+  origin: MemoryItem["content_origin"];
+  onLight?: boolean;
+}) {
+  if (!origin) return null;
+  const enc = ORIGIN[origin];
+  const Icon = enc.glyph === "bot" ? Bot : enc.glyph === "pencil" ? Pencil : PenLine;
+  return (
+    <Chip onLight={onLight}>
+      <Icon className="size-3" aria-hidden="true" />
+      {enc.label}
+    </Chip>
+  );
+}
+
+/**
+ * F4, F7, F8 for one memory, shared by the review card, the list row and the
+ * graph's detail panel so the three surfaces cannot drift apart (section 2
+ * parity). Everything goes through useMemoryActions().
+ */
+export function MemoryInsights({
+  item,
+  onLight = true,
+  onDone,
+}: {
+  item: MemoryItem;
+  onLight?: boolean;
+  onDone?: (id: string) => void;
+}) {
+  const { graph, proposals } = useMemoryStore();
+  const mine = proposals.filter(
+    (p) => p.from_item_id === item.id || p.to_item_id === item.id,
+  );
+  const premises = item.source_type === "inferred" ? premisesOf(graph, item.id) : [];
+  const offerAbstract =
+    item.review_state === "pending" &&
+    item.status === "third_party" &&
+    !!item.abstracted &&
+    item.abstracted !== item.content;
+  if (!mine.length && !premises.length && !offerAbstract) return null;
+
+  const ink = onLight ? "text-ink" : "text-ink-invert";
+  const muted = onLight ? "text-ink-muted" : "text-ink-invert-muted";
+
+  return (
+    <div className="mt-3 space-y-3">
+      {premises.length > 0 && (
+        <p className={cn("text-body-sm", muted)}>
+          <span className="meta">Inferred from:</span>{" "}
+          {premises.map((c, i) => (
+            <span key={i} className={ink}>
+              {i > 0 && "; "}&ldquo;{c}&rdquo;
+            </span>
+          ))}
+        </p>
+      )}
+      {mine.map((p) => (
+        <ProposalPrompt key={p.id} item={item} proposal={p} onLight={onLight} />
+      ))}
+      {offerAbstract && <AbstractedChoice item={item} onLight={onLight} onDone={onDone} />}
+    </div>
+  );
+}
+
+function useGuarded() {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const go = async (fn: () => Promise<unknown>) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await fn();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "that did not go through");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return { busy, error, go };
+}
+
+function ProposalPrompt({
+  item,
+  proposal: p,
+  onLight,
+}: {
+  item: MemoryItem;
+  proposal: EdgeProposal;
+  onLight: boolean;
+}) {
+  const actions = useMemoryActions();
+  const { busy, error, go } = useGuarded();
+  const variant = onLight ? "outlineInk" : "outline";
+  const ink = onLight ? "text-ink" : "text-ink-invert";
+  const muted = onLight ? "text-ink-muted" : "text-ink-invert-muted";
+  const isTo = p.to_item_id === item.id;
+  const other = isTo ? p.from_content : p.to_content;
+  const updates = p.relation === "updates";
+  const contradicts = p.relation === "contradicts";
+
+  const heading = updates
+    ? isTo
+      ? "This looks like it updates an earlier memory."
+      : "A newer memory may replace this one."
+    : contradicts
+      ? "This looks like it contradicts another memory."
+      : "This looks related to another memory.";
+
+  const decide = (state: "confirmed" | "rejected") =>
+    void go(() => actions.decideEdge(p.id, state));
+
+  return (
+    <div
+      role="group"
+      aria-label={`Suggested link: ${heading}`}
+      className={cn(
+        "rounded-input border p-3",
+        onLight ? "border-outline-ink" : "border-outline",
+      )}
+    >
+      <p className={cn("text-body-sm font-medium", ink)}>{heading}</p>
+      <dl className={cn("mt-1 space-y-1 text-body-sm", muted)}>
+        {updates ? (
+          <>
+            <div>
+              <dt className="meta inline">Older:</dt>{" "}
+              <dd className="inline">&ldquo;{p.from_content}&rdquo;</dd>
+            </div>
+            <div>
+              <dt className="meta inline">Newer:</dt>{" "}
+              <dd className="inline">&ldquo;{p.to_content}&rdquo;</dd>
+            </div>
+          </>
+        ) : (
+          <div>
+            <dt className="meta inline">Other memory:</dt>{" "}
+            <dd className="inline">&ldquo;{other}&rdquo;</dd>
+          </div>
+        )}
+      </dl>
+      <div className="mt-2 flex flex-wrap gap-2">
+        {updates && (
+          <Button variant={variant} size="sm" disabled={busy} onClick={() => decide("rejected")}>
+            Keep both
+          </Button>
+        )}
+        <Button variant={variant} size="sm" disabled={busy} onClick={() => decide("confirmed")}>
+          {updates ? "Replace the older one" : contradicts ? "Record the conflict" : "Link them"}
+        </Button>
+        <Button variant={variant} size="sm" disabled={busy} onClick={() => decide("rejected")}>
+          Not related
+        </Button>
+      </div>
+      <p className={cn("mt-2 text-body-sm", muted)}>
+        {updates
+          ? "Replace: the older fact stays stored but stops being used in answers. Keep both: both are still used."
+          : contradicts
+            ? "Recording the conflict removes nothing; both stay stored."
+            : "Linking them removes nothing."}{" "}
+        Not related: nothing is linked and this is not suggested again.
+      </p>
+      {error && (
+        <p role="alert" className="mt-2 text-body-sm text-danger-ink">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function AbstractedChoice({
+  item,
+  onLight,
+  onDone,
+}: {
+  item: MemoryItem;
+  onLight: boolean;
+  onDone?: (id: string) => void;
+}) {
+  const actions = useMemoryActions();
+  const { busy, error, go } = useGuarded();
+  const variant = onLight ? "outlineInk" : "outline";
+  const muted = onLight ? "text-ink-muted" : "text-ink-invert-muted";
+  const finish = (fn: () => Promise<unknown>) =>
+    void go(async () => {
+      await fn();
+      onDone?.(item.id);
+    });
+
+  return (
+    <div
+      role="group"
+      aria-label="This is about someone else"
+      className={cn(
+        "rounded-input border p-3",
+        onLight ? "border-outline-ink" : "border-outline",
+      )}
+    >
+      <p className={cn("text-body-sm", onLight ? "text-ink" : "text-ink-invert")}>
+        This is about someone who cannot see or remove it. A less identifying
+        version is available.
+      </p>
+      <p className={cn("mt-1 text-body-sm", muted)}>
+        <span className="meta">Less identifying:</span> &ldquo;{item.abstracted}&rdquo;
+      </p>
+      <div className="mt-2 flex flex-wrap gap-2">
+        <Button
+          variant={variant}
+          size="sm"
+          disabled={busy}
+          onClick={() => finish(() => actions.accept(item.id))}
+        >
+          Keep the specific version
+        </Button>
+        <Button
+          variant={variant}
+          size="sm"
+          disabled={busy}
+          onClick={() =>
+            finish(() => actions.editContent(item.id, item.abstracted ?? item.content))
+          }
+        >
+          Keep the less identifying version
+        </Button>
+        <Button
+          variant={variant}
+          size="sm"
+          disabled={busy}
+          onClick={() => finish(() => actions.reject(item.id))}
+        >
+          Do not keep
+        </Button>
+      </div>
+      {error && (
+        <p role="alert" className="mt-2 text-body-sm text-danger-ink">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
