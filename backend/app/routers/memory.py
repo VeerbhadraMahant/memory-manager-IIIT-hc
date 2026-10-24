@@ -2,17 +2,26 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.auth import User, current_user
+from app.config import settings
 from app.db import db_cursor, pool
 from app.models import (
     AssertionStatus,
     Block,
+    BlockFlows,
     BlockPrivacy,
     CascadePreview,
+    DigestEntry,
+    DigestResponse,
+    EdgeDecision,
+    EdgeProposal,
+    EdgeState,
+    GraphEdge,
     MemoryItem,
     MemoryItemCreate,
     MemoryItemEdit,
@@ -46,12 +55,18 @@ left join blocks b on b.id = mi.block_id
 """
 
 
+# denied_destinations is cast to text[]: psycopg returns an unregistered enum array as a
+# raw '{draft}' string (migration 009).
+BLOCK_COLS = """id, name, default_sensitivity, restrictive_rank, is_fallback,
+               coalesce(private, false) as private,
+               denied_destinations::text[] as denied_destinations"""
+
+
 @router.get("/blocks", response_model=list[Block])
 def list_blocks(user: User = Depends(current_user), cur=Depends(db_cursor)):
     cur.execute(
-        """
-        select id, name, default_sensitivity, restrictive_rank, is_fallback,
-               coalesce(private, false) as private
+        f"""
+        select {BLOCK_COLS}
         from blocks where user_id = %s
         order by restrictive_rank
         """,
@@ -89,13 +104,37 @@ def set_block_privacy(name: str, payload: BlockPrivacy, user: User = Depends(cur
         )
 
     cur.execute(
-        """update blocks set private = %s
+        f"""update blocks set private = %s
             where user_id = %s and name = %s
-        returning id, name, default_sensitivity, restrictive_rank, is_fallback,
-                  coalesce(private, false) as private""",
+        returning {BLOCK_COLS}""",
         (payload.private, user.id, name),
     )
     updated = cur.fetchone()
+    cur.connection.commit()
+    return updated
+
+
+def dedupe_destinations(destinations) -> list[str]:
+    """Deny-list as plain strings, duplicates dropped, first-seen order kept."""
+    return list(dict.fromkeys(d.value for d in destinations))
+
+
+@router.patch("/blocks/{name}/flows", response_model=Block)
+def set_block_flows(name: str, payload: BlockFlows, user: User = Depends(current_user), cur=Depends(db_cursor)):
+    """Replace the places this block's memories may not flow to (chat, draft, summary,
+    relevance). It replaces the whole list, so an empty list lifts every restriction.
+
+    Independent of `private`, which still wins: a private block reaches none of them.
+    """
+    cur.execute(
+        f"""update blocks set denied_destinations = %s::text[]::flow_destination[]
+            where user_id = %s and name = %s
+        returning {BLOCK_COLS}""",
+        (dedupe_destinations(payload.denied_destinations), user.id, name),
+    )
+    updated = cur.fetchone()
+    if not updated:
+        raise HTTPException(404, f"unknown block: {name}")
     cur.connection.commit()
     return updated
 
@@ -213,8 +252,8 @@ def create_item(payload: MemoryItemCreate, user: User = Depends(current_user)):
             insert into memory_items (
                 user_id, block_id, content, source_type, status, sensitivity, scope,
                 confidence, source_message_id, session_chat_id, review_state, needs_review,
-                embedding
-            ) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                embedding, content_origin
+            ) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'user_written')
             returning id
             """,
             (
@@ -326,7 +365,7 @@ def edit_item(item_id: UUID, payload: MemoryItemEdit, user: User = Depends(curre
         changed: dict = {}
 
         if payload.content is not None and payload.content != before["content"]:
-            sets += ["content = %s", "embedding = %s"]
+            sets += ["content = %s", "embedding = %s", "content_origin = 'user_edited'"]
             params += [payload.content, vec]
             changed["content"] = {"from": before["content"], "to": payload.content}
 
@@ -427,7 +466,7 @@ GRAPH_NODE_CAP = 150
 GRAPH_SELECT = """
 select mi.id, mi.content, mi.source_type, mi.status, mi.sensitivity, mi.scope,
        b.name as block_name, mi.review_state, mi.needs_review, mi.confidence,
-       mi.last_confirmed_at, mi.deleted_at
+       mi.last_confirmed_at, mi.deleted_at, mi.content_origin
 from memory_items mi
 left join blocks b on b.id = mi.block_id
 """
@@ -436,6 +475,10 @@ left join blocks b on b.id = mi.block_id
 # `contradicts` and `updates` describe how two independent facts relate; deleting
 # one end invalidates the *relationship claim*, not the other fact.
 DERIVING = ("derived_from", "summarized_from")
+
+# Proposed edges are drawn (the UI marks them as proposed); rejected ones never are.
+EDGE_SELECT = """select id, from_item_id, to_item_id, relation, state, origin from memory_edges
+   where from_item_id = any(%s) and to_item_id = any(%s) and state <> 'rejected'"""
 
 
 def _cascade(cur, root_id: UUID) -> tuple[CascadePreview, set[UUID]]:
@@ -457,7 +500,7 @@ def _cascade(cur, root_id: UUID) -> tuple[CascadePreview, set[UUID]]:
                from memory_edges e
                join memory_items mi on mi.id = e.to_item_id
                where e.from_item_id = %s and e.relation = any(%s)
-                 and mi.deleted_at is null
+                 and e.state = 'confirmed' and mi.deleted_at is null
                order by mi.created_at, mi.id""",
             (current, list(DERIVING)),
         )
@@ -476,7 +519,7 @@ def _cascade(cur, root_id: UUID) -> tuple[CascadePreview, set[UUID]]:
                from memory_edges e
                join memory_items mi on mi.id = e.from_item_id
                where e.to_item_id = any(%s) and e.relation = any(%s)
-                 and mi.deleted_at is null""",
+                 and e.state = 'confirmed' and mi.deleted_at is null""",
             (order, list(DERIVING)),
         )
         for row in cur.fetchall():
@@ -512,7 +555,7 @@ def _cascade(cur, root_id: UUID) -> tuple[CascadePreview, set[UUID]]:
            join memory_items mi
              on mi.id = case when e.from_item_id = %s then e.to_item_id else e.from_item_id end
            where (e.from_item_id = %s or e.to_item_id = %s)
-             and e.relation in ('contradicts', 'updates')
+             and e.relation in ('contradicts', 'updates') and e.state = 'confirmed'
              and mi.deleted_at is null""",
         (root_id, root_id, root_id, root_id),
     )
@@ -560,8 +603,7 @@ def full_graph(user: User = Depends(current_user), cur=Depends(db_cursor), limit
     edges = []
     if ids:
         cur.execute(
-            """select from_item_id, to_item_id, relation from memory_edges
-               where from_item_id = any(%s) and to_item_id = any(%s)""",
+            EDGE_SELECT,
             (ids, ids),
         )
         edges = cur.fetchall()
@@ -580,8 +622,7 @@ def item_graph(item_id: UUID, user: User = Depends(current_user), cur=Depends(db
     nodes = cur.fetchall()
 
     cur.execute(
-        """select from_item_id, to_item_id, relation from memory_edges
-           where from_item_id = any(%s) and to_item_id = any(%s)""",
+        EDGE_SELECT,
         (ids, ids),
     )
     return ProvenanceGraph(
@@ -751,9 +792,18 @@ def node_summary(item_id: UUID, user: User = Depends(current_user)):
     with pool.connection() as conn, conn.cursor() as cur:
         item = _load(cur, item_id, user.id)
         cur.execute(
-            "select coalesce(private, false) as private from blocks where id = %s", (item["block_id"],)
+            """select coalesce(private, false) as private,
+                      'summary' = any(denied_destinations::text[]) as no_summary
+                 from blocks where id = %s""",
+            (item["block_id"],),
         )
         blk = cur.fetchone()
+        if blk and blk["no_summary"]:
+            raise HTTPException(
+                409,
+                "This block is set to keep its memories out of summaries, so no summary "
+                "is written for this one. Allow summaries for the block to get one.",
+            )
         private = bool(blk and blk["private"])
         cur.execute(
             "select content from memory_subnodes where memory_item_id = %s and user_id = %s order by created_at",
@@ -782,7 +832,7 @@ def relevance(payload: RelevanceRequest, user: User = Depends(current_user)):
 
     Mirrors what retrieval would consider: persistent, accepted, live, and not in a
     private block. Highlighting a private memory as "would be used" would be a false
-    claim about what the model can see.
+    claim about what the model can see. A block that denies `relevance` gets no score.
     """
     vec = embed_query(payload.prompt)
     if vec is None:
@@ -796,7 +846,8 @@ def relevance(payload: RelevanceRequest, user: User = Depends(current_user)):
                   and mi.review_state in ('accepted', 'auto_accepted')
                   and mi.scope = 'persistent'
                   and mi.embedding is not null
-                  and not coalesce(b.private, false)""",
+                  and not coalesce(b.private, false)
+                  and not coalesce('relevance' = any(b.denied_destinations::text[]), false)""",
             (str(vec), user.id),
         )
         rows = cur.fetchall()
@@ -806,3 +857,124 @@ def relevance(payload: RelevanceRequest, user: User = Depends(current_user)):
         if float(r["distance"]) < MAX_DISTANCE
     }
     return RelevanceResponse(scores=scores)
+
+
+# --------------------------------------------------------------------------
+# F4: proposed provenance edges. A heuristic guess does not count (cascade, retrieval)
+# until the user confirms it.
+# --------------------------------------------------------------------------
+
+@router.get("/edges", response_model=list[EdgeProposal])
+def list_edges(
+    state: EdgeState = EdgeState.proposed,
+    user: User = Depends(current_user), cur=Depends(db_cursor),
+):
+    """Edges in `state` (default proposed), newest first. Only edges whose two ends are
+    both the caller's live items, so a proposal never mentions a deleted memory."""
+    cur.execute(
+        """select e.id, e.from_item_id, e.to_item_id,
+                  f.content as from_content, t.content as to_content,
+                  e.relation, e.origin, e.created_at
+             from memory_edges e
+             join memory_items f on f.id = e.from_item_id
+             join memory_items t on t.id = e.to_item_id
+            where e.state = %s and f.user_id = %s and t.user_id = %s
+              and f.deleted_at is null and t.deleted_at is null
+            order by e.created_at desc, e.id""",
+        (state.value, user.id, user.id),
+    )
+    return cur.fetchall()
+
+
+@router.patch("/edges/{edge_id}", response_model=GraphEdge)
+def decide_edge(edge_id: UUID, payload: EdgeDecision, user: User = Depends(current_user), cur=Depends(db_cursor)):
+    """Confirm or reject a proposed edge. Only a proposed edge can be decided: a
+    decision is not silently overwritten by a second one."""
+    cur.execute(
+        """select e.state from memory_edges e
+             join memory_items f on f.id = e.from_item_id
+             join memory_items t on t.id = e.to_item_id
+            where e.id = %s and f.user_id = %s and t.user_id = %s""",
+        (edge_id, user.id, user.id),
+    )
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(404, "edge not found")
+    cur.execute(
+        """update memory_edges set state = %s
+            where id = %s and state = 'proposed'
+        returning id, from_item_id, to_item_id, relation, state, origin""",
+        (payload.state, edge_id),
+    )
+    edge = cur.fetchone()
+    if not edge:
+        raise HTTPException(409, f"this link was already {row['state']}, so it cannot be decided again")
+    _audit(cur, edge["from_item_id"], f"edge_{payload.state}",
+           {"edge_id": str(edge_id), "to_item_id": str(edge["to_item_id"]), "relation": edge["relation"]})
+    cur.connection.commit()
+    return edge
+
+
+# --------------------------------------------------------------------------
+# F12: what changed since the user last looked. Pure SQL, no model.
+# --------------------------------------------------------------------------
+
+DIGEST_LIMIT = 200
+
+# Events: creation (extraction or the user), the audit actions worth reporting, and
+# in_progress items that went stale in the window (same rule as retrieval's is_stale).
+# Named parameters: user, since, days.
+DIGEST_EVENTS = """
+with ev as (
+  select mi.id as memory_item_id, mi.created_at as at, 'created' as change
+    from memory_items mi
+   where mi.user_id = %(user)s and mi.created_at >= %(since)s
+  union all
+  select a.memory_item_id, a.created_at,
+         case a.action when 'deleted_by_cascade' then 'deleted' else a.action end
+    from audit_log a
+    join memory_items mi on mi.id = a.memory_item_id
+   where mi.user_id = %(user)s and a.created_at >= %(since)s
+     and a.action in ('auto_accepted', 'edited', 'flagged_for_review', 'deleted', 'deleted_by_cascade')
+  union all
+  select mi.id, coalesce(mi.last_confirmed_at, mi.created_at) + make_interval(days => %(days)s), 'stale'
+    from memory_items mi
+   where mi.user_id = %(user)s and mi.deleted_at is null
+     and mi.review_state in ('accepted', 'auto_accepted')
+     and mi.status = 'in_progress'
+     and coalesce(mi.last_confirmed_at, mi.created_at) + make_interval(days => %(days)s)
+         between %(since)s and now()
+)
+"""
+
+
+def normalize_since(since: datetime, now: datetime) -> datetime:
+    """A naive timestamp is read as UTC. Refuses the future: nothing can have changed."""
+    if since.tzinfo is None:
+        since = since.replace(tzinfo=UTC)
+    if since > now:
+        raise HTTPException(422, "since must not be in the future")
+    return since
+
+
+@router.get("/digest", response_model=DigestResponse)
+def digest(since: datetime, user: User = Depends(current_user), cur=Depends(db_cursor)):
+    """Changes to the caller's memories since `since` (ISO 8601): created, auto_accepted,
+    edited, flagged_for_review, deleted, stale. Newest first, at most 200 entries;
+    `counts` always covers every change, not only the entries returned.
+    """
+    since = normalize_since(since, datetime.now(UTC))
+    params = {"user": user.id, "since": since, "days": settings.stale_after_days}
+    cur.execute(
+        DIGEST_EVENTS + """
+        select ev.memory_item_id, mi.content, b.name as block_name, ev.change, ev.at
+          from ev
+          join memory_items mi on mi.id = ev.memory_item_id
+          left join blocks b on b.id = mi.block_id
+         order by ev.at desc, ev.memory_item_id
+         limit %(limit)s""",
+        {**params, "limit": DIGEST_LIMIT},
+    )
+    entries = [DigestEntry(**r) for r in cur.fetchall()]
+    cur.execute(DIGEST_EVENTS + "select change, count(*) as n from ev group by change", params)
+    return DigestResponse(since=since, entries=entries, counts={r["change"]: r["n"] for r in cur.fetchall()})
