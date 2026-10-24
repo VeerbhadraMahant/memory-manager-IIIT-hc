@@ -20,6 +20,61 @@ from app.services.policy import decide
 
 log = logging.getLogger(__name__)
 
+# Nearest live items compared per new item when looking for an update or contradiction.
+RELATION_NEIGHBOURS = 3
+
+# Exact per-user ranking, same shape as retrieval's MATERIALIZED CTE: restrict to the
+# user by btree first, then rank, so other tenants' vectors can never crowd this out.
+NEIGHBOUR_SQL = """
+with mine as materialized (
+  select mi.id, mi.content, mi.status, mi.embedding
+  from memory_items mi
+  join blocks b on b.id = mi.block_id
+  where mi.user_id = %s
+    and b.name = %s
+    and mi.deleted_at is null
+    and mi.review_state in ('accepted', 'auto_accepted')
+    and mi.embedding is not null
+    and mi.id::text <> all(%s::text[])
+    and (mi.scope = 'persistent' or mi.session_chat_id = %s)
+)
+select id, content, status, embedding <=> %s::vector as distance
+from mine
+order by distance
+limit %s
+"""
+
+
+def resolve_premises(
+    item_ids: list[str | None],
+    source_types: list[str],
+    premise_labels: list[list[str]],
+) -> tuple[list[tuple[str, str]], list[str]]:
+    """Turn S1, S2... labels into (premise_id, inference_id) pairs.
+
+    Labels number the *stated* candidates in list order, matching EXTRACTION_PROMPT.
+    A label that names nothing, names a candidate that was not written (None id), or
+    names the candidate itself is dropped and returned so the caller can log it.
+    """
+    by_label: dict[str, str | None] = {}
+    n = 0
+    for iid, st in zip(item_ids, source_types, strict=True):
+        if st == "stated":
+            n += 1
+            by_label[f"S{n}"] = iid
+
+    edges: list[tuple[str, str]] = []
+    dropped: list[str] = []
+    for target, labels in zip(item_ids, premise_labels, strict=True):
+        for raw in labels:
+            label = raw.strip().upper()
+            src = by_label.get(label)
+            if not src or not target or src == target:
+                dropped.append(raw)
+            elif (src, target) not in edges:
+                edges.append((src, target))
+    return edges, dropped
+
 
 def run_extraction(message_id: str, chat_id: str, user_id: str) -> None:
     """Extract, classify, and file candidates for one user message."""
@@ -76,6 +131,7 @@ def run_extraction(message_id: str, chat_id: str, user_id: str) -> None:
                 proposed_block=c.block,
                 known_blocks=known,
                 fallback_block=fallback,
+                status=status,
             )
             extra = [n for n in (status_note, bump_note) if n]
             if extra:
@@ -87,6 +143,7 @@ def run_extraction(message_id: str, chat_id: str, user_id: str) -> None:
         # One embedding call for the whole turn's candidates rather than one per item.
         vectors = llm.embed([c.content for c, _, _ in rows]) if rows else []
 
+        item_ids: list[str | None] = []
         with pool.connection() as conn, conn.cursor() as cur:
             # strict=True: a length mismatch here means candidates get dropped without
             # a trace. llm.embed() already guarantees this, and this is the backstop.
@@ -97,9 +154,10 @@ def run_extraction(message_id: str, chat_id: str, user_id: str) -> None:
                       user_id, block_id, content, evidence, source_type, status,
                       sensitivity, scope, confidence, source_message_id,
                       session_chat_id, review_state, needs_review, review_reason,
-                      embedding
+                      embedding, content_origin, abstracted
                     )
-                    select %s, b.id, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    select %s, b.id, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                           'model_worded', %s
                     from blocks b where b.user_id = %s and b.name = %s
                     returning id
                     """,
@@ -108,10 +166,12 @@ def run_extraction(message_id: str, chat_id: str, user_id: str) -> None:
                         sensitivity.value, d.scope.value, c.confidence, message_id,
                         chat_id if d.scope is Scope.session else None,
                         d.review_state.value, d.needs_review, d.reason, str(vec),
+                        c.abstracted,
                         user_id, d.block_name,
                     ),
                 )
                 new = cur.fetchone()
+                item_ids.append(str(new["id"]) if new else None)
                 if new:
                     cur.execute(
                         """insert into audit_log (memory_item_id, action, actor, detail)
@@ -126,6 +186,46 @@ def run_extraction(message_id: str, chat_id: str, user_id: str) -> None:
                             json.dumps({"reason": d.reason}),
                         ),
                     )
+
+            # F7: premises were inferred from stated items of this turn. Confirmed from
+            # the start, because the extractor itself is asserting the dependency.
+            edges, dropped = resolve_premises(
+                item_ids, [c.source_type for c, _, _ in rows], [c.premises for c, _, _ in rows]
+            )
+            if dropped:
+                log.warning("dropped unresolvable premise labels for %s: %s", message_id, dropped)
+            for src, dst in edges:
+                cur.execute(
+                    """insert into memory_edges (from_item_id, to_item_id, relation, state, origin)
+                       values (%s, %s, 'derived_from', 'confirmed', 'extraction')
+                       on conflict do nothing""",
+                    (src, dst),
+                )
+
+            # F4: propose, never apply. Compare against older items and against the
+            # candidates listed before this one in the same turn ("I planned X; actually
+            # I finished it"), so each same-turn pair is checked once, earlier as `old`.
+            for pos, ((c, d, _), vec, iid) in enumerate(zip(rows, vectors, item_ids, strict=True)):
+                if not iid:
+                    continue
+                later = [i for i in item_ids[pos:] if i]
+                cur.execute(
+                    NEIGHBOUR_SQL,
+                    (user_id, d.block_name, later, chat_id, str(vec), RELATION_NEIGHBOURS),
+                )
+                new_item = {"content": c.content, "status": c.status, "block_name": d.block_name}
+                for old in cur.fetchall():
+                    old_item = {"content": old["content"], "status": old["status"],
+                                "block_name": d.block_name}
+                    found = classify.propose_relation(new_item, old_item, old["distance"])
+                    if found:
+                        cur.execute(
+                            """insert into memory_edges
+                                 (from_item_id, to_item_id, relation, state, origin)
+                               values (%s, %s, %s::edge_relation, 'proposed', 'heuristic')
+                               on conflict do nothing""",
+                            (old["id"], iid, found[0]),
+                        )
 
             cur.execute(
                 "update messages set extraction_status = 'done' where id = %s", (message_id,)

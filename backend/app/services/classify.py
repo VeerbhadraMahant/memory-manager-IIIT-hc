@@ -214,19 +214,106 @@ def status_disagreement(model_says: AssertionStatus, text: str) -> str | None:
 # Bodies land with the extraction/classifier work (docs/RESEARCH_CONTRACT.md).
 
 
+# Cosine distance above which two items are not about the same thing. Looser than a
+# duplicate threshold on purpose: an update is a reworded fact, so it sits further out.
+RELATION_MAX_DISTANCE = 0.45
+# Fraction of the smaller item's content words that must also appear in the other.
+RELATION_MIN_OVERLAP = 0.6
+
+_WORD = re.compile(r"[a-z0-9]+")
+_STOPWORDS = frozenset(
+    "a an the and or of to in on at for with is am are was were be been being i my me "
+    "we our it its this that as by from has have had".split()
+)
+_MONTHS = frozenset(
+    "january february march april may june july august september october november "
+    "december jan feb mar apr jun jul aug sep sept oct nov dec".split()
+)
+# Order of a thing's life: a later rank on the same subject updates an earlier one.
+_FORWARD_RANK = {"planned": 1, "in_progress": 2, "completed": 3}
+_INCOMPATIBLE = (
+    frozenset({"completed", "abandoned"}),
+    frozenset({"planned", "abandoned"}),
+)
+
+
+def _tokens(text: str) -> list[str]:
+    return _WORD.findall(text.lower())
+
+
+def _status(item: dict) -> str | None:
+    s = item.get("status")
+    return getattr(s, "value", s)
+
+
+def _is_numeric(tok: str) -> bool:
+    # "20mg", "2024", "3x", and month names all count as dose/number/date tokens.
+    return tok in _MONTHS or any(ch.isdigit() for ch in tok)
+
+
+def _content_words(text: str) -> set[str]:
+    return {t for t in _tokens(text) if t not in _STOPWORDS and not _is_numeric(t)}
+
+
+def _same_subject(a: str, b: str) -> bool:
+    wa, wb = _content_words(a), _content_words(b)
+    small = min(len(wa), len(wb))
+    if small == 0:
+        return False
+    shared = len(wa & wb)
+    # Two shared words minimum (one for a one-word item): a single common noun such as
+    # "paper" must not tie two different papers together.
+    return shared >= min(2, small) and shared / small >= RELATION_MIN_OVERLAP
+
+
 def propose_relation(
     new: dict, old: dict, distance: float
 ) -> tuple[str, str] | None:
     """Whether `new` looks like it updates or contradicts `old`, both live items in the
     same block. Returns (relation, reason) with relation in {"updates", "contradicts"},
     or None. Pure: no model call, no database. `new`/`old` carry at least `content`,
-    `status` and `block_name`; `distance` is their cosine distance."""
-    raise NotImplementedError
+    `status` and `block_name`; `distance` is their cosine distance.
+
+    Deliberately conservative: a wrong proposal costs the user a click, but the
+    detector has no model behind it, so it only speaks when surface evidence agrees
+    (same block, close embedding, shared subject words)."""
+    if new.get("block_name") != old.get("block_name") or distance >= RELATION_MAX_DISTANCE:
+        return None
+    if not _same_subject(new["content"], old["content"]):
+        return None
+
+    ns, os_ = _status(new), _status(old)
+    if ns and os_ and ns != os_:
+        if frozenset({ns, os_}) in _INCOMPATIBLE:
+            return "contradicts", f"{os_.replace('_', ' ')} and {ns.replace('_', ' ')} cannot both hold"
+        if _FORWARD_RANK.get(ns, 0) > _FORWARD_RANK.get(os_, 99) or (
+            ns == "abandoned" and os_ == "in_progress"
+        ):
+            return "updates", f"status moved from {os_.replace('_', ' ')} to {ns.replace('_', ' ')}"
+        return None
+
+    nn = {t for t in _tokens(new["content"]) if _is_numeric(t)}
+    on = {t for t in _tokens(old["content"]) if _is_numeric(t)}
+    if nn and on and nn != on:
+        return "updates", f"{', '.join(sorted(on))} became {', '.join(sorted(nn))}"
+    return None
 
 
 def influence(full: str, ablated: str, repeats: list[str]) -> tuple[float, float]:
     """(score, noise_floor) for one memory. noise_floor is the mean pairwise distance
     among `repeats` (full-context regenerations); score is distance(full, ablated)
     minus that floor. Pure text distance, no model call, so it is testable on
-    hand-written triples."""
-    raise NotImplementedError
+    hand-written triples.
+
+    Distance is token-set Jaccard distance over lowercased words. It ignores order and
+    repetition, so it is cheap and stable, but a reworded answer with the same meaning
+    scores as changed; the repeats floor is what absorbs ordinary sampling variation."""
+
+    def dist(a: str, b: str) -> float:
+        ta, tb = set(_tokens(a)), set(_tokens(b))
+        union = ta | tb
+        return 1.0 - len(ta & tb) / len(union) if union else 0.0
+
+    pairs = [dist(a, b) for i, a in enumerate(repeats) for b in repeats[i + 1 :]]
+    floor = sum(pairs) / len(pairs) if pairs else 0.0
+    return dist(full, ablated) - floor, floor
