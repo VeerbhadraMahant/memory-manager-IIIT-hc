@@ -120,3 +120,6 @@ gemini_quickstarts.md
 
 # --- phase 9 evaluation data: downloaded benchmarks, never committed ---
 backend/eval/data/
+
+# --- agent worktrees (local only) ---
+.claude/worktrees/
