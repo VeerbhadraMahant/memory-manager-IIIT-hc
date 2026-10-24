@@ -19,6 +19,10 @@ export type PiiCategory =
   | "card"
   | "credential"
   | "gov_id"
+  | "aadhaar"
+  | "pan"
+  | "upi"
+  | "ifsc"
   | "health"
   | "address"
   | "contact";
@@ -45,8 +49,15 @@ interface Rule {
   pattern: RegExp;
   consequence: string;
   redaction: string;
-  /** Extra check beyond the pattern. Luhn, mostly. */
+  /** Extra check beyond the pattern. Luhn or Verhoeff. Skipped when a scan
+   *  runs with `checksums: false` (the evaluation ablation only). */
   validate?: (m: string) => boolean;
+}
+
+export interface ScanOptions {
+  /** Default true. False skips Luhn and Verhoeff so the evaluation can measure
+   *  what the checksums buy. The product never sets it. */
+  checksums?: boolean;
 }
 
 // ---------------------------------------------------------------- Luhn
@@ -69,6 +80,47 @@ export function luhn(digits: string): boolean {
   }
   return sum % 10 === 0;
 }
+
+// ------------------------------------------------------------- Verhoeff
+
+const V_D = [
+  [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+  [1, 2, 3, 4, 0, 6, 7, 8, 9, 5],
+  [2, 3, 4, 0, 1, 7, 8, 9, 5, 6],
+  [3, 4, 0, 1, 2, 8, 9, 5, 6, 7],
+  [4, 0, 1, 2, 3, 9, 5, 6, 7, 8],
+  [5, 9, 8, 7, 6, 0, 4, 3, 2, 1],
+  [6, 5, 9, 8, 7, 1, 0, 4, 3, 2],
+  [7, 6, 5, 9, 8, 2, 1, 0, 4, 3],
+  [8, 7, 6, 5, 9, 3, 2, 1, 0, 4],
+  [9, 8, 7, 6, 5, 4, 3, 2, 1, 0],
+];
+const V_P = [
+  [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+  [1, 5, 7, 6, 2, 8, 3, 0, 9, 4],
+  [5, 8, 0, 3, 7, 9, 6, 1, 4, 2],
+  [8, 9, 1, 6, 0, 4, 3, 5, 2, 7],
+  [9, 4, 5, 3, 1, 2, 6, 8, 7, 0],
+  [4, 2, 8, 6, 5, 7, 3, 9, 0, 1],
+  [2, 7, 9, 3, 8, 0, 6, 4, 1, 5],
+  [7, 0, 4, 6, 9, 1, 3, 2, 5, 8],
+];
+
+/** Verhoeff check: the last digit of an Aadhaar number is its check digit. */
+export function verhoeff(digits: string): boolean {
+  const d = digits.replace(/\D/g, "");
+  if (!d.length) return false;
+  let c = 0;
+  for (let i = 0; i < d.length; i++) {
+    c = V_D[c][V_P[i % 8][d.charCodeAt(d.length - 1 - i) - 48]];
+  }
+  return c === 0;
+}
+
+const validAadhaar = (m: string) => {
+  const d = m.replace(/\D/g, "");
+  return d.length === 12 && d[0] >= "2" && verhoeff(d);
+};
 
 // ---------------------------------------------------------------- rules
 //
@@ -101,11 +153,44 @@ const RULES: Rule[] = [
   {
     category: "gov_id",
     tier: "irreversible",
-    // Format checks only, per SYSTEM_DESIGN §3: US SSN and Indian Aadhaar/PAN.
-    pattern:
-      /\b(?:\d{3}-\d{2}-\d{4}|[2-9]\d{3}\s?\d{4}\s?\d{4}|[A-Z]{5}\d{4}[A-Z])\b/g,
+    // Format check only: US SSN. Indian IDs have their own rules below.
+    pattern: /\b\d{3}-\d{2}-\d{4}\b/g,
     consequence: "Government ID numbers stay in this chat's history.",
     redaction: "[ID number removed]",
+  },
+  {
+    category: "aadhaar",
+    tier: "irreversible",
+    // 12 digits, first 2-9, optionally grouped 4-4-4; Verhoeff does the rest.
+    pattern: /(?<![\d-])[2-9]\d{3}([ -]?)\d{4}\1\d{4}(?![\d-])/g,
+    validate: validAadhaar,
+    consequence: "Aadhaar numbers stay in this chat's history.",
+    redaction: "[Aadhaar number removed]",
+  },
+  {
+    category: "pan",
+    tier: "irreversible",
+    pattern: /\b[A-Z]{5}[0-9]{4}[A-Z]\b/g,
+    consequence: "PAN numbers stay in this chat's history.",
+    redaction: "[PAN removed]",
+  },
+  {
+    category: "upi",
+    tier: "sensitive",
+    // name@psp with no dot-TLD after the @ part, which is what makes it not an
+    // email. Pattern only, so a bare "foo@bar" is flagged too.
+    pattern: /\b[\w.-]{2,}@[a-z][a-z0-9]{1,20}\b(?!\.[a-z0-9])/gi,
+    consequence:
+      "UPI handles will be saved to memory unless you keep them to this session.",
+    redaction: "[UPI handle removed]",
+  },
+  {
+    category: "ifsc",
+    tier: "sensitive",
+    pattern: /\b[A-Z]{4}0[A-Z0-9]{6}\b/g,
+    consequence:
+      "Bank branch codes will be saved to memory unless you keep them to this session.",
+    redaction: "[IFSC removed]",
   },
   {
     category: "health",
@@ -139,6 +224,10 @@ export const CATEGORY_LABEL: Record<PiiCategory, string> = {
   card: "card number",
   credential: "credential",
   gov_id: "ID number",
+  aadhaar: "Aadhaar number",
+  pan: "PAN number",
+  upi: "UPI handle",
+  ifsc: "bank branch (IFSC) code",
   health: "health detail",
   address: "address",
   contact: "email address",
@@ -155,7 +244,9 @@ export const CATEGORY_LABEL: Record<PiiCategory, string> = {
 export function scanForPii(
   text: string,
   dismissedCategories: ReadonlySet<PiiCategory> = new Set(),
+  options: ScanOptions = {},
 ): PiiFinding[] {
+  const checksums = options.checksums !== false;
   const findings: PiiFinding[] = [];
 
   for (const rule of RULES) {
@@ -169,7 +260,7 @@ export function scanForPii(
         re.lastIndex++;
         continue;
       }
-      if (rule.validate && !rule.validate(m[0])) continue;
+      if (checksums && rule.validate && !rule.validate(m[0])) continue;
       findings.push({
         category: rule.category,
         tier: rule.tier,

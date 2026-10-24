@@ -1,0 +1,909 @@
+[
+ {
+  "text": "My Aadhaar is 205691455703, please fill the form.",
+  "spans": [
+   {
+    "category": "aadhaar",
+    "start": 14,
+    "end": 26
+   }
+  ]
+ },
+ {
+  "text": "aadhaar no 7906 4394 9964",
+  "spans": [
+   {
+    "category": "aadhaar",
+    "start": 11,
+    "end": 25
+   }
+  ]
+ },
+ {
+  "text": "Link 5424-6108-3042 to my SIM, it expires soon.",
+  "spans": [
+   {
+    "category": "aadhaar",
+    "start": 5,
+    "end": 19
+   }
+  ]
+ },
+ {
+  "text": "ID: 459073395667.",
+  "spans": [
+   {
+    "category": "aadhaar",
+    "start": 4,
+    "end": 16
+   }
+  ]
+ },
+ {
+  "text": "My Aadhaar is 6197 4737 5749, please fill the form.",
+  "spans": [
+   {
+    "category": "aadhaar",
+    "start": 14,
+    "end": 28
+   }
+  ]
+ },
+ {
+  "text": "aadhaar no 3465-8397-1631",
+  "spans": [
+   {
+    "category": "aadhaar",
+    "start": 11,
+    "end": 25
+   }
+  ]
+ },
+ {
+  "text": "Link 477114875235 to my SIM, it expires soon.",
+  "spans": [
+   {
+    "category": "aadhaar",
+    "start": 5,
+    "end": 17
+   }
+  ]
+ },
+ {
+  "text": "ID: 8838 6586 9370.",
+  "spans": [
+   {
+    "category": "aadhaar",
+    "start": 4,
+    "end": 18
+   }
+  ]
+ },
+ {
+  "text": "My Aadhaar is 8066-1580-2776, please fill the form.",
+  "spans": [
+   {
+    "category": "aadhaar",
+    "start": 14,
+    "end": 28
+   }
+  ]
+ },
+ {
+  "text": "aadhaar no 512837707851",
+  "spans": [
+   {
+    "category": "aadhaar",
+    "start": 11,
+    "end": 23
+   }
+  ]
+ },
+ {
+  "text": "Link 3932 6890 6038 to my SIM, it expires soon.",
+  "spans": [
+   {
+    "category": "aadhaar",
+    "start": 5,
+    "end": 19
+   }
+  ]
+ },
+ {
+  "text": "ID: 2599-3399-1760.",
+  "spans": [
+   {
+    "category": "aadhaar",
+    "start": 4,
+    "end": 18
+   }
+  ]
+ },
+ {
+  "text": "PAN LJZUR4443J for the ITR.",
+  "spans": [
+   {
+    "category": "pan",
+    "start": 4,
+    "end": 14
+   }
+  ]
+ },
+ {
+  "text": "My PAN card number is YKCRS4811Q",
+  "spans": [
+   {
+    "category": "pan",
+    "start": 22,
+    "end": 32
+   }
+  ]
+ },
+ {
+  "text": "Use PRLMP3613E on the invoice.",
+  "spans": [
+   {
+    "category": "pan",
+    "start": 4,
+    "end": 14
+   }
+  ]
+ },
+ {
+  "text": "PAN PACWF9035A for the ITR.",
+  "spans": [
+   {
+    "category": "pan",
+    "start": 4,
+    "end": 14
+   }
+  ]
+ },
+ {
+  "text": "My PAN card number is FDUFA3536T",
+  "spans": [
+   {
+    "category": "pan",
+    "start": 22,
+    "end": 32
+   }
+  ]
+ },
+ {
+  "text": "Use CCQDK0272N on the invoice.",
+  "spans": [
+   {
+    "category": "pan",
+    "start": 4,
+    "end": 14
+   }
+  ]
+ },
+ {
+  "text": "PAN HKTTD6902K for the ITR.",
+  "spans": [
+   {
+    "category": "pan",
+    "start": 4,
+    "end": 14
+   }
+  ]
+ },
+ {
+  "text": "My PAN card number is WYKQK2277W",
+  "spans": [
+   {
+    "category": "pan",
+    "start": 22,
+    "end": 32
+   }
+  ]
+ },
+ {
+  "text": "Use HLKZD5972H on the invoice.",
+  "spans": [
+   {
+    "category": "pan",
+    "start": 4,
+    "end": 14
+   }
+  ]
+ },
+ {
+  "text": "PAN SKWNV6779M for the ITR.",
+  "spans": [
+   {
+    "category": "pan",
+    "start": 4,
+    "end": 14
+   }
+  ]
+ },
+ {
+  "text": "Pay me at kabir07@okaxis when you can.",
+  "spans": [
+   {
+    "category": "upi",
+    "start": 10,
+    "end": 24
+   }
+  ]
+ },
+ {
+  "text": "My UPI id is sana-ali@okaxis.",
+  "spans": [
+   {
+    "category": "upi",
+    "start": 13,
+    "end": 28
+   }
+  ]
+ },
+ {
+  "text": "send it to kabir07@okaxis",
+  "spans": [
+   {
+    "category": "upi",
+    "start": 11,
+    "end": 25
+   }
+  ]
+ },
+ {
+  "text": "Pay me at dev.patel@paytm when you can.",
+  "spans": [
+   {
+    "category": "upi",
+    "start": 10,
+    "end": 25
+   }
+  ]
+ },
+ {
+  "text": "My UPI id is kabir07@oksbi.",
+  "spans": [
+   {
+    "category": "upi",
+    "start": 13,
+    "end": 26
+   }
+  ]
+ },
+ {
+  "text": "send it to dev.patel@ibl",
+  "spans": [
+   {
+    "category": "upi",
+    "start": 11,
+    "end": 24
+   }
+  ]
+ },
+ {
+  "text": "Pay me at kabir07@oksbi when you can.",
+  "spans": [
+   {
+    "category": "upi",
+    "start": 10,
+    "end": 23
+   }
+  ]
+ },
+ {
+  "text": "My UPI id is arjun99@ybl.",
+  "spans": [
+   {
+    "category": "upi",
+    "start": 13,
+    "end": 24
+   }
+  ]
+ },
+ {
+  "text": "send it to meera_k@okhdfcbank",
+  "spans": [
+   {
+    "category": "upi",
+    "start": 11,
+    "end": 29
+   }
+  ]
+ },
+ {
+  "text": "Pay me at dev.patel@ybl when you can.",
+  "spans": [
+   {
+    "category": "upi",
+    "start": 10,
+    "end": 23
+   }
+  ]
+ },
+ {
+  "text": "Branch IFSC SPGJ0VET153 for the transfer.",
+  "spans": [
+   {
+    "category": "ifsc",
+    "start": 12,
+    "end": 23
+   }
+  ]
+ },
+ {
+  "text": "IFSC: HBEE0YGG888",
+  "spans": [
+   {
+    "category": "ifsc",
+    "start": 6,
+    "end": 17
+   }
+  ]
+ },
+ {
+  "text": "Use HDWQ0YCD145 as the code.",
+  "spans": [
+   {
+    "category": "ifsc",
+    "start": 4,
+    "end": 15
+   }
+  ]
+ },
+ {
+  "text": "Branch IFSC GSJW0LLJ043 for the transfer.",
+  "spans": [
+   {
+    "category": "ifsc",
+    "start": 12,
+    "end": 23
+   }
+  ]
+ },
+ {
+  "text": "IFSC: JEUW0EMJ718",
+  "spans": [
+   {
+    "category": "ifsc",
+    "start": 6,
+    "end": 17
+   }
+  ]
+ },
+ {
+  "text": "Use UBVC0MPE748 as the code.",
+  "spans": [
+   {
+    "category": "ifsc",
+    "start": 4,
+    "end": 15
+   }
+  ]
+ },
+ {
+  "text": "Branch IFSC KQVQ0YFK058 for the transfer.",
+  "spans": [
+   {
+    "category": "ifsc",
+    "start": 12,
+    "end": 23
+   }
+  ]
+ },
+ {
+  "text": "IFSC: GZLB0KRG825",
+  "spans": [
+   {
+    "category": "ifsc",
+    "start": 6,
+    "end": 17
+   }
+  ]
+ },
+ {
+  "text": "Use YVYN0XLM487 as the code.",
+  "spans": [
+   {
+    "category": "ifsc",
+    "start": 4,
+    "end": 15
+   }
+  ]
+ },
+ {
+  "text": "Branch IFSC RQMP0RWA550 for the transfer.",
+  "spans": [
+   {
+    "category": "ifsc",
+    "start": 12,
+    "end": 23
+   }
+  ]
+ },
+ {
+  "text": "Card 4111636430715762 expires 09/29, use it for the deposit.",
+  "spans": [
+   {
+    "category": "card",
+    "start": 5,
+    "end": 21
+   }
+  ]
+ },
+ {
+  "text": "Card 5555 0718 0962 6327 expires 09/29, use it for the deposit.",
+  "spans": [
+   {
+    "category": "card",
+    "start": 5,
+    "end": 24
+   }
+  ]
+ },
+ {
+  "text": "Card 378282741090946 expires 09/29, use it for the deposit.",
+  "spans": [
+   {
+    "category": "card",
+    "start": 5,
+    "end": 20
+   }
+  ]
+ },
+ {
+  "text": "Card 6011 9591 2704 8057 expires 09/29, use it for the deposit.",
+  "spans": [
+   {
+    "category": "card",
+    "start": 5,
+    "end": 24
+   }
+  ]
+ },
+ {
+  "text": "Card 4111448718761231 expires 09/29, use it for the deposit.",
+  "spans": [
+   {
+    "category": "card",
+    "start": 5,
+    "end": 21
+   }
+  ]
+ },
+ {
+  "text": "Card 5555 5331 7960 9373 expires 09/29, use it for the deposit.",
+  "spans": [
+   {
+    "category": "card",
+    "start": 5,
+    "end": 24
+   }
+  ]
+ },
+ {
+  "text": "Card 378282270945023 expires 09/29, use it for the deposit.",
+  "spans": [
+   {
+    "category": "card",
+    "start": 5,
+    "end": 20
+   }
+  ]
+ },
+ {
+  "text": "Card 6011 7629 4594 1564 expires 09/29, use it for the deposit.",
+  "spans": [
+   {
+    "category": "card",
+    "start": 5,
+    "end": 24
+   }
+  ]
+ },
+ {
+  "text": "Card 4111224524792797 expires 09/29, use it for the deposit.",
+  "spans": [
+   {
+    "category": "card",
+    "start": 5,
+    "end": 21
+   }
+  ]
+ },
+ {
+  "text": "Card 5555 2206 8795 6765 expires 09/29, use it for the deposit.",
+  "spans": [
+   {
+    "category": "card",
+    "start": 5,
+    "end": 24
+   }
+  ]
+ },
+ {
+  "text": "Card 378282445600917 expires 09/29, use it for the deposit.",
+  "spans": [
+   {
+    "category": "card",
+    "start": 5,
+    "end": 20
+   }
+  ]
+ },
+ {
+  "text": "Card 6011 5406 5798 7102 expires 09/29, use it for the deposit.",
+  "spans": [
+   {
+    "category": "card",
+    "start": 5,
+    "end": 24
+   }
+  ]
+ },
+ {
+  "text": "Write to me at riyasharma@example.com or call later.",
+  "spans": [
+   {
+    "category": "contact",
+    "start": 15,
+    "end": 37
+   }
+  ]
+ },
+ {
+  "text": "Write to me at arjun99@example.com or call later.",
+  "spans": [
+   {
+    "category": "contact",
+    "start": 15,
+    "end": 34
+   }
+  ]
+ },
+ {
+  "text": "Write to me at meera_k@example.com or call later.",
+  "spans": [
+   {
+    "category": "contact",
+    "start": 15,
+    "end": 34
+   }
+  ]
+ },
+ {
+  "text": "Write to me at devpatel@example.com or call later.",
+  "spans": [
+   {
+    "category": "contact",
+    "start": 15,
+    "end": 35
+   }
+  ]
+ },
+ {
+  "text": "Write to me at sanaali@example.com or call later.",
+  "spans": [
+   {
+    "category": "contact",
+    "start": 15,
+    "end": 34
+   }
+  ]
+ },
+ {
+  "text": "Write to me at kabir07@example.com or call later.",
+  "spans": [
+   {
+    "category": "contact",
+    "start": 15,
+    "end": 34
+   }
+  ]
+ },
+ {
+  "text": "Combined: PAN EWGLJ9292W and UPI meera_k@paytm and IFSC BHMZ0MRG612.",
+  "spans": [
+   {
+    "category": "pan",
+    "start": 14,
+    "end": 24
+   },
+   {
+    "category": "upi",
+    "start": 33,
+    "end": 46
+   },
+   {
+    "category": "ifsc",
+    "start": 56,
+    "end": 67
+   }
+  ]
+ },
+ {
+  "text": "Combined: Aadhaar 3856 9374 0177, card 4111393941076801.",
+  "spans": [
+   {
+    "category": "aadhaar",
+    "start": 18,
+    "end": 32
+   },
+   {
+    "category": "card",
+    "start": 39,
+    "end": 55
+   }
+  ]
+ },
+ {
+  "text": "Email meera.k@mail.example.org versus UPI meera.k@okaxis.",
+  "spans": [
+   {
+    "category": "contact",
+    "start": 6,
+    "end": 30
+   },
+   {
+    "category": "upi",
+    "start": 42,
+    "end": 56
+   }
+  ]
+ },
+ {
+  "text": "Near miss, bad check digit: 335887777732 on the form.",
+  "spans": []
+ },
+ {
+  "text": "Near miss, bad check digit: 7955 7480 6877 on the form.",
+  "spans": []
+ },
+ {
+  "text": "Near miss, bad check digit: 972774590812 on the form.",
+  "spans": []
+ },
+ {
+  "text": "Near miss, bad check digit: 9365 1950 3694 on the form.",
+  "spans": []
+ },
+ {
+  "text": "Near miss, bad check digit: 960257998646 on the form.",
+  "spans": []
+ },
+ {
+  "text": "Near miss, bad check digit: 3162 6058 1786 on the form.",
+  "spans": []
+ },
+ {
+  "text": "Near miss, bad check digit: 874537125804 on the form.",
+  "spans": []
+ },
+ {
+  "text": "Near miss, bad check digit: 9246 6954 4928 on the form.",
+  "spans": []
+ },
+ {
+  "text": "Near miss, bad check digit: 754694866544 on the form.",
+  "spans": []
+ },
+ {
+  "text": "Near miss, bad check digit: 4116 6125 7307 on the form.",
+  "spans": []
+ },
+ {
+  "text": "Near miss, bad check digit: 753962801784 on the form.",
+  "spans": []
+ },
+ {
+  "text": "Near miss, bad check digit: 9310 8334 5348 on the form.",
+  "spans": []
+ },
+ {
+  "text": "Order 4111039886267485 was shipped on Tuesday.",
+  "spans": []
+ },
+ {
+  "text": "Order 4111791342488770 was shipped on Tuesday.",
+  "spans": []
+ },
+ {
+  "text": "Order 4111155171685987 was shipped on Tuesday.",
+  "spans": []
+ },
+ {
+  "text": "Order 4111202677839130 was shipped on Tuesday.",
+  "spans": []
+ },
+ {
+  "text": "Order 4111166160605391 was shipped on Tuesday.",
+  "spans": []
+ },
+ {
+  "text": "Order 4111556306112815 was shipped on Tuesday.",
+  "spans": []
+ },
+ {
+  "text": "Order 4111362854627799 was shipped on Tuesday.",
+  "spans": []
+ },
+ {
+  "text": "Order 4111235343189052 was shipped on Tuesday.",
+  "spans": []
+ },
+ {
+  "text": "Tracking number 5555015624882297 is in transit.",
+  "spans": []
+ },
+ {
+  "text": "Tracking number 5555065442768573 is in transit.",
+  "spans": []
+ },
+ {
+  "text": "Tracking number 5555706672949531 is in transit.",
+  "spans": []
+ },
+ {
+  "text": "Tracking number 5555697399928702 is in transit.",
+  "spans": []
+ },
+ {
+  "text": "Call me on +91 92699 56170 tomorrow.",
+  "spans": []
+ },
+ {
+  "text": "Call me on +91 97524 32425 tomorrow.",
+  "spans": []
+ },
+ {
+  "text": "Call me on +91 92220 11893 tomorrow.",
+  "spans": []
+ },
+ {
+  "text": "Call me on +91 95840 37901 tomorrow.",
+  "spans": []
+ },
+ {
+  "text": "Call me on +91 98761 40121 tomorrow.",
+  "spans": []
+ },
+ {
+  "text": "Call me on +91 97414 05259 tomorrow.",
+  "spans": []
+ },
+ {
+  "text": "Order #929662599173 confirmed.",
+  "spans": []
+ },
+ {
+  "text": "Order #347736900599 confirmed.",
+  "spans": []
+ },
+ {
+  "text": "Order #532198041443 confirmed.",
+  "spans": []
+ },
+ {
+  "text": "Order #636835233509 confirmed.",
+  "spans": []
+ },
+ {
+  "text": "Order #476878894110 confirmed.",
+  "spans": []
+ },
+ {
+  "text": "Order #057446346309 confirmed.",
+  "spans": []
+ },
+ {
+  "text": "Invoice 070788021510 is due.",
+  "spans": []
+ },
+ {
+  "text": "Invoice 071208397010 is due.",
+  "spans": []
+ },
+ {
+  "text": "Invoice 052349931132 is due.",
+  "spans": []
+ },
+ {
+  "text": "Invoice 064380350603 is due.",
+  "spans": []
+ },
+ {
+  "text": "ISBN 978-3-16-148410-0 is the paperback.",
+  "spans": []
+ },
+ {
+  "text": "ISBN 9780306406157 for the library copy.",
+  "spans": []
+ },
+ {
+  "text": "See ISBN 0-306-40615-2 on page 3.",
+  "spans": []
+ },
+ {
+  "text": "The meeting is on 2026-10-24 at noon.",
+  "spans": []
+ },
+ {
+  "text": "Born 12/03/1994 in Pune.",
+  "spans": []
+ },
+ {
+  "text": "Deadline 31.12.2026 for submission.",
+  "spans": []
+ },
+ {
+  "text": "It happened on 2024-02-29.",
+  "spans": []
+ },
+ {
+  "text": "Version 2.4.1 of the release shipped.",
+  "spans": []
+ },
+ {
+  "text": "Pincode 560001 and flat 12B.",
+  "spans": []
+ },
+ {
+  "text": "Use the code ABCDE for the promo.",
+  "spans": []
+ },
+ {
+  "text": "Ticket ABCDE12345 was closed.",
+  "spans": []
+ },
+ {
+  "text": "The ID ABCDE1234 is too short.",
+  "spans": []
+ },
+ {
+  "text": "Flight AI0101 departs at 6.",
+  "spans": []
+ },
+ {
+  "text": "Mail the form to the office by Friday @ 5pm.",
+  "spans": []
+ },
+ {
+  "text": "Follow @team and @lead on the channel.",
+  "spans": []
+ },
+ {
+  "text": "Reach me at user@example.com for details",
+  "spans": [
+   {
+    "category": "contact",
+    "start": 12,
+    "end": 28
+   }
+  ]
+ },
+ {
+  "text": "write to a@b.co or c@d.in",
+  "spans": [
+   {
+    "category": "contact",
+    "start": 9,
+    "end": 15
+   },
+   {
+    "category": "contact",
+    "start": 19,
+    "end": 25
+   }
+  ]
+ },
+ {
+  "text": "The word HDFCBANKLTD appears in the filing.",
+  "spans": []
+ },
+ {
+  "text": "Short digits 1234 5678 are a pair of numbers.",
+  "spans": []
+ },
+ {
+  "text": "Starts with one: 1234 5678 9012 is not in range.",
+  "spans": []
+ }
+]
