@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
@@ -47,6 +48,8 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/chats", tags=["chats"], dependencies=[Depends(general_limit)])
 
 HISTORY_TURNS = 12
+# Concurrent regenerations per influence request; keeps a burst under provider rate limits.
+INFLUENCE_WORKERS = 4
 
 
 @router.get("/providers", tags=["meta"])
@@ -331,6 +334,9 @@ def regenerate(chat_id: UUID, payload: RegenerateRequest, user: User = Depends(c
     without that" is the thing that makes the influence legible.
     """
     uid, cid = str(user.id), str(chat_id)
+    if payload.exclude_all and payload.revoke_item_ids:
+        # Silently dropping the revokes would leave the user believing they happened.
+        raise HTTPException(422, "exclude_all is a comparison and revokes nothing; send revoke_item_ids separately")
 
     with pool.connection() as conn, conn.cursor() as cur:
         _assert_chat(cur, chat_id, user.id)
@@ -468,18 +474,14 @@ def message_influence(
     # reported in the response rather than guessed to be the original.
     provider = target["provider"] or llm.resolve_provider(None)
     model = target["model"]
-    calls = 0
 
-    def run(mems: list[dict]) -> str | None:
-        nonlocal calls, model
-        calls += 1
+    def run(mems: list[dict]) -> tuple[str | None, str | None]:
         try:
             reply, _, model_used, _ = llm.chat_response(history, mems, provider)
         except Exception:
             log.exception("influence regeneration failed")
-            return None
-        model = model or model_used
-        return reply
+            return None, None
+        return reply, model_used
 
     if not memories:
         return InfluenceResponse(
@@ -487,15 +489,27 @@ def message_influence(
             noise_floor=0.0, calls_made=0, results=[],
         )
 
-    repeats = [run(memories) for _ in range(payload.repeats)]
-    ok_repeats = [r for r in repeats if r is not None]
+    # Repeats and ablations are independent network calls; run them concurrently.
+    runs = [memories] * payload.repeats + [
+        [x for x in memories if x["id"] != m["id"]] for m in memories
+    ]
+    with ThreadPoolExecutor(max_workers=min(len(runs), INFLUENCE_WORKERS)) as ex:
+        outs = list(ex.map(run, runs))
+    calls = len(runs)
+    model = model or next((mu for _, mu in outs if mu), None)
+    ok_repeats = [r for r, _ in outs[: payload.repeats] if r is not None]
+
+    # The baseline is a fresh full-context repeat, not the stored reply: the stored one
+    # ran under the original retrieval set and stale flags, so comparing against it
+    # would count that drift as the memory's influence.
     noise_floor = 0.0
+    if len(ok_repeats) >= 2:
+        _, noise_floor = influence(ok_repeats[0], ok_repeats[0], ok_repeats)
     results: list[MemoryInfluence] = []
-    for m in memories:
-        ablated = run([x for x in memories if x["id"] != m["id"]])
+    for m, (ablated, _) in zip(memories, outs[payload.repeats :], strict=True):
         score = None
         if ablated is not None and len(ok_repeats) >= 2:
-            score, noise_floor = influence(target["content"], ablated, ok_repeats)
+            score, _ = influence(ok_repeats[0], ablated, ok_repeats)
         results.append(MemoryInfluence(
             memory_item_id=m["id"], score=score, verdict=influence_verdict(score)
         ))

@@ -67,6 +67,7 @@ select m.id, m.content, m.status, m.scope, m.sensitivity, m.source_type,
          join memory_items nw on nw.id = e.to_item_id
          where e.from_item_id = m.id and e.relation = 'updates'
            and e.state = 'confirmed' and nw.deleted_at is null
+           and nw.review_state in ('accepted', 'auto_accepted')
        ) as superseded,
        m.embedding <=> %s::vector as distance,
        -- P6 decay: something the user was in the middle of months ago is not
@@ -90,6 +91,7 @@ select mi.id, mi.content, mi.status, mi.scope, mi.sensitivity, mi.source_type,
          join memory_items nw on nw.id = e.to_item_id
          where e.from_item_id = mi.id and e.relation = 'updates'
            and e.state = 'confirmed' and nw.deleted_at is null
+           and nw.review_state in ('accepted', 'auto_accepted')
        ) as superseded,
        0.0 as distance,
        (mi.status = 'in_progress'

@@ -80,6 +80,19 @@ def test_proposed_updates_edge_does_not_supersede(client, llm_calls, db):
     assert TOKEN in prompt_text(llm_calls) and r["retrieval"]["superseded_count"] == 0
 
 
+def test_pending_newer_item_does_not_supersede(client, llm_calls, db):
+    # A confirmed edge to a newer fact the user has not accepted must not hide the older one.
+    chat, msg = seed_chat_and_message(client)
+    old = create_memory(client, msg, content=f"Lives in Oldtown {TOKEN}")
+    new = create_memory(client, msg, content="Lives in Newtown", review_state="pending")
+    db.execute(
+        "insert into memory_edges (from_item_id, to_item_id, relation, state)"
+        " values (%s, %s, 'updates', 'confirmed')", (old["id"], new["id"]),
+    )
+    r = client.post(f"/chats/{chat['id']}/message", json={"content": f"Lives in Oldtown {TOKEN}"}).json()
+    assert TOKEN in prompt_text(llm_calls) and r["retrieval"]["superseded_count"] == 0
+
+
 def test_guest_turn_holds_only_low_tier_and_extracts_nothing(client, llm_calls, db):
     chat, msg = seed_chat_and_message(client)
     create_memory(client, msg, content=f"Likes tea {TOKEN}", sensitivity="low")
@@ -119,7 +132,7 @@ def test_exclude_all_injects_nothing_and_tombstones_nothing(client, llm_calls, d
     assert TOKEN in prompt_text(llm_calls)
 
     r = client.post(f"/chats/{chat['id']}/regenerate", json={
-        "message_id": mid, "revoke_item_ids": [item["id"]], "exclude_all": True})
+        "message_id": mid, "exclude_all": True})
     assert r.status_code == 200, r.text
     assert r.json()["used_memories"] == [] and r.json()["revoked"] == []
     assert llm_calls.chats[-1][1] == []
@@ -128,6 +141,18 @@ def test_exclude_all_injects_nothing_and_tombstones_nothing(client, llm_calls, d
     assert live["deleted_at"] is None and live["review_state"] == "accepted"
     n = db.execute("select count(*) as n from attributions where message_id = %s", (mid,)).fetchone()["n"]
     assert n == 1
+
+
+def test_exclude_all_with_revokes_is_refused(client, llm_calls, db):
+    chat, msg = seed_chat_and_message(client)
+    item = create_memory(client, msg, content=f"Plays oboe {TOKEN}")
+    first = client.post(f"/chats/{chat['id']}/message", json={"content": f"Plays oboe {TOKEN}"}).json()
+    r = client.post(f"/chats/{chat['id']}/regenerate", json={
+        "message_id": first["assistant_message"]["id"],
+        "revoke_item_ids": [item["id"]], "exclude_all": True})
+    assert r.status_code == 422
+    live = db.execute("select deleted_at from memory_items where id = %s", (item["id"],)).fetchone()
+    assert live["deleted_at"] is None
 
 
 def test_provider_and_model_persisted_on_assistant_message(client, llm_calls, db):
@@ -154,3 +179,22 @@ def test_influence_route_makes_k_plus_repeats_calls(client, llm_calls, monkeypat
     assert body["calls_made"] == 3 and len(llm_calls.chats) - before == 3
     assert body["results"][0]["verdict"] == "changed_answer"
     assert body["provider"] == "openrouter"
+
+
+def test_influence_baseline_is_a_fresh_repeat_not_the_stored_reply(client, llm_calls, monkeypatch):
+    from app.routers import chats as chats_router  # noqa: PLC0415
+
+    seen: list[tuple[str, list[str]]] = []
+
+    def fake(full, ablated, repeats):
+        seen.append((full, repeats))
+        return 0.3, 0.01
+
+    monkeypatch.setattr(chats_router, "influence", fake)
+    chat, msg = seed_chat_and_message(client)
+    create_memory(client, msg, content=f"Plays oboe {TOKEN}")
+    first = client.post(f"/chats/{chat['id']}/message", json={"content": f"Plays oboe {TOKEN}"}).json()
+    r = client.post(f"/chats/{chat['id']}/messages/{first['assistant_message']['id']}/influence",
+                    json={"repeats": 2})
+    assert r.status_code == 200, r.text
+    assert seen and all(full == reps[0] for full, reps in seen)
