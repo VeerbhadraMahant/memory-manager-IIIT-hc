@@ -115,6 +115,19 @@ demo or the architecture if reversed.
   panel uses, rather than a bespoke graph-only page, so "nothing is reachable only via the graph"
   stays a property of *which component renders* rather than a rule that has to be remembered in a
   second implementation.
+- **D48 — contextual flow rules are a per-block deny-list of destinations (migration 009)**, not an
+  allow-list and not more privacy levels. A destination added later is open by default instead of
+  silently darkening every block, and `private` still overrides it. Health, identity, finance and
+  relationships deny `draft` by default; chat is untouched, so conversational usefulness is unchanged.
+- **D49 — provenance edges carry a state (proposed/confirmed/rejected)**, so the first heuristic
+  writer of `memory_edges` cannot change what a delete cascades to or what retrieval drops until the
+  user agrees. Rejected rows are kept so the same pair is never proposed twice. Rejected: writing
+  heuristic edges straight in as confirmed, which would let a guess delete data.
+- **D50 — origin fields are nullable rather than backfilled** (`memory_edges.origin`,
+  `memory_items.content_origin`). Rows from before tracking cannot be classified honestly, and a
+  wrong label is worse than none. Also: the abstracted form of a third-party fact gets its own
+  column, because the review card needs it after extraction has finished; reusing `content` would
+  have discarded the specific wording before the user chose.
 
 ## 7. Build status by phase
 
