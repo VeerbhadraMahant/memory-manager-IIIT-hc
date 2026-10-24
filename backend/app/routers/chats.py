@@ -17,6 +17,9 @@ from app.models import (
     ChatUpdate,
     DraftRequest,
     ExtractionStatus,
+    InfluenceRequest,
+    InfluenceResponse,
+    MemoryInfluence,
     Message,
     MessageCreate,
     RegenerateRequest,
@@ -29,9 +32,15 @@ from app.models import (
 from app.ratelimit import general_limit, llm_limit
 from app.routers.memory import ITEM_SELECT, _audit
 from app.services import llm
-from app.services.classify import check_claim
+from app.services.classify import check_claim, influence
 from app.services.extraction import run_extraction
-from app.services.retrieval import embed_query, pinned, retrieve, retrieve_traced
+from app.services.retrieval import (
+    embed_query,
+    influence_verdict,
+    pinned,
+    retrieve,
+    retrieve_traced,
+)
 
 log = logging.getLogger(__name__)
 
@@ -181,6 +190,9 @@ def chat_turn(
     queued behind LLM latency.
     """
     uid, cid = str(user.id), str(chat_id)
+    # A guest turn is never extracted from, and sees only low-sensitivity memory.
+    ephemeral = payload.session_ephemeral or payload.guest
+    cap = "low" if payload.guest else None
 
     with pool.connection() as conn, conn.cursor() as cur:
         _assert_chat(cur, chat_id, user.id)
@@ -188,12 +200,12 @@ def chat_turn(
         # An ephemeral turn is marked at write time, so even a crash between here and
         # the extraction pass leaves a row that can never be extracted from.
         extraction_status = (
-            ExtractionStatus.skipped if payload.session_ephemeral else ExtractionStatus.pending
+            ExtractionStatus.skipped if ephemeral else ExtractionStatus.pending
         )
         cur.execute(
             """insert into messages (chat_id, role, content, session_ephemeral, extraction_status)
                values (%s, 'user', %s, %s, %s) returning *""",
-            (chat_id, payload.content, payload.session_ephemeral, extraction_status.value),
+            (chat_id, payload.content, ephemeral, extraction_status.value),
         )
         user_msg = cur.fetchone()
 
@@ -201,7 +213,8 @@ def chat_turn(
         trace = None
         if payload.selected_memory_ids:
             used, trace = pinned(
-                cur, uid, cid, payload.content, [str(i) for i in payload.selected_memory_ids]
+                cur, uid, cid, payload.content, [str(i) for i in payload.selected_memory_ids],
+                destination="chat", max_sensitivity=cap,
             )
 
         cur.execute(
@@ -215,7 +228,10 @@ def chat_turn(
     if trace is None or not used:
         vec = embed_query(payload.content)  # network, no connection held
         with pool.connection() as conn, conn.cursor() as cur:
-            used, trace = retrieve_traced(cur, uid, cid, payload.content, vec=vec)
+            used, trace = retrieve_traced(
+                cur, uid, cid, payload.content, vec=vec,
+                destination="chat", max_sensitivity=cap,
+            )
             if vec is None:
                 trace.embedding_failed = True
 
@@ -231,9 +247,9 @@ def chat_turn(
 
     with pool.connection() as conn, conn.cursor() as cur:
         cur.execute(
-            """insert into messages (chat_id, role, content, extraction_status)
-               values (%s, 'assistant', %s, 'skipped') returning *""",
-            (chat_id, reply),
+            """insert into messages (chat_id, role, content, extraction_status, provider, model)
+               values (%s, 'assistant', %s, 'skipped', %s, %s) returning *""",
+            (chat_id, reply, provider_used, model_used),
         )
         assistant_msg = cur.fetchone()
 
@@ -242,14 +258,14 @@ def chat_turn(
         # complete from the first turn rather than starting when P6 lands.
         _record_attributions(cur, assistant_msg["id"], used)
 
-    if not payload.session_ephemeral:
+    if not ephemeral:
         background.add_task(run_extraction, str(user_msg["id"]), cid, uid)
 
     return {
         "user_message": user_msg,
         "assistant_message": assistant_msg,
         "used_memories": used,
-        "extraction_running": not payload.session_ephemeral,
+        "extraction_running": not ephemeral,
         # Which model actually answered, not which was asked for — an unconfigured
         # or stale selection falls back, and that should be visible rather than silent.
         "provider": provider_used,
@@ -339,7 +355,8 @@ def regenerate(chat_id: UUID, payload: RegenerateRequest, user: User = Depends(c
             raise HTTPException(422, "no user turn precedes that reply")
 
         revoked: list[dict] = []
-        for item_id in payload.revoke_item_ids:
+        # exclude_all is a comparison, not a decision: nothing is revoked or tombstoned.
+        for item_id in [] if payload.exclude_all else payload.revoke_item_ids:
             cur.execute(
                 """update memory_items
                    set review_state = 'rejected', deleted_at = now()
@@ -367,27 +384,36 @@ def regenerate(chat_id: UUID, payload: RegenerateRequest, user: User = Depends(c
         )
         history = list(reversed(cur.fetchall()))
 
-    vec = embed_query(prompt_row["content"])
-    with pool.connection() as conn, conn.cursor() as cur:
-        used = retrieve(
-            cur, uid, cid, prompt_row["content"],
-            exclude={str(i) for i in payload.revoke_item_ids}, vec=vec,
-        )
+    used: list[dict] = []
+    if not payload.exclude_all:
+        vec = embed_query(prompt_row["content"])
+        with pool.connection() as conn, conn.cursor() as cur:
+            used = retrieve(
+                cur, uid, cid, prompt_row["content"],
+                exclude={str(i) for i in payload.revoke_item_ids}, vec=vec,
+                destination="chat",
+            )
 
     try:
-        reply, _, _, _ = llm.chat_response(history, used, payload.provider)
+        reply, provider_used, model_used, _ = llm.chat_response(history, used, payload.provider)
     except Exception as e:
         log.exception("regenerate completion failed")
         raise HTTPException(502, f"chat call failed: {llm.public_error(e)}") from e
 
-    with pool.connection() as conn, conn.cursor() as cur:
-        cur.execute(
-            "update messages set content = %s where id = %s returning *",
-            (reply, target["id"]),
-        )
-        updated = cur.fetchone()
-        cur.execute("delete from attributions where message_id = %s", (target["id"],))
-        _record_attributions(cur, target["id"], used)
+    if payload.exclude_all:
+        # The stored reply and its attributions stay as they were; the no-memory answer
+        # is returned for comparison only.
+        updated = target
+    else:
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                "update messages set content = %s, provider = %s, model = %s"
+                " where id = %s returning *",
+                (reply, provider_used, model_used, target["id"]),
+            )
+            updated = cur.fetchone()
+            cur.execute("delete from attributions where message_id = %s", (target["id"],))
+            _record_attributions(cur, target["id"], used)
 
     return {
         "previous": target["content"],
@@ -396,6 +422,87 @@ def regenerate(chat_id: UUID, payload: RegenerateRequest, user: User = Depends(c
         "used_memories": used,
         "assistant_message": updated,
     }
+
+
+@router.post(
+    "/{chat_id}/messages/{message_id}/influence",
+    response_model=InfluenceResponse,
+    dependencies=[Depends(llm_limit)],
+)
+def message_influence(
+    chat_id: UUID, message_id: UUID, payload: InfluenceRequest, user: User = Depends(current_user)
+):
+    """Measure, by regenerating, how much each attributed memory moved this reply.
+
+    For k attributed memories this makes k ablated calls plus `payload.repeats`
+    full-context calls, all on the provider stored on the message. The repeats give a
+    noise floor: how far the same prompt drifts from itself. A score is a text distance
+    above that floor, not proof of cause. Nothing is tombstoned or attributed here.
+    """
+    with pool.connection() as conn, conn.cursor() as cur:
+        _assert_chat(cur, chat_id, user.id)
+        cur.execute(
+            "select * from messages where id = %s and chat_id = %s and role = 'assistant'",
+            (message_id, chat_id),
+        )
+        target = cur.fetchone()
+        if not target:
+            raise HTTPException(404, "assistant message not found in this chat")
+        cur.execute(
+            """select mi.id, mi.content, mi.status
+               from attributions a join memory_items mi on mi.id = a.memory_item_id
+               where a.message_id = %s and mi.user_id = %s and mi.deleted_at is null
+               order by mi.created_at""",
+            (message_id, user.id),
+        )
+        memories = [{**r, "is_stale": False} for r in cur.fetchall()]
+        cur.execute(
+            """select role, content from messages
+               where chat_id = %s and role in ('user','assistant') and created_at < %s
+               order by created_at desc limit %s""",
+            (chat_id, target["created_at"], HISTORY_TURNS),
+        )
+        history = list(reversed(cur.fetchall()))
+
+    # No stored provider (a message from before migration 010): the default is used and
+    # reported in the response rather than guessed to be the original.
+    provider = target["provider"] or llm.resolve_provider(None)
+    model = target["model"]
+    calls = 0
+
+    def run(mems: list[dict]) -> str | None:
+        nonlocal calls, model
+        calls += 1
+        try:
+            reply, _, model_used, _ = llm.chat_response(history, mems, provider)
+        except Exception:
+            log.exception("influence regeneration failed")
+            return None
+        model = model or model_used
+        return reply
+
+    if not memories:
+        return InfluenceResponse(
+            message_id=message_id, provider=provider, model=model,
+            noise_floor=0.0, calls_made=0, results=[],
+        )
+
+    repeats = [run(memories) for _ in range(payload.repeats)]
+    ok_repeats = [r for r in repeats if r is not None]
+    noise_floor = 0.0
+    results: list[MemoryInfluence] = []
+    for m in memories:
+        ablated = run([x for x in memories if x["id"] != m["id"]])
+        score = None
+        if ablated is not None and len(ok_repeats) >= 2:
+            score, noise_floor = influence(target["content"], ablated, ok_repeats)
+        results.append(MemoryInfluence(
+            memory_item_id=m["id"], score=score, verdict=influence_verdict(score)
+        ))
+    return InfluenceResponse(
+        message_id=message_id, provider=provider, model=model,
+        noise_floor=noise_floor, calls_made=calls, results=results,
+    )
 
 
 @router.post("/{chat_id}/verified-draft", response_model=VerifiedDraft, dependencies=[Depends(llm_limit)])
@@ -411,7 +518,9 @@ def verified_draft(chat_id: UUID, payload: DraftRequest, user: User = Depends(cu
         _assert_chat(cur, chat_id, user.id)
     vec = embed_query(payload.instruction)
     with pool.connection() as conn, conn.cursor() as cur:
-        memories = retrieve(cur, str(user.id), str(chat_id), payload.instruction, vec=vec)
+        memories = retrieve(
+            cur, str(user.id), str(chat_id), payload.instruction, vec=vec, destination="draft"
+        )
     try:
         result = llm.verified_draft(payload.instruction, memories)
     except Exception as e:
