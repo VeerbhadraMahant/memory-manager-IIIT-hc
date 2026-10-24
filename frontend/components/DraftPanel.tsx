@@ -19,8 +19,8 @@
 import { useState } from "react";
 import { AlertTriangle, CheckCircle2, Loader2 } from "lucide-react";
 
-import { STATUS_LABEL, type VerifiedDraft } from "@/lib/api";
-import { useMemoryActions } from "@/lib/memory-store";
+import { api, STATUS_LABEL, type AssertionStatus, type VerifiedDraft } from "@/lib/api";
+import { useMemoryActions, useMemoryStore } from "@/lib/memory-store";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Chip } from "@/components/ui/chip";
@@ -94,6 +94,72 @@ export function DraftPanel({
   );
 }
 
+const STAND_CHOICES: AssertionStatus[] = ["in_progress", "planned", "completed", "abandoned"];
+
+/** F10. Replaces one-click confirm for an overstated claim: confirming "still true"
+ *  would bless the wrong status, so the user states the real one. The edit goes to the
+ *  memory through the existing PATCH; the claim is then marked resolved by the user.
+ *  The server has NOT re-run its overstatement check at that point, and the copy says so. */
+function StandChoice({
+  source,
+  onResolved,
+}: {
+  source: VerifiedDraft["claims"][number]["sources"][number];
+  onResolved: (status: AssertionStatus) => void;
+}) {
+  const { refresh, announce } = useMemoryStore();
+  const [choice, setChoice] = useState<AssertionStatus>(source.status);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      if (choice !== source.status) await api.edit(source.id, { status: choice });
+      await refresh();
+      announce(`Memory status set to ${STATUS_LABEL[choice]}.`);
+      onResolved(choice);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "could not save that");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <fieldset className="mt-2 rounded-input border border-outline-ink p-2" disabled={busy}>
+      <legend className="meta px-1 text-ink-muted">Where does this actually stand?</legend>
+      <p className="text-body-sm text-ink-muted">{source.content}</p>
+      <div className="mt-1 flex flex-wrap gap-x-4">
+        {STAND_CHOICES.map((st) => (
+          <label key={st} className="tap flex cursor-pointer items-center gap-1.5 text-body-sm text-ink">
+            <input
+              type="radio"
+              name={`stand-${source.id}`}
+              checked={choice === st}
+              onChange={() => setChoice(st)}
+              className="size-4"
+            />
+            {STATUS_LABEL[st]}
+          </label>
+        ))}
+      </div>
+      <Button variant="outlineInk" size="sm" className="mt-2" onClick={() => void save()}>
+        {busy && <Loader2 className="size-4 animate-spin" aria-hidden="true" />}
+        {choice === source.status
+          ? "Keep it as it is and mark resolved"
+          : `Save as ${STATUS_LABEL[choice]} and mark resolved`}
+      </Button>
+      {error && (
+        <p role="alert" className="mt-1 text-body-sm text-danger-ink">
+          {error}
+        </p>
+      )}
+    </fieldset>
+  );
+}
+
 function ClaimRow({
   claim,
   onConfirmed,
@@ -106,6 +172,7 @@ function ClaimRow({
   const actions = useMemoryActions();
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
+  const [resolvedAs, setResolvedAs] = useState<AssertionStatus | null>(null);
 
   return (
     <li
@@ -140,7 +207,7 @@ function ClaimRow({
         ))}
       </ul>
 
-      {flagged && !done && (
+      {flagged && !done && !claim.overstates && (
         <div className="mt-3 flex flex-wrap items-center gap-2">
           {claim.sources
             .filter((s) => s.is_stale)
@@ -165,13 +232,27 @@ function ClaimRow({
                 Still true — confirm it
               </Button>
             ))}
-          {claim.overstates && (
-            <p className="text-body-sm text-ink-muted">
-              Fix the wording, or correct the memory&rsquo;s status if the draft
-              is right.
-            </p>
-          )}
         </div>
+      )}
+
+      {/* Overstated claims get the guided choice; the stale-source confirm above stays
+          for claims that are only stale. A claim can be both: stating the real status
+          also settles it, so the one-click confirm is not offered for overstated claims. */}
+      {flagged && !done && claim.overstates && resolvedAs === null &&
+        claim.sources.map((s) => (
+          <StandChoice key={s.id} source={s} onResolved={(st) => {
+            setResolvedAs(st);
+            onConfirmed();
+          }}
+        />
+        ))}
+
+      {resolvedAs !== null && (
+        <p role="status" className="mt-2 text-body-sm text-ink-muted">
+          Marked resolved by you: the memory now says {STATUS_LABEL[resolvedAs]}. The
+          server has not re-checked this draft&rsquo;s wording against it; ask for the
+          draft again to run that check.
+        </p>
       )}
 
       {done && (

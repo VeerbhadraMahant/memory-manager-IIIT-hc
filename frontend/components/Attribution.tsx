@@ -19,21 +19,40 @@
 // evidence for one item at a time — drop it, answer again, show the difference
 // — which is a demonstration, not a measurement, and the copy says so.
 
-import { Undo2 } from "lucide-react";
+import { useState } from "react";
+import { Loader2, Ruler, Undo2 } from "lucide-react";
 
-import { SCOPE_LABEL, STATUS_LABEL, type UsedMemory } from "@/lib/api";
+import {
+  api,
+  SCOPE_LABEL,
+  STATUS_LABEL,
+  type InfluenceResponse,
+  type MemoryInfluence,
+  type UsedMemory,
+} from "@/lib/api";
 import { blockLabel } from "@/lib/semantics";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Chip } from "@/components/ui/chip";
 
+const VERDICT_LABEL: Record<MemoryInfluence["verdict"], string> = {
+  changed_answer: "changed the answer",
+  no_measurable_effect: "no measurable effect",
+  within_noise: "within noise",
+  failed: "could not measure",
+};
+
 export function AttributionChips({
+  chatId,
+  messageId,
   used,
   regenerating,
   onRevoke,
   onHighlight,
   highlighted,
 }: {
+  chatId: string | null;
+  messageId: string | null;
   used: UsedMemory[];
   regenerating: boolean;
   onRevoke: (itemId: string) => void;
@@ -41,7 +60,27 @@ export function AttributionChips({
   onHighlight: (ids: Map<string, number> | null) => void;
   highlighted: boolean;
 }) {
+  const [measure, setMeasure] = useState<
+    | { state: "idle" }
+    | { state: "running" }
+    | { state: "done"; res: InfluenceResponse }
+    | { state: "error"; message: string }
+  >({ state: "idle" });
+
   if (used.length === 0) return null;
+
+  const run = async () => {
+    if (!chatId || !messageId) return;
+    setMeasure({ state: "running" });
+    try {
+      setMeasure({ state: "done", res: await api.measureInfluence(chatId, messageId) });
+    } catch (e) {
+      setMeasure({ state: "error", message: e instanceof Error ? e.message : "measurement failed" });
+    }
+  };
+  const verdicts = new Map(
+    measure.state === "done" ? measure.res.results.map((r) => [r.memory_item_id, r]) : [],
+  );
 
   // Distance → relevance for the glow tiers. Cosine distance, so smaller is
   // closer; the mapping is linear and deliberately coarse — the tiers in §4.4
@@ -71,6 +110,35 @@ export function AttributionChips({
         </button>
       </div>
 
+      {messageId && (
+        <div className="mt-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={measure.state === "running" || regenerating}
+            onClick={() => void run()}
+          >
+            {measure.state === "running" ? (
+              <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+            ) : (
+              <Ruler className="size-4" aria-hidden="true" />
+            )}
+            Measure influence
+          </Button>
+          <p className="meta mt-1 text-ink-invert-muted">
+            Regenerates this answer {used.length + 2} times on the same model (once
+            without each memory, twice with all of them) and uses your model quota.
+            It compares answers; it does not prove why the model said what it said.
+          </p>
+          <p role="status" className="text-body-sm text-ink-invert-muted">
+            {measure.state === "running" && "Measuring by regenerating, this can take a while."}
+            {measure.state === "done" &&
+              `Measured with ${measure.res.calls_made} regenerations on ${measure.res.model ?? "the same model"}.`}
+            {measure.state === "error" && `Could not measure: ${measure.message}`}
+          </p>
+        </div>
+      )}
+
       <ul className="mt-2 space-y-2">
         {used.map((m) => (
           <li
@@ -85,6 +153,11 @@ export function AttributionChips({
                 {SCOPE_LABEL[m.scope]}
               </Chip>
               {m.is_stale && <Chip tone="danger">not confirmed recently</Chip>}
+              <Chip tone={verdicts.get(m.id)?.verdict === "changed_answer" ? "stated" : "neutral"}>
+                {verdicts.has(m.id)
+                  ? VERDICT_LABEL[verdicts.get(m.id)!.verdict]
+                  : "used as context"}
+              </Chip>
 
               {/* Revoke is a memory-level act, not a display filter: the item is
                   dropped from the prompt and the answer is redone without it, so

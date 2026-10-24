@@ -23,19 +23,20 @@
 //     here — the panel reopens from the top bar, from the edge rail, and from an
 //     attribution chip in the transcript, which opens it on the user's behalf.
 
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Brain,
   EyeOff,
   PanelRightClose,
   PanelRightOpen,
+  X,
   ShieldAlert,
   ShieldCheck,
 } from "lucide-react";
 
-import type { ScopeReport } from "@/lib/api";
+import { api, type DigestEntry, type DigestResponse, type ScopeReport } from "@/lib/api";
 import { useMemoryConsent } from "@/lib/consent";
-import { useMemoryStore } from "@/lib/memory-store";
+import { useMemoryActions, useMemoryStore } from "@/lib/memory-store";
 import { useAnimateAfterFirstPaint, useFocusTrap } from "@/lib/shell";
 import type { PiiFinding, PiiTier } from "@/lib/pii";
 import { cn } from "@/lib/utils";
@@ -59,7 +60,10 @@ export function MemoryPanel({
   relevance,
   chatId,
   sourceMessageId,
+  guest = false,
 }: {
+  /** F14: while a guest turn is on, the panel shows counts only. */
+  guest?: boolean;
   open: boolean;
   overlay: boolean;
   onToggle: () => void;
@@ -151,6 +155,11 @@ export function MemoryPanel({
             </button>
           </div>
 
+          {guest && <GuestCounts />}
+
+          <div className={guest ? "hidden" : "contents"}>
+          <SinceYouWereAway />
+
           <ConsentControl />
 
           <PrivacyBlocks />
@@ -177,11 +186,17 @@ export function MemoryPanel({
               {silenced > 0 && <Chip>{silenced} silenced this session</Chip>}
             </div>
           </div>
+          </div>
 
           {/* On a phone the panel is a full-height sheet, and the memories are why it was
               opened — so they come first there. From xl the panel is a side column where
               the settings above them cost nothing, and the DOM order stands. */}
-          <div className="max-xl:-order-1">
+          {/* Kept mounted but hidden in guest mode so the graph keeps its state; `hidden`
+              would give React Flow a zero size on return, so it is clipped instead. */}
+          <div
+            className={cn("max-xl:-order-1", guest && "invisible -mt-4 h-0 overflow-hidden")}
+            inert={guest}
+          >
             <MemoryWorkspace
               relevance={relevance}
               chatId={chatId}
@@ -271,5 +286,128 @@ export function MemoryPanelToggle({ open, onToggle }: { open: boolean; onToggle:
       Memory
       <span className="meta tnum">{items.length}</span>
     </button>
+  );
+}
+
+const LAST_SEEN_KEY = "negotiated-memory:last-seen";
+
+const CHANGE_LABEL: Record<DigestEntry["change"], string> = {
+  created: "added",
+  auto_accepted: "kept without asking you",
+  edited: "edited",
+  stale: "not confirmed in a while",
+  flagged_for_review: "flagged for your review",
+  deleted: "deleted",
+};
+
+/**
+ * F12. One summary at session start, never a per-item consent prompt. "Last seen" is
+ * a per-browser convenience in localStorage; with nothing stored (first visit, or
+ * storage blocked) there is no baseline, so nothing is shown.
+ */
+function SinceYouWereAway() {
+  const { announce } = useMemoryStore();
+  const actions = useMemoryActions();
+  const [digest, setDigest] = useState<DigestResponse | null>(null);
+  const [confirmed, setConfirmed] = useState<Set<string>>(new Set());
+  const [dismissed, setDismissed] = useState(false);
+  const started = useRef(false);
+
+  useEffect(() => {
+    if (started.current) return;
+    started.current = true;
+    let since: string | null = null;
+    try {
+      since = localStorage.getItem(LAST_SEEN_KEY);
+      localStorage.setItem(LAST_SEEN_KEY, new Date().toISOString());
+    } catch {
+      /* storage unavailable: no baseline, show nothing */
+    }
+    if (!since) return;
+    api
+      .digest(since)
+      .then((d) => {
+        if (d.entries.length === 0) return;
+        setDigest(d);
+        announce(`Since you were away: ${d.entries.length} memory changes.`);
+      })
+      .catch(() => {});
+  }, [announce]);
+
+  if (!digest || dismissed) return null;
+
+  const groups = new Map<DigestEntry["change"], DigestEntry[]>();
+  for (const e of digest.entries) groups.set(e.change, [...(groups.get(e.change) ?? []), e]);
+
+  return (
+    <section
+      aria-label="Since you were away"
+      className="shrink-0 rounded-card border border-outline bg-raised p-4"
+    >
+      <div className="flex items-start gap-2">
+        <h2 className="meta flex-1 text-ink-invert-muted">Since you were away</h2>
+        <button
+          type="button"
+          onClick={() => setDismissed(true)}
+          aria-label="Dismiss the summary of changes since you were away"
+          className="tap inline-flex items-center justify-center rounded-input text-ink-invert-muted hover:text-ink-invert"
+        >
+          <X className="size-4" aria-hidden="true" />
+        </button>
+      </div>
+      <ul className="mt-2 space-y-3">
+        {[...groups].map(([change, entries]) => (
+          <li key={change}>
+            <p className="text-body-sm text-ink-invert">
+              {entries.length} {CHANGE_LABEL[change]}
+            </p>
+            <ul className="mt-1 space-y-1">
+              {entries.slice(0, 5).map((e) => (
+                <li key={`${e.memory_item_id}-${e.at}`} className="flex items-start gap-2 text-body-sm text-ink-invert-muted">
+                  <span className="min-w-0 flex-1">{e.content}</span>
+                  {change === "stale" &&
+                    (confirmed.has(e.memory_item_id) ? (
+                      <span className="meta shrink-0">confirmed</span>
+                    ) : (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={async () => {
+                          await actions.confirm(e.memory_item_id);
+                          setConfirmed((c) => new Set(c).add(e.memory_item_id));
+                        }}
+                      >
+                        Still true
+                      </Button>
+                    ))}
+                </li>
+              ))}
+            </ul>
+            {entries.length > 5 && (
+              <p className="meta text-ink-invert-muted">and {entries.length - 5} more in the list</p>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function GuestCounts() {
+  const { items } = useMemoryStore();
+  const low = items.filter((i) => i.sensitivity === "low").length;
+  return (
+    <section
+      aria-label="Guest turn"
+      className="shrink-0 rounded-card border border-outline bg-raised p-4"
+    >
+      <h2 className="meta mb-2 text-ink-invert-muted">Guest turn is on</h2>
+      <p className="text-body-sm text-ink-invert-muted">
+        Memory details are hidden while someone else may be looking. Stored:{" "}
+        <span className="tnum">{items.length}</span> in total, of which{" "}
+        <span className="tnum">{low}</span> are low-sensitivity and could be used on a guest turn.
+        Turn the guest toggle off beside the message box to see them.
+      </p>
+    </section>
   );
 }
