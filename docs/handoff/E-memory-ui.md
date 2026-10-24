@@ -34,9 +34,11 @@ Existing props and exports are unchanged; new props are optional (`queue` on the
 
 ## Contract requests
 
-- `components/MemoryNode.tsx` (not in any table row): render `ORIGIN[memory.content_origin]` as a small text plus icon tag on graph nodes. Accessible names already include it via `describeMemory`.
-- `lib/graph-layout.ts`: pass `state` through `PositionedEdge` so the graph does not need the key lookup in `MemoryGraph`. Optional.
-- Backend (C): confirm what `PATCH /memory/edges/{id}` with `confirmed` does for a `contradicts` edge; copy says "removes nothing; both stay stored".
+Granted by the orchestrator in a follow-up, now done:
+
+- `components/MemoryNode.tsx`: graph nodes show the origin as icon plus words in the header row (hidden from assistive tech, whose name already carries it via `describeMemory`); nothing when null.
+- `lib/graph-layout.ts`: `PositionedEdge.state` is passed through, and `MemoryGraph` styles proposed edges from it (the key lookup is gone).
+- Confirmed: confirming a `contradicts` edge removes nothing; the copy is correct.
 - `MemoryActionBar.tsx` is not owned by anyone in the table. It was left alone.
 
 ## Accessibility notes

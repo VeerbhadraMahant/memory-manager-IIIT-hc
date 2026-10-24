@@ -147,15 +147,6 @@ function GraphInner({
     () => (graph?.edges ?? []).filter((e) => e.state !== "rejected"),
     [graph],
   );
-  const proposedKeys = useMemo(
-    () =>
-      new Set(
-        rawEdges
-          .filter((e) => e.state === "proposed")
-          .map((e) => `${e.from_item_id}|${e.to_item_id}|${e.relation}`),
-      ),
-    [rawEdges],
-  );
   const capped = source.length > NODE_CAP;
   const visible = useMemo(() => source.slice(0, NODE_CAP), [source]);
 
@@ -328,7 +319,7 @@ function GraphInner({
         const dying = doomed.has(e.source) || doomed.has(e.target);
         const isHighlighted =
           !!searchMatches && (searchMatches.has(e.source) || searchMatches.has(e.target));
-        const proposed = proposedKeys.has(`${e.source}|${e.target}|${e.relation}`);
+        const proposed = e.state === "proposed";
         const stroke = isHighlighted
           ? "var(--stated)"
           : dying
@@ -361,7 +352,7 @@ function GraphInner({
           },
         };
       }),
-    [layout.edges, doomed, searchMatches, reduced, proposedKeys],
+    [layout.edges, doomed, searchMatches, reduced],
   );
 
   const [pane, setPane] = useState({ w: 0, h: 0 });

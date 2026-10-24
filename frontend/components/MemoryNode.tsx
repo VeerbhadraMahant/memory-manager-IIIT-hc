@@ -18,10 +18,10 @@
 
 import { memo } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, Bot, Pencil, PenLine } from "lucide-react";
 
 import type { GraphNode } from "@/lib/api";
-import { SOURCE, STATUS_CHIP, describeMemory, isStale } from "@/lib/semantics";
+import { ORIGIN, SOURCE, STATUS_CHIP, describeMemory, isStale } from "@/lib/semantics";
 import { cn } from "@/lib/utils";
 import { CAT_H, CAT_W, NODE_H, NODE_W, ROOT_H, ROOT_W } from "@/lib/graph-layout";
 
@@ -243,6 +243,24 @@ function MemoryNodeInner({ data }: NodeProps) {
           >
             {enc.label}
           </span>
+          {memory.content_origin && (
+            // Words plus icon (F9). The node's accessible name already carries
+            // the same phrase via describeMemory, so this is hidden from AT.
+            <span
+              aria-hidden="true"
+              title={ORIGIN[memory.content_origin].label}
+              className="meta flex min-w-0 items-center gap-1 text-ink-invert-muted"
+            >
+              {memory.content_origin === "model_worded" ? (
+                <Bot className="size-3 shrink-0" />
+              ) : memory.content_origin === "user_edited" ? (
+                <Pencil className="size-3 shrink-0" />
+              ) : (
+                <PenLine className="size-3 shrink-0" />
+              )}
+              <span className="truncate">{ORIGIN[memory.content_origin].label}</span>
+            </span>
+          )}
           {(stale || degraded || flagged) && (
             <AlertTriangle
               aria-hidden="true"
