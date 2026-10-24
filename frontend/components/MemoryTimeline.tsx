@@ -19,10 +19,9 @@
 //   • The extraction step reflects `extraction_running`, which the server sets — not
 //     a client-side timer.
 //
-// The linking step is the honest one: `memory_edges` is real in the schema and read
-// by the deletion cascade, but **nothing writes it** — no pass detects that one
-// memory updates or contradicts another. So this reports that plainly rather than
-// drawing arrows between memories that the database does not relate.
+// The linking step states what extraction does, not a count: it proposes `updates` and
+// `contradicts` edges for the user to confirm, and writes `derived_from` edges from an
+// inference to its premises. The turn response carries no edge count, so none is shown.
 
 import { useState } from "react";
 import {
@@ -187,6 +186,9 @@ export function MemoryTimeline({
     (c) => c.verdict === "injected" || c.verdict === "pinned",
   ) ?? [];
   const withheld = retrieval?.considered.filter((c) => c.verdict === "private_block") ?? [];
+  const contextDenied = retrieval?.considered.filter((c) => c.verdict === "context_denied") ?? [];
+  const superseded = retrieval?.considered.filter((c) => c.verdict === "superseded") ?? [];
+  const guestWithheld = retrieval?.considered.filter((c) => c.verdict === "guest_withheld") ?? [];
   const nearMisses = retrieval?.considered.filter((c) => c.verdict === "too_distant") ?? [];
 
   // ---- extraction ----------------------------------------------------------
@@ -224,6 +226,10 @@ export function MemoryTimeline({
               ? "memory was not searched — the embedding call failed"
               : `${injected.length} of ${retrieval.considered.length} used${
                   withheld.length ? ` · ${withheld.length} withheld` : ""
+                }${
+                  retrieval.withheld_by_context ? ` · ${retrieval.withheld_by_context} held back by a block rule` : ""
+                }${retrieval.superseded_count ? ` · ${retrieval.superseded_count} replaced by newer` : ""}${
+                  retrieval.withheld_by_guest ? ` · ${retrieval.withheld_by_guest} held back for a guest` : ""
                 }`
             : inFlight
               ? "searching memory…"
@@ -270,6 +276,66 @@ export function MemoryTimeline({
               </>
             )}
 
+            {contextDenied.length > 0 && (
+              <>
+                <p className="meta mt-1 text-danger-on-bg">
+                  withheld from the prompt by a block rule
+                </p>
+                <ul className="space-y-0.5">
+                  {contextDenied.map((c) => (
+                    <Arrow
+                      key={c.id}
+                      dim
+                      from={blockLabel(c.block_name ?? "unclassified")}
+                      to={c.content}
+                      trailing={
+                        <span className="meta w-full text-ink-invert-muted">
+                          withheld from this draft or reply by your{" "}
+                          {blockLabel(c.block_name ?? "unclassified")} rule
+                        </span>
+                      }
+                    />
+                  ))}
+                </ul>
+              </>
+            )}
+
+            {superseded.length > 0 && (
+              <>
+                <p className="meta mt-1 text-ink-invert-muted">
+                  not used — you confirmed a newer fact replaces it
+                </p>
+                <ul className="space-y-0.5">
+                  {superseded.map((c) => (
+                    <Arrow
+                      key={c.id}
+                      dim
+                      from={blockLabel(c.block_name ?? "unclassified")}
+                      to={c.content}
+                    />
+                  ))}
+                </ul>
+              </>
+            )}
+
+            {guestWithheld.length > 0 && (
+              <>
+                <p className="meta mt-1 text-ink-invert-muted">
+                  not used — guest turn only uses low-sensitivity memories
+                </p>
+                <ul className="space-y-0.5">
+                  {guestWithheld.map((c) => (
+                    <Arrow
+                      key={c.id}
+                      dim
+                      from={blockLabel(c.block_name ?? "unclassified")}
+                      to={c.content}
+                    />
+                  ))}
+                </ul>
+              </>
+            )}
+
             {nearMisses.length > 0 && (
               <>
                 <p className="meta mt-1 text-ink-invert-muted">
@@ -299,7 +365,11 @@ export function MemoryTimeline({
                 reachable from here
               </p>
             )}
-            {injected.length === 0 && withheld.length === 0 && (
+            {injected.length === 0 &&
+              withheld.length === 0 &&
+              contextDenied.length === 0 &&
+              superseded.length === 0 &&
+              guestWithheld.length === 0 && (
               <p className="text-body-sm text-ink-invert-muted">
                 Nothing was close enough to use. This answer drew on no memory.
               </p>
@@ -410,20 +480,19 @@ export function MemoryTimeline({
         )}
       </Step>
 
-      {/* 5 — the step that has to say "no", because the writer does not exist */}
+      {/* 5 — links proposed or written by extraction (no count: the response has none) */}
       {extraction?.status === "done" && stored.length + pending.length > 0 && (
         <Step
-          state="skipped"
+          state="done"
           icon={<Unlink className="size-3.5 shrink-0 text-ink-invert-muted" aria-hidden="true" />}
           label="linked"
-          detail="nothing — provenance edges are not written yet"
+          detail="possible updates are proposed for your review; inferences link to what they were inferred from"
         >
           <p className="text-body-sm text-ink-invert-muted">
-            The schema has <span className="meta">memory_edges</span> and the deletion
-            cascade reads it, but no pass writes one — nothing detects that a new fact
-            updates or contradicts an existing one. So these memories are stored
-            side-by-side and unrelated, and the deletion preview will correctly report
-            zero dependents. This is a gap, not a design.
+            A new fact that looks like it updates or contradicts an existing one is
+            proposed as a link for you to confirm; until you confirm it, it does not
+            affect deletion or retrieval. An inference is linked to the stated facts it
+            was inferred from. This turn&rsquo;s exact link count is not reported here.
           </p>
         </Step>
       )}

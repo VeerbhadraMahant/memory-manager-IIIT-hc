@@ -13,7 +13,7 @@
 // The verification for this is §8.7: reload five times, positions identical.
 
 import dagre from "@dagrejs/dagre";
-import type { GraphEdge, GraphNode } from "./api";
+import type { EdgeState, GraphEdge, GraphNode } from "./api";
 import { blockKey, blockLabel } from "./semantics";
 
 // Fixed, not minimum. React Flow measures unsized nodes from the DOM, and
@@ -70,6 +70,8 @@ export interface PositionedEdge {
   target: string;
   relation?: string;
   provisional?: boolean;
+  /** Carried through from the graph edge; absent on synthetic block edges. */
+  state?: EdgeState;
 }
 
 export interface LayoutResult {
@@ -215,6 +217,7 @@ export function buildHierarchicalGraph(
         target: e.to_item_id,
         relation: e.relation,
         provisional: e.relation === "contradicts",
+        state: e.state,
       });
     }
   }
@@ -314,6 +317,7 @@ export function layoutGraph(
     target: e.to_item_id,
     relation: e.relation,
     provisional: e.relation === "contradicts",
+    state: e.state,
   }));
 
   return { nodes: positioned, edges: formattedEdges, width, height };

@@ -1,0 +1,12 @@
+{"id": "item-1", "confidence": 0.95, "source_type": "stated", "sensitivity": "low", "status": "completed", "disposition": "auto_accepted", "actions": []}
+{"id": "item-2", "confidence": 0.92, "source_type": "stated", "sensitivity": "low", "status": "completed", "disposition": "auto_accepted", "actions": ["edited"]}
+{"id": "item-3", "confidence": 0.9, "source_type": "stated", "sensitivity": "low", "status": "planned", "disposition": "auto_accepted", "actions": []}
+{"id": "item-4", "confidence": 0.88, "source_type": "stated", "sensitivity": "low", "status": "in_progress", "disposition": "auto_accepted", "actions": []}
+{"id": "item-5", "confidence": 0.8, "source_type": "stated", "sensitivity": "low", "status": "completed", "disposition": "pending", "actions": ["accepted"]}
+{"id": "item-6", "confidence": 0.78, "source_type": "stated", "sensitivity": "low", "status": "completed", "disposition": "pending", "actions": ["rejected"]}
+{"id": "item-7", "confidence": 0.7, "source_type": "stated", "sensitivity": "medium", "status": "completed", "disposition": "pending", "actions": ["accepted"]}
+{"id": "item-8", "confidence": 0.65, "source_type": "inferred", "sensitivity": "low", "status": "hypothetical", "disposition": "pending", "actions": ["rejected"]}
+{"id": "item-9", "confidence": 0.55, "source_type": "inferred", "sensitivity": "medium", "status": "hypothetical", "disposition": "pending", "actions": ["deleted"]}
+{"id": "item-10", "confidence": 0.6, "source_type": "stated", "sensitivity": "high", "status": "completed", "disposition": "pending", "actions": ["accepted"]}
+{"id": "item-11", "confidence": 0.3, "source_type": "stated", "sensitivity": "low", "status": "third_party", "disposition": "pending", "actions": []}
+{"id": "item-12", "confidence": 0.85, "source_type": "stated", "sensitivity": "low", "status": "completed", "disposition": "auto_accepted", "actions": []}

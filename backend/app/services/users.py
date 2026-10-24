@@ -28,13 +28,20 @@ DEFAULT_BLOCKS: tuple[tuple[str, str, int, bool], ...] = (
     ("preferences", "low", 80, False),
 )
 
+# Migration 009: blocks whose memories never reach a high-stakes draft unless the user
+# lifts the rule. Kept apart from DEFAULT_BLOCKS so that tuple's shape (and the test
+# pinning it to the migrations) is unchanged.
+DRAFT_DENIED_BLOCKS = frozenset({"health", "identity", "finance", "relationships"})
+
 
 def seed_blocks(cur, user_id: UUID) -> None:
     for name, sens, rank, fallback in DEFAULT_BLOCKS:
         cur.execute(
-            """insert into blocks (user_id, name, default_sensitivity, restrictive_rank, is_fallback)
-               values (%s, %s, %s, %s, %s) on conflict (user_id, name) do nothing""",
-            (user_id, name, sens, rank, fallback),
+            """insert into blocks (user_id, name, default_sensitivity, restrictive_rank, is_fallback,
+                                   denied_destinations)
+               values (%s, %s, %s, %s, %s, %s::flow_destination[])
+               on conflict (user_id, name) do nothing""",
+            (user_id, name, sens, rank, fallback, ["draft"] if name in DRAFT_DENIED_BLOCKS else []),
         )
 
 

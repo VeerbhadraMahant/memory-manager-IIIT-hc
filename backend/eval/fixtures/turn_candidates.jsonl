@@ -1,0 +1,6 @@
+{"turn": 1, "source_type": "stated", "sensitivity": "low", "confidence": 0.95, "status": "completed"}
+{"turn": 1, "source_type": "stated", "sensitivity": "high", "confidence": 0.9, "status": "completed"}
+{"turn": 2, "source_type": "inferred", "sensitivity": "low", "confidence": 0.9, "status": "completed"}
+{"turn": 2, "source_type": "stated", "sensitivity": "low", "confidence": 0.5, "status": "completed"}
+{"turn": 2, "source_type": "stated", "sensitivity": "low", "confidence": 0.86, "status": "completed"}
+{"turn": 3, "source_type": "stated", "sensitivity": "low", "confidence": 0.9, "status": "third_party"}

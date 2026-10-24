@@ -20,10 +20,17 @@
 import { useCallback, useEffect, useState } from "react";
 import { Loader2, ShieldOff } from "lucide-react";
 
-import { api, type Block } from "@/lib/api";
+import { api, type Block, type FlowDestination } from "@/lib/api";
 import { blockLabel } from "@/lib/semantics";
 import { cn } from "@/lib/utils";
 import { useMemoryStore } from "@/lib/memory-store";
+
+const FLOWS: { id: FlowDestination; label: string }[] = [
+  { id: "chat", label: "Use in chat" },
+  { id: "draft", label: "Use in drafts" },
+  { id: "summary", label: "Use in summaries" },
+  { id: "relevance", label: "Use in relevance" },
+];
 
 export function PrivacyBlocks() {
   const { announce } = useMemoryStore();
@@ -55,6 +62,26 @@ export function PrivacyBlocks() {
     }
   };
 
+  const setFlow = async (block: Block, dest: FlowDestination, allow: boolean) => {
+    const key = `${block.name}:${dest}`;
+    setBusy(key);
+    setError(null);
+    try {
+      const denied = allow
+        ? block.denied_destinations.filter((d) => d !== dest)
+        : [...block.denied_destinations, dest];
+      const updated = await api.setBlockFlows(block.name, denied);
+      setBlocks((bs) => bs.map((b) => (b.name === updated.name ? updated : b)));
+      announce(
+        `${blockLabel(updated.name)} is ${allow ? "now" : "no longer"} used in ${dest === "chat" ? "chat" : dest === "relevance" ? "relevance scoring" : dest + "s"}.`,
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "could not change that");
+    } finally {
+      setBusy(null);
+    }
+  };
+
   if (blocks.length === 0) return null;
   const privateCount = blocks.filter((b) => b.private).length;
 
@@ -70,6 +97,12 @@ export function PrivacyBlocks() {
       <p className="text-body-sm text-ink-invert-muted">
         Withhold a whole category from every prompt. These memories stay here — you can
         still read, edit and delete them — they just stop reaching the model.
+      </p>
+
+      <p className="text-body-sm text-ink-invert-muted mt-2">
+        Under each block, untick a place to keep it out of that use. The first
+        checkbox, private, overrides all of them: a private block reaches none of
+        these places whatever is ticked.
       </p>
 
       <ul className="mt-3 space-y-1">
@@ -105,6 +138,29 @@ export function PrivacyBlocks() {
                 <span className="meta shrink-0 text-danger-on-bg">withheld</span>
               )}
             </label>
+            <fieldset
+              className="ml-8 mt-0.5 flex flex-wrap gap-x-4 gap-y-0.5 pb-1"
+              disabled={busy?.startsWith(`${b.name}:`)}
+            >
+              <legend className="sr-only">
+                Where {blockLabel(b.name)} may be used
+              </legend>
+              {FLOWS.map((f) => (
+                <label
+                  key={f.id}
+                  className="tap flex cursor-pointer items-center gap-1.5 text-body-sm text-ink-invert-muted"
+                >
+                  <input
+                    type="checkbox"
+                    checked={!b.denied_destinations.includes(f.id)}
+                    onChange={(e) => void setFlow(b, f.id, e.target.checked)}
+                    className="size-4 shrink-0"
+                  />
+                  {f.label}
+                  {b.private && <span className="sr-only"> (overridden: this block is private)</span>}
+                </label>
+              ))}
+            </fieldset>
           </li>
         ))}
       </ul>

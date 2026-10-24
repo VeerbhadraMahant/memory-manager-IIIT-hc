@@ -61,6 +61,14 @@ with mine as materialized (
 select m.id, m.content, m.status, m.scope, m.sensitivity, m.source_type,
        b.name as block_name,
        coalesce(b.private, false) as block_private,
+       b.denied_destinations::text[] as denied_destinations,
+       exists (
+         select 1 from memory_edges e
+         join memory_items nw on nw.id = e.to_item_id
+         where e.from_item_id = m.id and e.relation = 'updates'
+           and e.state = 'confirmed' and nw.deleted_at is null
+           and nw.review_state in ('accepted', 'auto_accepted')
+       ) as superseded,
        m.embedding <=> %s::vector as distance,
        -- P6 decay: something the user was in the middle of months ago is not
        -- evidence that they still are. Only in_progress decays — a completed fact
@@ -77,6 +85,14 @@ limit %s
 PINNED_SQL = """
 select mi.id, mi.content, mi.status, mi.scope, mi.sensitivity, mi.source_type,
        b.name as block_name, coalesce(b.private, false) as block_private,
+       b.denied_destinations::text[] as denied_destinations,
+       exists (
+         select 1 from memory_edges e
+         join memory_items nw on nw.id = e.to_item_id
+         where e.from_item_id = mi.id and e.relation = 'updates'
+           and e.state = 'confirmed' and nw.deleted_at is null
+           and nw.review_state in ('accepted', 'auto_accepted')
+       ) as superseded,
        0.0 as distance,
        (mi.status = 'in_progress'
         and coalesce(mi.last_confirmed_at, mi.created_at)
@@ -113,7 +129,8 @@ class Candidate:
     content: str
     block_name: str | None
     distance: float
-    # injected | too_distant | private_block | revoked
+    # injected | too_distant | private_block | revoked | context_denied | superseded
+    # | guest_withheld | pinned
     verdict: str
 
 
@@ -130,6 +147,12 @@ class RetrievalTrace:
     fenced_to_another_chat: int = 0
     awaiting_review: int = 0
     not_embedded: int = 0
+    # Withheld from the prompt by a block's flow rule for this destination.
+    withheld_by_context: int = 0
+    # Replaced by a newer fact through a confirmed `updates` edge.
+    superseded_count: int = 0
+    # Above the guest-turn sensitivity cap.
+    withheld_by_guest: int = 0
     max_distance: float = MAX_DISTANCE
     embedding_failed: bool = False
 
@@ -144,9 +167,60 @@ class RetrievalTrace:
             "fenced_to_another_chat": self.fenced_to_another_chat,
             "awaiting_review": self.awaiting_review,
             "not_embedded": self.not_embedded,
+            "withheld_by_context": self.withheld_by_context,
+            "superseded_count": self.superseded_count,
+            "withheld_by_guest": self.withheld_by_guest,
             "max_distance": self.max_distance,
             "embedding_failed": self.embedding_failed,
         }
+
+
+SENSITIVITY_RANK = {"low": 0, "medium": 1, "high": 2, "special_category": 3}
+
+# verdict -> RetrievalTrace counter
+_COUNTER = {
+    "revoked": "revoked_count",
+    "private_block": "withheld_private",
+    "context_denied": "withheld_by_context",
+    "superseded": "superseded_count",
+    "guest_withheld": "withheld_by_guest",
+    "too_distant": "dropped_too_distant",
+}
+
+
+def row_verdict(
+    row: dict, *, destination: str, max_sensitivity: str | None, excluded: bool,
+    kept_so_far: int,
+) -> str:
+    """Why one ranked row is or is not injected. Order is the precedence: private
+    wins over a flow rule, which wins over supersession, the guest cap and relevance,
+    so the trace names the strongest reason the row was withheld from the prompt."""
+    if excluded:
+        return "revoked"
+    if row["block_private"]:
+        return "private_block"
+    if destination in (row.get("denied_destinations") or []):
+        return "context_denied"
+    if row.get("superseded"):
+        return "superseded"
+    if (
+        max_sensitivity is not None
+        and SENSITIVITY_RANK.get(row["sensitivity"], 3) > SENSITIVITY_RANK[max_sensitivity]
+    ):
+        return "guest_withheld"
+    if row["distance"] > MAX_DISTANCE or kept_so_far >= TOP_K:
+        return "too_distant"
+    return "injected"
+
+
+def influence_verdict(score: float | None) -> str:
+    """Thresholds for a measured influence score (contract F3). None means the call
+    failed. The score is a text distance from regenerating, not a causal estimate."""
+    if score is None:
+        return "failed"
+    if score > 0.05:
+        return "changed_answer"
+    return "within_noise" if score > 0 else "no_measurable_effect"
 
 
 def embed_query(query: str) -> list[float] | None:
@@ -162,7 +236,8 @@ def embed_query(query: str) -> list[float] | None:
 
 def retrieve_traced(
     cur, user_id: str, chat_id: str, query: str, exclude: set[str] | None = None,
-    vec: list[float] | None = None,
+    vec: list[float] | None = None, *, destination: str = "chat",
+    max_sensitivity: str | None = None,
 ) -> tuple[list[dict], RetrievalTrace]:
     """The rows to inject, plus the record of how they were chosen."""
     trace = RetrievalTrace(query=query)
@@ -181,24 +256,15 @@ def retrieve_traced(
     kept: list[dict] = []
     for row in ranked:
         item_id = str(row["id"])
-        if exclude and item_id in exclude:
-            verdict = "revoked"
-            trace.revoked_count += 1
-        elif row["block_private"]:
-            # Checked before distance so the trace attributes the withholding to the
-            # privacy setting rather than to relevance — the user needs to know the
-            # block did it, not that the item happened to be unrelated.
-            verdict = "private_block"
-            trace.withheld_private += 1
-        elif row["distance"] > MAX_DISTANCE:
-            verdict = "too_distant"
-            trace.dropped_too_distant += 1
-        elif len(kept) >= TOP_K:
-            verdict = "too_distant"
-            trace.dropped_too_distant += 1
-        else:
-            verdict = "injected"
+        verdict = row_verdict(
+            row, destination=destination, max_sensitivity=max_sensitivity,
+            excluded=bool(exclude and item_id in exclude), kept_so_far=len(kept),
+        )
+        if verdict == "injected":
             kept.append(row)
+        else:
+            counter = _COUNTER[verdict]
+            setattr(trace, counter, getattr(trace, counter) + 1)
 
         trace.considered.append(
             Candidate(
@@ -223,15 +289,20 @@ def retrieve_traced(
 
 def retrieve(
     cur, user_id: str, chat_id: str, query: str, exclude: set[str] | None = None,
-    vec: list[float] | None = None,
+    vec: list[float] | None = None, *, destination: str = "chat",
+    max_sensitivity: str | None = None,
 ) -> list[dict]:
     """Rows only. Kept so callers that do not surface a trace stay unchanged."""
-    rows, _ = retrieve_traced(cur, user_id, chat_id, query, exclude, vec)
+    rows, _ = retrieve_traced(
+        cur, user_id, chat_id, query, exclude, vec,
+        destination=destination, max_sensitivity=max_sensitivity,
+    )
     return rows
 
 
 def pinned(
-    cur, user_id: str, chat_id: str, query: str, ids: list[str]
+    cur, user_id: str, chat_id: str, query: str, ids: list[str], *,
+    destination: str = "chat", max_sensitivity: str | None = None,
 ) -> tuple[list[dict], RetrievalTrace]:
     """The user hand-picked these memories for the turn.
 
@@ -243,9 +314,20 @@ def pinned(
     """
     cur.execute(PINNED_SQL, (settings.stale_after_days, ids, user_id, chat_id))
     rows = cur.fetchall()
-    allowed = [r for r in rows if not r["block_private"]]
+    allowed: list[dict] = []
+    counts: dict[str, int] = {}
+    for r in rows:
+        v = row_verdict(
+            r, destination=destination, max_sensitivity=max_sensitivity,
+            excluded=False, kept_so_far=0,
+        )
+        if v == "injected":  # distance is 0.0 and kept_so_far 0: no relevance cut
+            allowed.append(r)
+        else:
+            counts[_COUNTER[v]] = counts.get(_COUNTER[v], 0) + 1
     trace = pinned_trace(query, allowed)
-    trace.withheld_private = len(rows) - len(allowed)
+    for k, n in counts.items():
+        setattr(trace, k, n)
     return allowed, trace
 
 

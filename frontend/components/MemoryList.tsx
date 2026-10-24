@@ -17,8 +17,8 @@
 //    refetching. Typing in a search box should not be able to produce a network
 //    error, and the whole store is 200 rows.
 
-import { useDeferredValue, useMemo, useState } from "react";
-import { CheckCheck, Filter, Search, X } from "lucide-react";
+import { useDeferredValue, useId, useMemo, useRef, useState } from "react";
+import { CheckCheck, Filter, ListChecks, Search, X } from "lucide-react";
 
 import {
   SCOPE_LABEL,
@@ -42,6 +42,7 @@ import {
 } from "@/lib/semantics";
 import { cn } from "@/lib/utils";
 import { MemoryActionBar } from "@/components/MemoryActionBar";
+import { MemoryInsights, OriginTag, ReviewItem } from "@/components/ReviewCard";
 import { Button } from "@/components/ui/button";
 import { Chip, SourceChip, SourceGlyph } from "@/components/ui/chip";
 
@@ -53,6 +54,8 @@ interface Filters {
   scope: Scope | null;
   pendingOnly: boolean;
   staleOnly: boolean;
+  /** F2: items kept without a prompt, for an end-of-session audit. */
+  autoOnly: boolean;
 }
 
 const EMPTY: Filters = {
@@ -63,6 +66,7 @@ const EMPTY: Filters = {
   scope: null,
   pendingOnly: false,
   staleOnly: false,
+  autoOnly: false,
 };
 
 export function MemoryList({
@@ -74,11 +78,12 @@ export function MemoryList({
   onSelect: (id: string | null) => void;
   onRequestDelete: (item: MemoryItem) => void;
 }) {
-  const { items, blocks, loading, error } = useMemoryStore();
+  const { items, blocks, loading, error, announce } = useMemoryStore();
   const actions = useMemoryActions();
   const [filters, setFilters] = useState<Filters>(EMPTY);
   const [selection, setSelection] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [queueMode, setQueueMode] = useState(false);
 
   // Keeps typing responsive on a long list without debouncing by hand, and
   // without the "search lags one character behind" bug that a manual debounce
@@ -95,6 +100,7 @@ export function MemoryList({
         if (filters.scope && i.scope !== filters.scope) return false;
         if (filters.pendingOnly && i.review_state !== "pending") return false;
         if (filters.staleOnly && !isStale(i)) return false;
+        if (filters.autoOnly && i.review_state !== "auto_accepted") return false;
         return true;
       }),
     [items, q, filters],
@@ -107,7 +113,8 @@ export function MemoryList({
     !!filters.sensitivity ||
     !!filters.scope ||
     filters.pendingOnly ||
-    filters.staleOnly;
+    filters.staleOnly ||
+    filters.autoOnly;
 
   const set = <K extends keyof Filters>(key: K, value: Filters[K]) =>
     setFilters((f) => ({ ...f, [key]: value }));
@@ -132,6 +139,11 @@ export function MemoryList({
       setBulkBusy(false);
     }
   };
+
+  const pendingItems = useMemo(
+    () => items.filter((i) => i.review_state === "pending"),
+    [items],
+  );
 
   const selectedPending = [...selection].filter(
     (id) => items.find((i) => i.id === id)?.review_state === "pending",
@@ -212,6 +224,12 @@ export function MemoryList({
           >
             Stale
           </FilterToggle>
+          <FilterToggle
+            pressed={filters.autoOnly}
+            onPressedChange={(v) => set("autoOnly", v)}
+          >
+            Accepted without asking
+          </FilterToggle>
         </div>
 
         {/* The result count is a live region: a filter change that returns
@@ -223,8 +241,30 @@ export function MemoryList({
         </p>
       </div>
 
+      {/* ------------------------------------------------------ review queue */}
+      {(pendingItems.length > 0 || queueMode) && (
+        <div>
+          <Button
+            variant={queueMode ? "primary" : "outline"}
+            aria-pressed={queueMode}
+            onClick={() => {
+              setQueueMode((v) => !v);
+              if (!queueMode && pendingItems.length > 0)
+                announce(`Review queue: 1 of ${pendingItems.length}`);
+            }}
+          >
+            <ListChecks className="size-4" aria-hidden="true" />
+            {queueMode
+              ? "Back to the full list"
+              : `Review one at a time (${pendingItems.length})`}
+          </Button>
+        </div>
+      )}
+
+      {queueMode && <ReviewQueue pending={pendingItems} />}
+
       {/* ----------------------------------------------------- bulk actions */}
-      {selection.size > 0 && (
+      {!queueMode && selection.size > 0 && (
         <div
           role="group"
           aria-label="Actions for selected memories"
@@ -286,7 +326,7 @@ export function MemoryList({
       )}
 
       {/* ------------------------------------------------------------ rows */}
-      {shown.length === 0 ? (
+      {queueMode ? null : shown.length === 0 ? (
         <div className="rounded-card border border-dashed border-outline-strong p-8 text-center">
           <p className="text-body-md text-ink-invert">
             {items.length === 0
@@ -389,10 +429,14 @@ function Row({
                 </Chip>
                 {item.scope === "session" && <Chip tone="alert">this chat only</Chip>}
                 {pending && <Chip tone="alert">awaiting review</Chip>}
+                {item.review_state === "auto_accepted" && (
+                  <Chip>accepted without asking</Chip>
+                )}
                 {item.needs_review && !pending && (
                   <Chip tone="danger">flagged for review</Chip>
                 )}
                 <SourceChip source={item.source_type} />
+                <OriginTag origin={item.content_origin} />
               </span>
             </summary>
 
@@ -415,6 +459,9 @@ function Row({
                 <p className="meta mb-3 text-ink-muted">
                   Last confirmed: {lastConfirmedLabel(item.last_confirmed_at)}
                 </p>
+                <div className="mb-3 empty:hidden">
+                  <MemoryInsights item={item} />
+                </div>
                 <MemoryActionBar item={item} onRequestDelete={onRequestDelete} />
               </div>
             )}
@@ -493,5 +540,112 @@ function FilterToggle({
     >
       {children}
     </button>
+  );
+}
+
+/**
+ * F11: the items awaiting review, one at a time.
+ *
+ * The item panel is a single tab stop. While that panel itself has focus,
+ * arrows move through the queue and K, D, E, T answer it (see ReviewItem); the
+ * keys are disclosed in the help text below and do nothing when focus is on a
+ * button, field or select inside the panel, so they cannot swallow typing.
+ * Every control is also a visible button, so the keys are a shortcut and never
+ * the only way. Position changes and results go through the shared live
+ * region.
+ */
+function ReviewQueue({ pending }: { pending: MemoryItem[] }) {
+  const { announce } = useMemoryStore();
+  const helpId = useId();
+  const root = useRef<HTMLDivElement>(null);
+  const [currentId, setCurrentId] = useState<string | null>(null);
+
+  const n = pending.length;
+  const found = pending.findIndex((i) => i.id === currentId);
+  const index = found >= 0 ? found : 0;
+  const item = pending[index];
+
+  const focusTarget = () =>
+    requestAnimationFrame(() =>
+      (
+        root.current?.querySelector<HTMLElement>("[data-queue-item]") ??
+        root.current?.querySelector<HTMLElement>("[data-queue-empty]")
+      )?.focus(),
+    );
+
+  const show = (list: MemoryItem[], at: number, lead = "") => {
+    setCurrentId(list[at].id);
+    announce(`${lead}${at + 1} of ${list.length}: ${list[at].content}`);
+    focusTarget();
+  };
+
+  const onNavigate = (step: 1 | -1) => show(pending, (index + step + n) % n);
+
+  // Called after an action on `id` succeeded. The store has already announced
+  // the result; this replaces it with result plus the new position so a screen
+  // reader user hears one message, not two.
+  const onResolved = (id: string) => {
+    const rest = pending.filter((i) => i.id !== id);
+    if (rest.length === 0) {
+      setCurrentId(null);
+      announce("Done. Nothing is waiting for review.");
+      focusTarget();
+      return;
+    }
+    show(rest, Math.min(index, rest.length - 1), "Done. ");
+  };
+
+  return (
+    <div ref={root} className="on-surface rounded-card bg-surface text-ink">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-outline-ink px-4 py-3">
+        <h3 className="meta text-ink-muted">Review queue</h3>
+        {item && (
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outlineInk"
+              size="sm"
+              disabled={n < 2}
+              onClick={() => onNavigate(-1)}
+            >
+              Previous
+            </Button>
+            <span className="meta tnum text-ink">
+              {index + 1} of {n}
+            </span>
+            <Button
+              variant="outlineInk"
+              size="sm"
+              disabled={n < 2}
+              onClick={() => onNavigate(1)}
+            >
+              Next
+            </Button>
+          </div>
+        )}
+      </div>
+
+      {item ? (
+        <ul>
+          <ReviewItem
+            key={item.id}
+            item={item}
+            onResolved={onResolved}
+            queue={{ onNavigate, helpId }}
+          />
+        </ul>
+      ) : (
+        <p data-queue-empty="" tabIndex={-1} className="px-4 py-6 text-body-md text-ink">
+          Nothing is waiting for review.
+        </p>
+      )}
+
+      <p id={helpId} className="border-t border-outline-ink px-4 py-3 text-body-sm text-ink-muted">
+        Keyboard, while the memory above has focus (Tab to reach it): Down or
+        Right for the next, Up or Left for the previous, K to keep, D to
+        discard, E to edit, T to keep for this chat only. These keys do nothing
+        while focus is on a button or field, and every one of them is also a
+        button.
+      </p>
+    </div>
   );
 }

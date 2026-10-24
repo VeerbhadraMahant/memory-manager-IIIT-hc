@@ -95,6 +95,9 @@ interface Turn {
   // P6: kept so "here is what I would have said without that" is shown, not claimed.
   previousReply: string | null;
   regenerating: boolean;
+  // F13: the same prompt answered with no memory injected. Shown beside, never replaces.
+  withoutMemory: string | null;
+  comparing: boolean;
   draft: VerifiedDraftT | null;
   // §4.3 tier 2: the user asked for this turn's memories to stay in the session.
   // Applied after extraction resolves, because the items do not exist until then.
@@ -118,6 +121,8 @@ const emptyTurn = (): Omit<Turn, "id" | "userText" | "ephemeral" | "fromHistory"
   retrieval: null,
   previousReply: null,
   regenerating: false,
+  withoutMemory: null,
+  comparing: false,
   draft: null,
   sessionOnlyIntent: false,
   sessionOnlyApplied: null,
@@ -163,6 +168,8 @@ function Workbench() {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState("");
   const [highStakes, setHighStakes] = useState(false);
+  // F14: someone else is using the device. Not identity resolution; the user says so.
+  const [guest, setGuest] = useState(false);
 
   // Declining the memory opt-in has to change what the app does, or the consent
   // step is theatre. It defaults every turn to off-the-record, which is the
@@ -397,7 +404,8 @@ function Workbench() {
     if (!chatId || sending) return;
 
     const turnId = crypto.randomUUID();
-    const wasEphemeral = ephemeral;
+    const wasGuest = guest && !highStakes;
+    const wasEphemeral = ephemeral || wasGuest;
     const wasHighStakes = highStakes;
     setTurns((ts) => [
       ...ts,
@@ -423,7 +431,13 @@ function Workbench() {
         const d = await api.verifiedDraft(chatId, text);
         patchTurn(turnId, { reply: "", draft: d });
       } else {
-        const res = await api.sendTurn(chatId, text, wasEphemeral, provider ?? undefined);
+        const res = await api.sendTurn(
+          chatId,
+          text,
+          wasEphemeral,
+          provider ?? undefined,
+          wasGuest,
+        );
         patchTurn(turnId, {
           reply: res.assistant_message.content,
           assistantMessageId: res.assistant_message.id,
@@ -478,6 +492,21 @@ function Workbench() {
       patchTurn(turn.id, {
         regenerating: false,
         error: e instanceof Error ? e.message : "regenerate failed",
+      });
+    }
+  };
+
+  const compareWithoutMemory = async (turn: Turn) => {
+    if (!chatId || !turn.assistantMessageId) return;
+    patchTurn(turn.id, { comparing: true });
+    try {
+      // exclude_all: no memory injected. Revokes and tombstones nothing.
+      const r = await api.regenerate(chatId, turn.assistantMessageId, [], true);
+      patchTurn(turn.id, { withoutMemory: r.regenerated, comparing: false });
+    } catch (e) {
+      patchTurn(turn.id, {
+        comparing: false,
+        error: e instanceof Error ? e.message : "comparison failed",
       });
     }
   };
@@ -636,6 +665,8 @@ function Workbench() {
                     {/* §4.4: the chips are the primary attribution surface and
                         work with no graph open at all. */}
                     <AttributionChips
+                      chatId={chatId}
+                      messageId={t.assistantMessageId}
                       used={t.used}
                       regenerating={t.regenerating}
                       highlighted={highlightTurn === t.id}
@@ -656,6 +687,43 @@ function Workbench() {
                         <Loader2 className="size-4 animate-spin" aria-hidden="true" />
                         answering again without it…
                       </p>
+                    )}
+
+                    {t.assistantMessageId && !t.draft && (
+                      <div className="mt-2">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={t.comparing || t.regenerating}
+                          onClick={() => void compareWithoutMemory(t)}
+                        >
+                          {t.comparing && (
+                            <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                          )}
+                          Compare without memory
+                        </Button>
+                        <p className="meta mt-1 text-ink-invert-muted">
+                          Answers once more with no memory in the prompt. Nothing is
+                          revoked or deleted, and your memories are unchanged.
+                        </p>
+                        <div role="status">
+                          {t.comparing && (
+                            <p className="text-body-sm text-ink-invert-muted">
+                              answering again without memory…
+                            </p>
+                          )}
+                          {t.withoutMemory !== null && (
+                            <details open className="mt-1 max-w-[85%]">
+                              <summary className="tap meta cursor-pointer rounded-input text-ink-invert-muted">
+                                what it said with no memory
+                              </summary>
+                              <p className="measure mt-1.5 whitespace-pre-wrap border-l-2 border-outline-strong pl-3 text-body-sm text-ink-invert-muted">
+                                {t.withoutMemory}
+                              </p>
+                            </details>
+                          )}
+                        </div>
+                      </div>
                     )}
 
                     {t.previousReply && (
@@ -780,6 +848,24 @@ function Workbench() {
                 card with a visible edge is both the convention and the honest
                 grouping — everything inside it applies to the message you are
                 about to send. */}
+            <div className="mb-3">
+              <label className="tap flex cursor-pointer items-center gap-2 text-body-sm text-ink-invert">
+                <input
+                  type="checkbox"
+                  checked={guest && !highStakes}
+                  disabled={highStakes || sending}
+                  onChange={(e) => setGuest(e.target.checked)}
+                  className="size-4 shrink-0"
+                />
+                Guest turn
+              </label>
+              <p className="meta text-ink-invert-muted">
+                For when someone else is using this device. This does not identify
+                anyone. Only low-sensitivity memories are used, and nothing from the
+                turn is remembered.
+              </p>
+            </div>
+
             <div className="rounded-card border border-outline-strong bg-surface p-2 focus-within:border-accent">
               <label htmlFor="composer" className="sr-only">
                 Message
@@ -917,6 +1003,7 @@ function Workbench() {
         relevance={relevance}
         chatId={chatId}
         sourceMessageId={sourceMessageId}
+        guest={guest && !highStakes}
       />
 
       {/* Rendered inside <Workbench> rather than beside it, because Settings can

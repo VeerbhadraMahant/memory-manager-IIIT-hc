@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.models import ReviewState, Scope, Sensitivity, SourceType
+from app.models import AssertionStatus, ReviewState, Scope, Sensitivity, SourceType
 
 # Principle 2, interruption budget. Auto-accept is deliberately narrow: only facts
 # the user *said*, that we are confident about, in the least sensitive tier. Everything
@@ -27,6 +27,8 @@ TRUST_BLOCK_ABOVE = 0.60
 # default. The user can promote them, which is a decision made with the item in front
 # of them rather than mid-sentence.
 SESSION_BY_DEFAULT = {Sensitivity.high, Sensitivity.special_category}
+
+THIRD_PARTY_REASON = "About someone else, who cannot see or remove this."
 
 
 @dataclass
@@ -49,6 +51,9 @@ def decide(
     proposed_block: str,
     known_blocks: set[str],
     fallback_block: str,
+    # Phase 9 contract: a fact about someone else is restricted by default. Optional so
+    # existing callers are unchanged until the policy rule lands.
+    status: AssertionStatus | None = None,
 ) -> Disposition:
     reasons: list[str] = []
 
@@ -66,6 +71,12 @@ def decide(
         reasons.append(f"{sensitivity.value.replace('_', ' ')} — this session only unless you keep it")
 
     # --- review vs. auto-accept -------------------------------------------
+    # F8: a fact about someone else is restricted at every tier. Only ever tightens.
+    if status is AssertionStatus.third_party:
+        scope = Scope.session
+        reasons.append(THIRD_PARTY_REASON)
+        return Disposition(ReviewState.pending, scope, True, block, "; ".join(reasons))
+
     if source_type is SourceType.inferred:
         reasons.append("inferred, not something you said")
         return Disposition(ReviewState.pending, scope, True, block, "; ".join(reasons))

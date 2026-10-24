@@ -117,3 +117,9 @@ gemini_quickstarts.md
 # --- deployment secrets (docker secrets files) ---
 /deploy/secrets/*
 !/deploy/secrets/README.md
+
+# --- phase 9 evaluation data: downloaded benchmarks, never committed ---
+backend/eval/data/
+
+# --- agent worktrees (local only) ---
+.claude/worktrees/

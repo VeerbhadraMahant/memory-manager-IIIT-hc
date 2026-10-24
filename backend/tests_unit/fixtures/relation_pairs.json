@@ -1,0 +1,882 @@
+[
+ {
+  "id": "p01",
+  "label": "dose down",
+  "new": {
+   "content": "Takes zorqel 10mg daily",
+   "status": "in_progress",
+   "block_name": "health"
+  },
+  "old": {
+   "content": "Takes zorqel 20mg daily",
+   "status": "in_progress",
+   "block_name": "health"
+  },
+  "distance": 0.08,
+  "expected": "updates"
+ },
+ {
+  "id": "p02",
+  "label": "dose up",
+  "new": {
+   "content": "Takes vandrel 40mg nightly",
+   "status": "in_progress",
+   "block_name": "health"
+  },
+  "old": {
+   "content": "Takes vandrel 25mg nightly",
+   "status": "in_progress",
+   "block_name": "health"
+  },
+  "distance": 0.1,
+  "expected": "updates"
+ },
+ {
+  "id": "p03",
+  "label": "dose spaced unit",
+  "new": {
+   "content": "Takes quilvax 5 mg twice daily",
+   "status": "in_progress",
+   "block_name": "health"
+  },
+  "old": {
+   "content": "Takes quilvax 10 mg twice daily",
+   "status": "in_progress",
+   "block_name": "health"
+  },
+  "distance": 0.12,
+  "expected": "updates"
+ },
+ {
+  "id": "p04",
+  "label": "year moved",
+  "new": {
+   "content": "Zorvik conference talk is in 2027",
+   "status": "planned",
+   "block_name": "work"
+  },
+  "old": {
+   "content": "Zorvik conference talk is in 2026",
+   "status": "planned",
+   "block_name": "work"
+  },
+  "distance": 0.09,
+  "expected": "updates"
+ },
+ {
+  "id": "p05",
+  "label": "month moved",
+  "new": {
+   "content": "Brennick paper deadline is in june",
+   "status": "planned",
+   "block_name": "work"
+  },
+  "old": {
+   "content": "Brennick paper deadline is in march",
+   "status": "planned",
+   "block_name": "work"
+  },
+  "distance": 0.11,
+  "expected": "updates"
+ },
+ {
+  "id": "p06",
+  "label": "count changed",
+  "new": {
+   "content": "Supervises 4 students on the Plimsk project",
+   "status": "in_progress",
+   "block_name": "work"
+  },
+  "old": {
+   "content": "Supervises 2 students on the Plimsk project",
+   "status": "in_progress",
+   "block_name": "work"
+  },
+  "distance": 0.14,
+  "expected": "updates"
+ },
+ {
+  "id": "p07",
+  "label": "rent figure",
+  "new": {
+   "content": "Pays 900 for the Tarvin flat",
+   "status": "completed",
+   "block_name": "finance"
+  },
+  "old": {
+   "content": "Pays 700 for the Tarvin flat",
+   "status": "completed",
+   "block_name": "finance"
+  },
+  "distance": 0.13,
+  "expected": "updates"
+ },
+ {
+  "id": "p08",
+  "label": "hours",
+  "new": {
+   "content": "Works 30 hours weekly at Quenlow labs",
+   "status": "in_progress",
+   "block_name": "work"
+  },
+  "old": {
+   "content": "Works 40 hours weekly at Quenlow labs",
+   "status": "in_progress",
+   "block_name": "work"
+  },
+  "distance": 0.1,
+  "expected": "updates"
+ },
+ {
+  "id": "p09",
+  "label": "date token",
+  "new": {
+   "content": "Moves to the Draxel office on 14 october",
+   "status": "planned",
+   "block_name": "work"
+  },
+  "old": {
+   "content": "Moves to the Draxel office on 3 september",
+   "status": "planned",
+   "block_name": "work"
+  },
+  "distance": 0.12,
+  "expected": "updates"
+ },
+ {
+  "id": "p10",
+  "label": "distance run",
+  "new": {
+   "content": "Trains for the Oblix marathon running 50 km weekly",
+   "status": "in_progress",
+   "block_name": "health"
+  },
+  "old": {
+   "content": "Trains for the Oblix marathon running 30 km weekly",
+   "status": "in_progress",
+   "block_name": "health"
+  },
+  "distance": 0.15,
+  "expected": "updates"
+ },
+ {
+  "id": "p11",
+  "label": "team size",
+  "new": {
+   "content": "Leads a team of 8 on Fennick tooling",
+   "status": "in_progress",
+   "block_name": "work"
+  },
+  "old": {
+   "content": "Leads a team of 5 on Fennick tooling",
+   "status": "in_progress",
+   "block_name": "work"
+  },
+  "distance": 0.1,
+  "expected": "updates"
+ },
+ {
+  "id": "p12",
+  "label": "price",
+  "new": {
+   "content": "Budget for the Mornel prototype is 5000",
+   "status": "planned",
+   "block_name": "work"
+  },
+  "old": {
+   "content": "Budget for the Mornel prototype is 3000",
+   "status": "planned",
+   "block_name": "work"
+  },
+  "distance": 0.12,
+  "expected": "updates"
+ },
+ {
+  "id": "p13",
+  "label": "writing -> submitted",
+  "new": {
+   "content": "Submitted the Brennick paper",
+   "status": "completed",
+   "block_name": "work"
+  },
+  "old": {
+   "content": "Writing the Brennick paper",
+   "status": "in_progress",
+   "block_name": "work"
+  },
+  "distance": 0.2,
+  "expected": "updates"
+ },
+ {
+  "id": "p14",
+  "label": "planned -> in progress",
+  "new": {
+   "content": "Building the Zorvik prototype",
+   "status": "in_progress",
+   "block_name": "work"
+  },
+  "old": {
+   "content": "Planning to build the Zorvik prototype",
+   "status": "planned",
+   "block_name": "work"
+  },
+  "distance": 0.18,
+  "expected": "updates"
+ },
+ {
+  "id": "p15",
+  "label": "planned -> completed",
+  "new": {
+   "content": "Finished the Plimsk survey",
+   "status": "completed",
+   "block_name": "work"
+  },
+  "old": {
+   "content": "Going to run the Plimsk survey",
+   "status": "planned",
+   "block_name": "work"
+  },
+  "distance": 0.25,
+  "expected": "updates"
+ },
+ {
+  "id": "p16",
+  "label": "in progress -> completed same words",
+  "new": {
+   "content": "Completed the Tarvin grant application",
+   "status": "completed",
+   "block_name": "work"
+  },
+  "old": {
+   "content": "Working on the Tarvin grant application",
+   "status": "in_progress",
+   "block_name": "work"
+  },
+  "distance": 0.19,
+  "expected": "updates"
+ },
+ {
+  "id": "p17",
+  "label": "thesis chapter",
+  "new": {
+   "content": "Finished the Quenlow thesis chapter",
+   "status": "completed",
+   "block_name": "work"
+  },
+  "old": {
+   "content": "Writing the Quenlow thesis chapter",
+   "status": "in_progress",
+   "block_name": "work"
+  },
+  "distance": 0.17,
+  "expected": "updates"
+ },
+ {
+  "id": "p18",
+  "label": "migration",
+  "new": {
+   "content": "Completed the Draxel database migration",
+   "status": "completed",
+   "block_name": "work"
+  },
+  "old": {
+   "content": "Working on the Draxel database migration",
+   "status": "in_progress",
+   "block_name": "work"
+  },
+  "distance": 0.16,
+  "expected": "updates"
+ },
+ {
+  "id": "p19",
+  "label": "course",
+  "new": {
+   "content": "Finished the Fennick statistics course",
+   "status": "completed",
+   "block_name": "learning"
+  },
+  "old": {
+   "content": "Taking the Fennick statistics course",
+   "status": "in_progress",
+   "block_name": "learning"
+  },
+  "distance": 0.22,
+  "expected": "updates"
+ },
+ {
+  "id": "p20",
+  "label": "in progress -> abandoned",
+  "new": {
+   "content": "Dropped the Mornel side project",
+   "status": "abandoned",
+   "block_name": "work"
+  },
+  "old": {
+   "content": "Working on the Mornel side project",
+   "status": "in_progress",
+   "block_name": "work"
+  },
+  "distance": 0.21,
+  "expected": "updates"
+ },
+ {
+  "id": "p21",
+  "label": "planned -> in progress hiring",
+  "new": {
+   "content": "Hiring a designer for the Oblix redesign",
+   "status": "in_progress",
+   "block_name": "work"
+  },
+  "old": {
+   "content": "Planning to hire a designer for the Oblix redesign",
+   "status": "planned",
+   "block_name": "work"
+  },
+  "distance": 0.2,
+  "expected": "updates"
+ },
+ {
+  "id": "p22",
+  "label": "enum-like status case",
+  "new": {
+   "content": "Submitted the Vandrel review article",
+   "status": "completed",
+   "block_name": "work"
+  },
+  "old": {
+   "content": "Writing the Vandrel review article",
+   "status": "in_progress",
+   "block_name": "work"
+  },
+  "distance": 0.18,
+  "expected": "updates"
+ },
+ {
+  "id": "p23",
+  "label": "completed vs abandoned",
+  "new": {
+   "content": "Gave up the Brennick paper",
+   "status": "abandoned",
+   "block_name": "work"
+  },
+  "old": {
+   "content": "Submitted the Brennick paper",
+   "status": "completed",
+   "block_name": "work"
+  },
+  "distance": 0.2,
+  "expected": "contradicts"
+ },
+ {
+  "id": "p24",
+  "label": "planned vs abandoned",
+  "new": {
+   "content": "Dropped the Zorvik workshop",
+   "status": "abandoned",
+   "block_name": "work"
+  },
+  "old": {
+   "content": "Planning the Zorvik workshop",
+   "status": "planned",
+   "block_name": "work"
+  },
+  "distance": 0.18,
+  "expected": "contradicts"
+ },
+ {
+  "id": "p25",
+  "label": "abandoned vs completed (new completed)",
+  "new": {
+   "content": "Finished the Plimsk dataset cleanup",
+   "status": "completed",
+   "block_name": "work"
+  },
+  "old": {
+   "content": "Abandoned the Plimsk dataset cleanup",
+   "status": "abandoned",
+   "block_name": "work"
+  },
+  "distance": 0.19,
+  "expected": "contradicts"
+ },
+ {
+  "id": "p26",
+  "label": "abandoned vs planned (new planned)",
+  "new": {
+   "content": "Going to run the Tarvin pilot study",
+   "status": "planned",
+   "block_name": "work"
+  },
+  "old": {
+   "content": "Shelved the Tarvin pilot study",
+   "status": "abandoned",
+   "block_name": "work"
+  },
+  "distance": 0.22,
+  "expected": "contradicts"
+ },
+ {
+  "id": "p27",
+  "label": "completed vs abandoned health",
+  "new": {
+   "content": "Stopped the Quilvax physio programme",
+   "status": "abandoned",
+   "block_name": "health"
+  },
+  "old": {
+   "content": "Completed the Quilvax physio programme",
+   "status": "completed",
+   "block_name": "health"
+  },
+  "distance": 0.23,
+  "expected": "contradicts"
+ },
+ {
+  "id": "p28",
+  "label": "planned vs abandoned learning",
+  "new": {
+   "content": "Gave up learning Draxel notation",
+   "status": "abandoned",
+   "block_name": "learning"
+  },
+  "old": {
+   "content": "Plans to learn Draxel notation",
+   "status": "planned",
+   "block_name": "learning"
+  },
+  "distance": 0.2,
+  "expected": "contradicts"
+ },
+ {
+  "id": "p29",
+  "label": "same text other block",
+  "new": {
+   "content": "Submitted the Brennick paper",
+   "status": "completed",
+   "block_name": "work"
+  },
+  "old": {
+   "content": "Writing the Brennick paper",
+   "status": "in_progress",
+   "block_name": "learning"
+  },
+  "distance": 0.2,
+  "expected": null
+ },
+ {
+  "id": "p30",
+  "label": "dose other block",
+  "new": {
+   "content": "Takes zorqel 10mg daily",
+   "status": "in_progress",
+   "block_name": "health"
+  },
+  "old": {
+   "content": "Takes zorqel 20mg daily",
+   "status": "in_progress",
+   "block_name": "work"
+  },
+  "distance": 0.08,
+  "expected": null
+ },
+ {
+  "id": "p31",
+  "label": "contradiction other block",
+  "new": {
+   "content": "Gave up the Zorvik workshop",
+   "status": "abandoned",
+   "block_name": "work"
+  },
+  "old": {
+   "content": "Planning the Zorvik workshop",
+   "status": "planned",
+   "block_name": "health"
+  },
+  "distance": 0.18,
+  "expected": null
+ },
+ {
+  "id": "p32",
+  "label": "far distance update",
+  "new": {
+   "content": "Submitted the Brennick paper",
+   "status": "completed",
+   "block_name": "work"
+  },
+  "old": {
+   "content": "Writing the Brennick paper",
+   "status": "in_progress",
+   "block_name": "work"
+  },
+  "distance": 0.62,
+  "expected": null
+ },
+ {
+  "id": "p33",
+  "label": "far distance dose",
+  "new": {
+   "content": "Takes zorqel 10mg daily",
+   "status": "in_progress",
+   "block_name": "health"
+  },
+  "old": {
+   "content": "Takes zorqel 20mg daily",
+   "status": "in_progress",
+   "block_name": "health"
+  },
+  "distance": 0.7,
+  "expected": null
+ },
+ {
+  "id": "p34",
+  "label": "far distance contradiction",
+  "new": {
+   "content": "Dropped the Plimsk survey",
+   "status": "abandoned",
+   "block_name": "work"
+  },
+  "old": {
+   "content": "Planning the Plimsk survey",
+   "status": "planned",
+   "block_name": "work"
+  },
+  "distance": 0.55,
+  "expected": null
+ },
+ {
+  "id": "p35",
+  "label": "unrelated work",
+  "new": {
+   "content": "Submitted the Brennick paper",
+   "status": "completed",
+   "block_name": "work"
+  },
+  "old": {
+   "content": "Writing the Fennick grant",
+   "status": "in_progress",
+   "block_name": "work"
+  },
+  "distance": 0.4,
+  "expected": null
+ },
+ {
+  "id": "p36",
+  "label": "unrelated numbers",
+  "new": {
+   "content": "Leads 8 people on Fennick tooling",
+   "status": "in_progress",
+   "block_name": "work"
+  },
+  "old": {
+   "content": "Pays 900 for the Tarvin flat",
+   "status": "in_progress",
+   "block_name": "work"
+  },
+  "distance": 0.41,
+  "expected": null
+ },
+ {
+  "id": "p37",
+  "label": "one shared common noun",
+  "new": {
+   "content": "Submitted the Corvane paper",
+   "status": "completed",
+   "block_name": "work"
+  },
+  "old": {
+   "content": "Writing the Brennick paper",
+   "status": "in_progress",
+   "block_name": "work"
+  },
+  "distance": 0.3,
+  "expected": null
+ },
+ {
+  "id": "p38",
+  "label": "unrelated health",
+  "new": {
+   "content": "Takes zorqel 10mg daily",
+   "status": "in_progress",
+   "block_name": "health"
+  },
+  "old": {
+   "content": "Sleeps 6 hours nightly",
+   "status": "in_progress",
+   "block_name": "health"
+  },
+  "distance": 0.38,
+  "expected": null
+ },
+ {
+  "id": "p39",
+  "label": "unrelated abandoned",
+  "new": {
+   "content": "Dropped the Mornel side project",
+   "status": "abandoned",
+   "block_name": "work"
+  },
+  "old": {
+   "content": "Submitted the Brennick paper",
+   "status": "completed",
+   "block_name": "work"
+  },
+  "distance": 0.36,
+  "expected": null
+ },
+ {
+  "id": "p40",
+  "label": "unrelated planned",
+  "new": {
+   "content": "Going to visit Oblix next week",
+   "status": "planned",
+   "block_name": "work"
+  },
+  "old": {
+   "content": "Working on the Draxel migration",
+   "status": "in_progress",
+   "block_name": "work"
+  },
+  "distance": 0.43,
+  "expected": null
+ },
+ {
+  "id": "p41",
+  "label": "exact duplicate",
+  "new": {
+   "content": "Takes zorqel 20mg daily",
+   "status": "in_progress",
+   "block_name": "health"
+  },
+  "old": {
+   "content": "Takes zorqel 20mg daily",
+   "status": "in_progress",
+   "block_name": "health"
+  },
+  "distance": 0.0,
+  "expected": null
+ },
+ {
+  "id": "p42",
+  "label": "same status same numbers reworded",
+  "new": {
+   "content": "Zorqel 20mg is taken daily",
+   "status": "in_progress",
+   "block_name": "health"
+  },
+  "old": {
+   "content": "Takes zorqel 20mg daily",
+   "status": "in_progress",
+   "block_name": "health"
+  },
+  "distance": 0.05,
+  "expected": null
+ },
+ {
+  "id": "p43",
+  "label": "same status no numbers",
+  "new": {
+   "content": "Writing the Brennick paper with Corvane",
+   "status": "in_progress",
+   "block_name": "work"
+  },
+  "old": {
+   "content": "Writing the Brennick paper",
+   "status": "in_progress",
+   "block_name": "work"
+  },
+  "distance": 0.1,
+  "expected": null
+ },
+ {
+  "id": "p44",
+  "label": "added detail",
+  "new": {
+   "content": "Takes zorqel daily",
+   "status": "in_progress",
+   "block_name": "health"
+  },
+  "old": {
+   "content": "Takes zorqel 20mg daily",
+   "status": "in_progress",
+   "block_name": "health"
+  },
+  "distance": 0.07,
+  "expected": null
+ },
+ {
+  "id": "p45",
+  "label": "completed twice",
+  "new": {
+   "content": "Submitted the Brennick paper to Vandrel journal",
+   "status": "completed",
+   "block_name": "work"
+  },
+  "old": {
+   "content": "Submitted the Brennick paper",
+   "status": "completed",
+   "block_name": "work"
+  },
+  "distance": 0.08,
+  "expected": null
+ },
+ {
+  "id": "p46",
+  "label": "planned twice",
+  "new": {
+   "content": "Going to build the Zorvik prototype",
+   "status": "planned",
+   "block_name": "work"
+  },
+  "old": {
+   "content": "Planning to build the Zorvik prototype",
+   "status": "planned",
+   "block_name": "work"
+  },
+  "distance": 0.06,
+  "expected": null
+ },
+ {
+  "id": "p47",
+  "label": "completed -> in progress",
+  "new": {
+   "content": "Writing the Brennick paper",
+   "status": "in_progress",
+   "block_name": "work"
+  },
+  "old": {
+   "content": "Submitted the Brennick paper",
+   "status": "completed",
+   "block_name": "work"
+  },
+  "distance": 0.2,
+  "expected": null
+ },
+ {
+  "id": "p48",
+  "label": "in progress -> planned",
+  "new": {
+   "content": "Planning to build the Zorvik prototype",
+   "status": "planned",
+   "block_name": "work"
+  },
+  "old": {
+   "content": "Building the Zorvik prototype",
+   "status": "in_progress",
+   "block_name": "work"
+  },
+  "distance": 0.18,
+  "expected": null
+ },
+ {
+  "id": "p49",
+  "label": "hypothetical vs completed",
+  "new": {
+   "content": "Might submit the Brennick paper",
+   "status": "hypothetical",
+   "block_name": "work"
+  },
+  "old": {
+   "content": "Submitted the Brennick paper",
+   "status": "completed",
+   "block_name": "work"
+  },
+  "distance": 0.17,
+  "expected": null
+ },
+ {
+  "id": "p50",
+  "label": "third party vs in progress",
+  "new": {
+   "content": "Corvane is writing the Brennick paper",
+   "status": "third_party",
+   "block_name": "work"
+  },
+  "old": {
+   "content": "Writing the Brennick paper",
+   "status": "in_progress",
+   "block_name": "work"
+  },
+  "distance": 0.15,
+  "expected": null
+ },
+ {
+  "id": "p51",
+  "label": "hypothetical vs planned",
+  "new": {
+   "content": "Might build the Zorvik prototype",
+   "status": "hypothetical",
+   "block_name": "work"
+  },
+  "old": {
+   "content": "Planning to build the Zorvik prototype",
+   "status": "planned",
+   "block_name": "work"
+  },
+  "distance": 0.14,
+  "expected": null
+ },
+ {
+  "id": "p52",
+  "label": "LIMIT paraphrase no overlap",
+  "new": {
+   "content": "Handed in the manuscript",
+   "status": "completed",
+   "block_name": "work"
+  },
+  "old": {
+   "content": "Writing the Brennick paper",
+   "status": "in_progress",
+   "block_name": "work"
+  },
+  "distance": 0.35,
+  "expected": "updates"
+ },
+ {
+  "id": "p53",
+  "label": "LIMIT word-number change",
+  "new": {
+   "content": "Takes zorqel two tablets daily",
+   "status": "in_progress",
+   "block_name": "health"
+  },
+  "old": {
+   "content": "Takes zorqel one tablet daily",
+   "status": "in_progress",
+   "block_name": "health"
+  },
+  "distance": 0.09,
+  "expected": "updates"
+ },
+ {
+  "id": "p54",
+  "label": "LIMIT negated update",
+  "new": {
+   "content": "No longer working at Quenlow labs",
+   "status": "in_progress",
+   "block_name": "work"
+  },
+  "old": {
+   "content": "Works at Quenlow labs",
+   "status": "in_progress",
+   "block_name": "work"
+  },
+  "distance": 0.15,
+  "expected": "contradicts"
+ },
+ {
+  "id": "p55",
+  "label": "LIMIT different instances",
+  "new": {
+   "content": "Takes zorqel 10mg in the morning",
+   "status": "in_progress",
+   "block_name": "health"
+  },
+  "old": {
+   "content": "Takes zorqel 20mg in the evening",
+   "status": "in_progress",
+   "block_name": "health"
+  },
+  "distance": 0.12,
+  "expected": null
+ }
+]
