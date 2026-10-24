@@ -23,6 +23,13 @@ export type Sensitivity = "low" | "medium" | "high" | "special_category";
 export type Scope = "session" | "persistent";
 export type ReviewState = "pending" | "accepted" | "auto_accepted" | "rejected";
 export type ExtractionStatus = "skipped" | "pending" | "done" | "failed";
+/** Migration 009: places retrieval feeds a model. A block lists the ones it never reaches. */
+export type FlowDestination = "chat" | "draft" | "summary" | "relevance";
+/** Migration 011. Only confirmed edges count for cascade and retrieval. */
+export type EdgeState = "proposed" | "confirmed" | "rejected";
+export type EdgeOrigin = "heuristic" | "extraction" | "user";
+/** Migration 012: who worded a memory. null = recorded before tracking existed. */
+export type ContentOrigin = "model_worded" | "user_edited" | "user_written";
 
 export interface Block {
   id: string;
@@ -32,6 +39,8 @@ export interface Block {
   is_fallback: boolean;
   /** Private blocks are excluded by retrieval, so the model never receives them. */
   private: boolean;
+  /** Destinations this block never reaches. `private` still wins over this. */
+  denied_destinations: FlowDestination[];
 }
 
 export interface MemoryItem {
@@ -53,6 +62,9 @@ export interface MemoryItem {
   created_at: string;
   last_confirmed_at: string | null;
   deleted_at: string | null;
+  content_origin: ContentOrigin | null;
+  /** For a fact about someone else: the same fact with identifying detail removed. */
+  abstracted: string | null;
 }
 
 export interface Message {
@@ -64,6 +76,9 @@ export interface Message {
   created_at: string;
   extraction_status: ExtractionStatus;
   extraction_error: string | null;
+  /** Who actually wrote an assistant message. null for user messages and old rows. */
+  provider: string | null;
+  model: string | null;
 }
 
 export interface UsedMemory {
@@ -83,7 +98,15 @@ export interface RetrievalCandidate {
   content: string;
   block_name: string | null;
   distance: number;
-  verdict: "injected" | "too_distant" | "private_block" | "revoked" | "pinned";
+  verdict:
+    | "injected"
+    | "too_distant"
+    | "private_block"
+    | "revoked"
+    | "pinned"
+    | "context_denied"
+    | "superseded"
+    | "guest_withheld";
 }
 
 /** How the memories for a turn were chosen. Real numbers from retrieval.py — the
@@ -100,6 +123,12 @@ export interface RetrievalTrace {
   not_embedded: number;
   max_distance: number;
   embedding_failed: boolean;
+  /** Withheld by a block's flow rule for this destination. */
+  withheld_by_context: number;
+  /** Replaced by a newer fact through a confirmed `updates` edge. */
+  superseded_count: number;
+  /** Above the sensitivity cap of a guest turn. */
+  withheld_by_guest: number;
 }
 
 export interface TurnResponse {
@@ -224,6 +253,7 @@ export interface GraphNode {
   confidence: number;
   last_confirmed_at: string | null;
   deleted_at: string | null;
+  content_origin: ContentOrigin | null;
 }
 
 /** `from` is the source, `to` is derived from it. Inverting this inverts the
@@ -232,6 +262,53 @@ export interface GraphEdge {
   from_item_id: string;
   to_item_id: string;
   relation: EdgeRelation;
+  id: string | null;
+  state: EdgeState;
+  origin: EdgeOrigin | null;
+}
+
+/** A proposed edge awaiting the user's decision. Both contents are included so the
+ *  review card can say "this looks like it updates X" without a second fetch. */
+export interface EdgeProposal {
+  id: string;
+  from_item_id: string;
+  to_item_id: string;
+  from_content: string;
+  to_content: string;
+  relation: EdgeRelation;
+  origin: EdgeOrigin | null;
+  created_at: string;
+}
+
+export interface MemoryInfluence {
+  memory_item_id: string;
+  /** Distance without this memory, minus the noise floor. null when the call failed. */
+  score: number | null;
+  verdict: "changed_answer" | "no_measurable_effect" | "within_noise" | "failed";
+}
+
+/** Measured by regenerating k + repeats times on the same model. Not a causal proof. */
+export interface InfluenceResponse {
+  message_id: string;
+  provider: string | null;
+  model: string | null;
+  noise_floor: number;
+  calls_made: number;
+  results: MemoryInfluence[];
+}
+
+export interface DigestEntry {
+  memory_item_id: string;
+  content: string;
+  block_name: string | null;
+  change: "created" | "auto_accepted" | "edited" | "stale" | "flagged_for_review" | "deleted";
+  at: string;
+}
+
+export interface DigestResponse {
+  since: string;
+  entries: DigestEntry[];
+  counts: Record<string, number>;
 }
 
 export interface CascadePreview {
@@ -360,6 +437,13 @@ export const api = {
       body: JSON.stringify({ private: isPrivate }),
     }),
 
+  /** Replace a block's deny-list of destinations (migration 009). */
+  setBlockFlows: (name: string, deniedDestinations: FlowDestination[]) =>
+    req<Block>(`/memory/blocks/${encodeURIComponent(name)}/flows`, {
+      method: "PATCH",
+      body: JSON.stringify({ denied_destinations: deniedDestinations }),
+    }),
+
   items: (params: Record<string, string> = {}) => {
     const qs = new URLSearchParams(params).toString();
     return req<MemoryItem[]>(`/memory/items${qs ? `?${qs}` : ""}`);
@@ -407,11 +491,13 @@ export const api = {
     content: string,
     sessionEphemeral: boolean,
     provider?: string,
+    guest = false,
   ) =>
     post<TurnResponse>(`/chats/${chatId}/message`, {
       content,
       session_ephemeral: sessionEphemeral,
       provider: provider || undefined,
+      guest,
     }),
 
   candidates: (chatId: string, messageId: string) =>
@@ -419,11 +505,21 @@ export const api = {
       `/chats/${chatId}/candidates?message_id=${messageId}`,
     ),
 
-  regenerate: (chatId: string, messageId: string, revokeItemIds: string[]) =>
+  regenerate: (
+    chatId: string,
+    messageId: string,
+    revokeItemIds: string[],
+    excludeAll = false,
+  ) =>
     post<RegenerateResponse>(`/chats/${chatId}/regenerate`, {
       message_id: messageId,
       revoke_item_ids: revokeItemIds,
+      exclude_all: excludeAll,
     }),
+
+  /** On demand only: costs k + repeats model calls for k injected memories. */
+  measureInfluence: (chatId: string, messageId: string, repeats = 2) =>
+    post<InfluenceResponse>(`/chats/${chatId}/messages/${messageId}/influence`, { repeats }),
 
   verifiedDraft: (chatId: string, instruction: string) =>
     post<VerifiedDraft>(`/chats/${chatId}/verified-draft`, { instruction }),
@@ -473,6 +569,15 @@ export const api = {
   pruneSubnodes: (itemId: string) => post<PruneResponse>(`/memory/items/${itemId}/prune`),
   getNodeSummary: (itemId: string) => req<NodeSummaryResponse>(`/memory/items/${itemId}/summary`),
   computeRelevance: (prompt: string) => post<RelevanceResponse>("/memory/relevance", { prompt }),
+
+  edgeProposals: () => req<EdgeProposal[]>("/memory/edges?state=proposed"),
+  decideEdge: (edgeId: string, state: "confirmed" | "rejected") =>
+    req<GraphEdge>(`/memory/edges/${edgeId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ state }),
+    }),
+  digest: (since: string) =>
+    req<DigestResponse>(`/memory/digest?since=${encodeURIComponent(since)}`),
 };
 
 // ---------------------------------------------------------------- labels
