@@ -82,7 +82,16 @@ def _clean(db):
     # Keep the demo user and its blocks; drop everything else (and reset privacy flags).
     db.execute("delete from blocks where user_id <> '00000000-0000-0000-0000-000000000001'")
     db.execute("delete from users where id <> '00000000-0000-0000-0000-000000000001'")
-    db.execute("update blocks set private = false")
+    # Flow rules too, back to migration 009's defaults: a test that denies a destination
+    # on the demo user's block must not leak that rule into the next test.
+    from app.services.users import DRAFT_DENIED_BLOCKS  # noqa: PLC0415
+
+    db.execute(
+        """update blocks set private = false,
+             denied_destinations = case when name = any(%s) then '{draft}'::flow_destination[]
+                                        else '{}'::flow_destination[] end""",
+        (sorted(DRAFT_DENIED_BLOCKS),),
+    )
     from app import auth, ratelimit  # noqa: PLC0415
 
     auth._known.clear()
