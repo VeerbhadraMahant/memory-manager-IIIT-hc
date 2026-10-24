@@ -38,6 +38,7 @@ import {
   type AssertionStatus,
   type Block,
   type CascadePreview,
+  type EdgeProposal,
   type MemoryItem,
   type ProvenanceGraph,
   type Scope,
@@ -69,11 +70,16 @@ export interface MemoryActions {
   previewDeletion: (id: string) => Promise<ProvenanceGraph>;
   /** Tombstone + cascade. Returns what actually happened. */
   remove: (id: string) => Promise<CascadePreview>;
+  /** F4: answer a proposed link. "confirmed" on an updates edge supersedes the
+   *  older fact in retrieval; "rejected" keeps both and never asks again. */
+  decideEdge: (edgeId: string, state: "confirmed" | "rejected") => Promise<void>;
 }
 
 interface MemoryStore {
   items: MemoryItem[];
   graph: ProvenanceGraph | null;
+  /** F4: links the system suggested and the user has not decided on. */
+  proposals: EdgeProposal[];
   blocks: string[];
   loading: boolean;
   error: string | null;
@@ -92,6 +98,7 @@ const Ctx = createContext<MemoryStore | null>(null);
 export function MemoryProvider({ children }: { children: React.ReactNode }) {
   const [items, setItems] = useState<MemoryItem[]>([]);
   const [graph, setGraph] = useState<ProvenanceGraph | null>(null);
+  const [proposals, setProposals] = useState<EdgeProposal[]>([]);
   const [blocks, setBlocks] = useState<string[]>(FALLBACK_BLOCKS);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -109,15 +116,18 @@ export function MemoryProvider({ children }: { children: React.ReactNode }) {
 
   const refresh = useCallback(async () => {
     try {
-      const [list, g] = await Promise.all([
+      const [list, g, props] = await Promise.all([
         api.items({ limit: "200" }),
         // The graph is fetched alongside the list, not on view switch: toggling
         // between coequal views must not cost a round trip, or one of them
         // starts feeling like the secondary one.
         api.graph().catch(() => null),
+        // Proposals are optional context: a failure must not blank the list.
+        api.edgeProposals().catch(() => [] as EdgeProposal[]),
       ]);
       setItems(list);
       setGraph(g);
+      setProposals(props);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "could not load memory");
@@ -229,6 +239,18 @@ export function MemoryProvider({ children }: { children: React.ReactNode }) {
         );
         return cascade;
       },
+
+      decideEdge: async (edgeId, state) => {
+        await api.decideEdge(edgeId, state);
+        // Confirming can supersede an item and rejecting changes the graph, so
+        // refetch both rather than guess which rows moved.
+        await refresh();
+        announce(
+          state === "confirmed"
+            ? "Link confirmed."
+            : "Suggested link dismissed. Both memories stay as they are.",
+        );
+      },
     };
   }, [withBusy, patch, announce, refresh]);
 
@@ -236,6 +258,7 @@ export function MemoryProvider({ children }: { children: React.ReactNode }) {
     () => ({
       items,
       graph,
+      proposals,
       blocks,
       loading,
       error,
@@ -245,7 +268,7 @@ export function MemoryProvider({ children }: { children: React.ReactNode }) {
       announcement,
       announce,
     }),
-    [items, graph, blocks, loading, error, busy, refresh, actions, announcement, announce],
+    [items, graph, proposals, blocks, loading, error, busy, refresh, actions, announcement, announce],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

@@ -132,7 +132,16 @@ function PreviewBody({
               ? "Working out what else this touches…"
               : total === 0
                 ? "Nothing else was built on this one. Deleting it affects only itself."
-                : `Deleting this affects ${total} other ${total === 1 ? "memory" : "memories"}.`}
+                : "Deleting this affects " +
+                  `${total} other ${total === 1 ? "memory" : "memories"}: ` +
+                  [
+                    dies.length > 0 && `${dies.length} deleted with it`,
+                    flagged.length > 0 && `${flagged.length} flagged for you to check`,
+                    related.length > 0 && `${related.length} left with a one-sided link`,
+                  ]
+                    .filter(Boolean)
+                    .join(", ") +
+                  "."}
           </DialogDescription>
         </DialogHeader>
 
@@ -196,9 +205,11 @@ function PreviewBody({
               )}
 
               <p className="border-t border-outline-ink pt-3 text-body-sm text-ink-muted">
-                Deleted memories are tombstoned, not erased: they stop being
-                retrievable and their embedding is dropped, and the audit record
-                that they existed stays.
+                Only confirmed links are counted here. Suggested links you have
+                not decided on do not pull anything else in. Deleted memories are
+                tombstoned, not erased: they stop being retrievable and their
+                embedding is dropped, and the audit record that they existed
+                stays.
               </p>
             </div>
           )}

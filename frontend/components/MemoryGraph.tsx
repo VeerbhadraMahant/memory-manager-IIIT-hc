@@ -60,6 +60,7 @@ import {
   nodeBox,
 } from "@/lib/graph-layout";
 import {
+  ORIGIN,
   RELATION_LABEL,
   STATUS_CHIP,
   blockLabel,
@@ -72,6 +73,7 @@ import {
   RootNode,
   type MemoryNodeData,
 } from "@/components/MemoryNode";
+import { MemoryInsights, OriginTag } from "@/components/ReviewCard";
 import { Button } from "@/components/ui/button";
 import { Chip } from "@/components/ui/chip";
 import { cn } from "@/lib/utils";
@@ -139,7 +141,21 @@ function GraphInner({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   const source = useMemo(() => graph?.nodes ?? [], [graph]);
-  const rawEdges = useMemo(() => graph?.edges ?? [], [graph]);
+  // Rejected links are kept by the server so they are not proposed again; they
+  // are never drawn.
+  const rawEdges = useMemo(
+    () => (graph?.edges ?? []).filter((e) => e.state !== "rejected"),
+    [graph],
+  );
+  const proposedKeys = useMemo(
+    () =>
+      new Set(
+        rawEdges
+          .filter((e) => e.state === "proposed")
+          .map((e) => `${e.from_item_id}|${e.to_item_id}|${e.relation}`),
+      ),
+    [rawEdges],
+  );
   const capped = source.length > NODE_CAP;
   const visible = useMemo(() => source.slice(0, NODE_CAP), [source]);
 
@@ -312,6 +328,7 @@ function GraphInner({
         const dying = doomed.has(e.source) || doomed.has(e.target);
         const isHighlighted =
           !!searchMatches && (searchMatches.has(e.source) || searchMatches.has(e.target));
+        const proposed = proposedKeys.has(`${e.source}|${e.target}|${e.relation}`);
         const stroke = isHighlighted
           ? "var(--stated)"
           : dying
@@ -322,9 +339,11 @@ function GraphInner({
           id: e.id,
           source: e.source,
           target: e.target,
+          // A proposed link is marked in words as well as by its dotted line, so
+          // it is never told apart by line style or colour alone.
           label:
             e.relation && e.relation !== "contains" && e.relation !== "item"
-              ? RELATION_LABEL[e.relation] ?? e.relation
+              ? `${RELATION_LABEL[e.relation] ?? e.relation}${proposed ? " (proposed)" : ""}`
               : undefined,
           labelShowBg: true,
           labelBgStyle: { fill: "var(--surface-sunken)" },
@@ -338,11 +357,11 @@ function GraphInner({
           style: {
             stroke,
             strokeWidth: isHighlighted ? 2.5 : dying ? 2 : 1.5,
-            strokeDasharray: e.provisional ? "5 5" : undefined,
+            strokeDasharray: proposed ? "2 6" : e.provisional ? "5 5" : undefined,
           },
         };
       }),
-    [layout.edges, doomed, searchMatches, reduced],
+    [layout.edges, doomed, searchMatches, reduced, proposedKeys],
   );
 
   const [pane, setPane] = useState({ w: 0, h: 0 });
@@ -555,6 +574,8 @@ function GraphInner({
 
               <p className="measure text-body-md text-ink-invert">{selected.content}</p>
               <MemorySummary item={selected} onLight={false} />
+              <OriginTag origin={selected.content_origin} />
+              <MemoryInsights item={selected} onLight={false} />
 
               <div className="border-t border-outline pt-3">
                 <MemoryActionBar
@@ -621,6 +642,9 @@ function GraphInner({
               <Fact label="Source" value={inspectorNode.source_type} />
               <Fact label="Status" value={STATUS_CHIP[inspectorNode.status]} />
               <Fact label="Sensitivity" value={inspectorNode.sensitivity} />
+              {inspectorNode.content_origin && (
+                <Fact label="Wording" value={ORIGIN[inspectorNode.content_origin].label} />
+              )}
               <Fact
                 label="Confidence"
                 value={`${Math.round(inspectorNode.confidence * 100)}%`}
@@ -750,13 +774,21 @@ function NodeConnections({
 }) {
   const byId = new Map((graph?.nodes ?? []).map((n) => [n.id, n]));
   const links = (graph?.edges ?? [])
+    .filter((e) => e.state !== "rejected")
     .filter((e) => e.from_item_id === node.id || e.to_item_id === node.id)
     .map((e) => {
       const outgoing = e.from_item_id === node.id;
       const other = byId.get(outgoing ? e.to_item_id : e.from_item_id);
-      return other ? { other, relation: e.relation, outgoing } : null;
+      return other
+        ? { other, relation: e.relation, outgoing, proposed: e.state === "proposed" }
+        : null;
     })
-    .filter(Boolean) as { other: GraphNode; relation: string; outgoing: boolean }[];
+    .filter(Boolean) as {
+    other: GraphNode;
+    relation: string;
+    outgoing: boolean;
+    proposed: boolean;
+  }[];
 
   if (links.length === 0) {
     return (
@@ -772,16 +804,17 @@ function NodeConnections({
         Connected to <span className="tnum">{links.length}</span>
       </h4>
       <ul className="mt-1.5 space-y-1">
-        {links.map(({ other, relation, outgoing }) => (
+        {links.map(({ other, relation, outgoing, proposed }) => (
           <li key={`${other.id}-${relation}-${outgoing}`}>
             <button
               type="button"
               onClick={() => onSelect(other.id)}
               className="w-full rounded-input px-2 py-2 text-left text-body-sm text-ink-invert hover:bg-sunken"
-              aria-label={`${outgoing ? "This" : other.content} ${RELATION_LABEL[relation] ?? relation} ${outgoing ? other.content : "this"}. ${describeMemory(other)}`}
+              aria-label={`${outgoing ? "This" : other.content} ${RELATION_LABEL[relation] ?? relation} ${outgoing ? other.content : "this"}${proposed ? " (proposed, not yet decided)" : ""}. ${describeMemory(other)}`}
             >
               <span className="meta mr-2 text-ink-invert-muted">
                 {outgoing ? "→" : "←"} {RELATION_LABEL[relation] ?? relation}
+                {proposed && " (proposed)"}
               </span>
               {other.content}
             </button>
