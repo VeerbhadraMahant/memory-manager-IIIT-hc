@@ -187,6 +187,9 @@ export function MemoryTimeline({
     (c) => c.verdict === "injected" || c.verdict === "pinned",
   ) ?? [];
   const withheld = retrieval?.considered.filter((c) => c.verdict === "private_block") ?? [];
+  const contextDenied = retrieval?.considered.filter((c) => c.verdict === "context_denied") ?? [];
+  const superseded = retrieval?.considered.filter((c) => c.verdict === "superseded") ?? [];
+  const guestWithheld = retrieval?.considered.filter((c) => c.verdict === "guest_withheld") ?? [];
   const nearMisses = retrieval?.considered.filter((c) => c.verdict === "too_distant") ?? [];
 
   // ---- extraction ----------------------------------------------------------
@@ -224,6 +227,10 @@ export function MemoryTimeline({
               ? "memory was not searched — the embedding call failed"
               : `${injected.length} of ${retrieval.considered.length} used${
                   withheld.length ? ` · ${withheld.length} withheld` : ""
+                }${
+                  retrieval.withheld_by_context ? ` · ${retrieval.withheld_by_context} held back by a block rule` : ""
+                }${retrieval.superseded_count ? ` · ${retrieval.superseded_count} replaced by newer` : ""}${
+                  retrieval.withheld_by_guest ? ` · ${retrieval.withheld_by_guest} held back for a guest` : ""
                 }`
             : inFlight
               ? "searching memory…"
@@ -270,6 +277,66 @@ export function MemoryTimeline({
               </>
             )}
 
+            {contextDenied.length > 0 && (
+              <>
+                <p className="meta mt-1 text-danger-on-bg">
+                  withheld from the prompt by a block rule
+                </p>
+                <ul className="space-y-0.5">
+                  {contextDenied.map((c) => (
+                    <Arrow
+                      key={c.id}
+                      dim
+                      from={blockLabel(c.block_name ?? "unclassified")}
+                      to={c.content}
+                      trailing={
+                        <span className="meta w-full text-ink-invert-muted">
+                          withheld from this draft or reply by your{" "}
+                          {blockLabel(c.block_name ?? "unclassified")} rule
+                        </span>
+                      }
+                    />
+                  ))}
+                </ul>
+              </>
+            )}
+
+            {superseded.length > 0 && (
+              <>
+                <p className="meta mt-1 text-ink-invert-muted">
+                  not used — you confirmed a newer fact replaces it
+                </p>
+                <ul className="space-y-0.5">
+                  {superseded.map((c) => (
+                    <Arrow
+                      key={c.id}
+                      dim
+                      from={blockLabel(c.block_name ?? "unclassified")}
+                      to={c.content}
+                    />
+                  ))}
+                </ul>
+              </>
+            )}
+
+            {guestWithheld.length > 0 && (
+              <>
+                <p className="meta mt-1 text-ink-invert-muted">
+                  not used — guest turn only uses low-sensitivity memories
+                </p>
+                <ul className="space-y-0.5">
+                  {guestWithheld.map((c) => (
+                    <Arrow
+                      key={c.id}
+                      dim
+                      from={blockLabel(c.block_name ?? "unclassified")}
+                      to={c.content}
+                    />
+                  ))}
+                </ul>
+              </>
+            )}
+
             {nearMisses.length > 0 && (
               <>
                 <p className="meta mt-1 text-ink-invert-muted">
@@ -299,7 +366,11 @@ export function MemoryTimeline({
                 reachable from here
               </p>
             )}
-            {injected.length === 0 && withheld.length === 0 && (
+            {injected.length === 0 &&
+              withheld.length === 0 &&
+              contextDenied.length === 0 &&
+              superseded.length === 0 &&
+              guestWithheld.length === 0 && (
               <p className="text-body-sm text-ink-invert-muted">
                 Nothing was close enough to use. This answer drew on no memory.
               </p>
