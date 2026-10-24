@@ -40,13 +40,10 @@ from app.models import (
 )
 from app.ratelimit import general_limit, llm_limit, spend_llm
 from app.services import llm
+from app.services.policy import THIRD_PARTY_REASON
 from app.services.retrieval import MAX_DISTANCE, embed_query
 
 log = logging.getLogger(__name__)
-
-# shortcut: same text as policy.THIRD_PARTY_REASON (PR #6), which this branch does not
-# have yet; import it from app.services.policy once both are merged.
-THIRD_PARTY_REASON = "About someone else, who cannot see or remove this."
 
 router = APIRouter(prefix="/memory", tags=["memory"], dependencies=[Depends(general_limit)])
 
