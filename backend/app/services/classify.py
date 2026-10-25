@@ -235,6 +235,20 @@ _INCOMPATIBLE = (
     frozenset({"completed", "abandoned"}),
     frozenset({"planned", "abandoned"}),
 )
+# Number words compare as digits, so "two" and "2" are the same value.
+_NUMBER_WORDS = {
+    w: str(i)
+    for i, w in enumerate("zero one two three four five six seven eight nine ten eleven twelve".split())
+} | {"once": "1x", "twice": "2x", "thrice": "3x"}
+# Cessation only. "never" is left out: "never misses X" is a habit, not a stop.
+_NEGATION = re.compile(r"\bno longer\b|\bnot\b|n't\b|\bstopped\b|\bquit\b|\bgave up\b|\banymore\b")
+# When a dose or routine happens. Two items naming different ones are two instances
+# ("10mg in the morning", "20mg in the evening"), not an update of one.
+_INSTANCE = {
+    "morning": "morning", "breakfast": "morning", "afternoon": "afternoon",
+    "lunch": "afternoon", "evening": "evening", "dinner": "evening", "night": "night",
+    "nightly": "night", "bedtime": "night", "weekend": "weekend", "weekday": "weekday",
+} | {d: d for d in "monday tuesday wednesday thursday friday saturday sunday".split()}
 
 
 def _tokens(text: str) -> list[str]:
@@ -247,11 +261,30 @@ def _status(item: dict) -> str | None:
 
 
 def _is_numeric(tok: str) -> bool:
-    # "20mg", "2024", "3x", and month names all count as dose/number/date tokens.
-    return tok in _MONTHS or any(ch.isdigit() for ch in tok)
+    # "20mg", "2024", "3x", month names and number words all count as dose/number/date tokens.
+    return tok in _MONTHS or tok in _NUMBER_WORDS or any(ch.isdigit() for ch in tok)
+
+
+def _numbers(text: str) -> set[str]:
+    return {_NUMBER_WORDS.get(t, t) for t in _tokens(text) if _is_numeric(t)}
+
+
+def _negated(text: str) -> bool:
+    return bool(_NEGATION.search(text.lower()))
+
+
+def _instances(text: str) -> set[str]:
+    found = set()
+    for t in _tokens(text):
+        t = t[:-1] if t.endswith("s") and t[:-1] in _INSTANCE else t  # "saturdays"
+        if t in _INSTANCE:
+            found.add(_INSTANCE[t])
+    return found
 
 
 def _content_words(text: str) -> set[str]:
+    # Negation words are not the subject: "no longer works at X" is about X.
+    text = _NEGATION.sub(" ", text.lower())
     return {t for t in _tokens(text) if t not in _STOPWORDS and not _is_numeric(t)}
 
 
@@ -281,6 +314,9 @@ def propose_relation(
         return None
     if not _same_subject(new["content"], old["content"]):
         return None
+    ni, oi = _instances(new["content"]), _instances(old["content"])
+    if ni and oi and not ni & oi:
+        return None
 
     ns, os_ = _status(new), _status(old)
     if ns and os_ and ns != os_:
@@ -292,10 +328,13 @@ def propose_relation(
             return "updates", f"status moved from {os_.replace('_', ' ')} to {ns.replace('_', ' ')}"
         return None
 
-    nn = {t for t in _tokens(new["content"]) if _is_numeric(t)}
-    on = {t for t in _tokens(old["content"]) if _is_numeric(t)}
+    if _negated(new["content"]) != _negated(old["content"]):
+        return "contradicts", "one says this holds and the other says it stopped"
+
+    nn, on = _numbers(new["content"]), _numbers(old["content"])
     if nn and on and nn != on:
-        return "updates", f"{', '.join(sorted(on))} became {', '.join(sorted(nn))}"
+        # Only what changed: "5 mg twice daily" vs "10 mg twice daily" reads "10 became 5".
+        return "updates", f"{', '.join(sorted(on - nn))} became {', '.join(sorted(nn - on))}"
     return None
 
 
