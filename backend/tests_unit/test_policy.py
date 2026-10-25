@@ -108,6 +108,60 @@ def test_heldout_and_markdown():
     assert "informed by 12 items" in md and "validated" not in md.replace("not validation", "")
 
 
+def test_consistency_confidence_is_share_of_agreeing_samples():
+    assert cal.consistency_confidence("completed", ["completed", "in_progress", "completed", "completed"]) == 0.75
+    assert cal.consistency_confidence("planned", ["completed"] * 3) == 0.0
+    with pytest.raises(ValueError):
+        cal.consistency_confidence("planned", [])
+
+
+class _MockSampler:
+    """Stands in for re-running the extraction model: agrees with the stored status for
+    items the user kept, disagrees for items the user changed."""
+
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, row, k):
+        self.calls.append((row["id"], k))
+        if cal.outcome(row) != "changed":
+            return [row["status"]] * k
+        other = next(s.value for s in AssertionStatus if s.value != row["status"])
+        return [other] * k
+
+
+def test_with_consistency_replaces_confidence_and_keeps_the_original():
+    sampler = _MockSampler()
+    rows = [{**ROWS[0]}, {**ROWS[1]}, {"id": "no-status", "confidence": 0.9, "status": None}]
+    out = cal.with_consistency(rows, sampler, 3)
+    assert [r["id"] for r in out] == ["item-1", "item-2"]  # no status, nothing to agree with
+    assert out[0]["confidence"] == 1.0 and out[0]["verbalized_confidence"] == 0.95
+    assert out[1]["confidence"] == 0.0  # item-2 was edited by the user
+    assert rows[0]["confidence"] == 0.95  # input rows untouched
+    assert sampler.calls == [("item-1", 3), ("item-2", 3)]
+
+
+def test_with_consistency_rejects_a_short_sampler():
+    with pytest.raises(ValueError, match="expected 5"):
+        cal.with_consistency([ROWS[0]], lambda row, k: ["completed"] * (k - 1), 5)
+
+
+def test_analyse_with_sampler_reports_consistency_beside_verbalized():
+    res = cal.analyse(ROWS, sample=_MockSampler(), k=4)
+    c = res["consistency"]
+    assert c["samples_per_item"] == 4
+    assert c["informed_by_items"] == sum(1 for r in ROWS if r.get("status"))
+    # The mock agrees exactly with what users did, so every decided item lands at 0 or 1
+    # with matching agreement: calibration error is zero, against the fixture's verbalized ECE.
+    assert c["ece"] == pytest.approx(0.0)
+    assert res["ece"] > 0.1
+    assert "Sampling-consistency confidence (4 samples" in cal.to_markdown(res)
+
+
+def test_analyse_without_sampler_has_no_consistency_section():
+    assert "consistency" not in cal.analyse(ROWS)
+
+
 def test_simulator_counts():
     r = sim.simulate(CANDS)
     assert (r["turns"], r["candidates"], r["prompts_budget_on"]) == (3, 6, 4)
