@@ -12,6 +12,12 @@ from app.services.classify import RELATION_MAX_DISTANCE, influence, propose_rela
 from app.services.extraction import resolve_premises
 
 PAIRS = json.loads((Path(__file__).parent / "fixtures" / "relation_pairs.json").read_text("utf-8"))
+# Written after the rules existed, aimed at the three known misses (number words,
+# negation, dose time of day) plus guards against over-firing. Scored separately so the
+# original 55-pair number stays comparable; these are not a held-out set.
+AFTER_RULES = json.loads(
+    (Path(__file__).parent / "fixtures" / "relation_pairs_after_rules.json").read_text("utf-8")
+)
 
 
 # ------------------------------------------------------------------ influence
@@ -55,9 +61,10 @@ def test_fixture_size():
     assert len(PAIRS) >= 50
 
 
-def test_relation_fixture_precision_recall_f1():
+def _score(pairs: list[dict], name: str) -> tuple[float, float, list[str]]:
     tp = fp = fn = 0
-    for p in PAIRS:
+    wrong = []
+    for p in pairs:
         got = propose_relation(p["new"], p["old"], p["distance"])
         got = got[0] if got else None
         if got and got == p["expected"]:
@@ -68,11 +75,26 @@ def test_relation_fixture_precision_recall_f1():
                 fn += 1  # proposed the wrong relation: also a miss
         elif p["expected"]:
             fn += 1
+        if got != p["expected"]:
+            wrong.append(f"{p['id']} [{p['label']}] expected={p['expected']} got={got}")
     precision = tp / (tp + fp) if tp + fp else 0.0
     recall = tp / (tp + fn) if tp + fn else 0.0
     f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
-    print(f"relation detector: n={len(PAIRS)} tp={tp} fp={fp} fn={fn} "
+    print(f"relation detector ({name}): n={len(pairs)} tp={tp} fp={fp} fn={fn} "
           f"P={precision:.3f} R={recall:.3f} F1={f1:.3f}")
+    for w in wrong:
+        print("  wrong:", w)
+    return precision, recall, wrong
+
+
+def test_relation_fixture_precision_recall_f1():
+    precision, recall, _ = _score(PAIRS, "original 55")
+    assert precision >= 0.85
+    assert recall >= 0.70
+
+
+def test_relation_after_rules_set():
+    precision, recall, _ = _score(AFTER_RULES, "after-rules set")
     assert precision >= 0.85
     assert recall >= 0.70
 
