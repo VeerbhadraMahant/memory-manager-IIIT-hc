@@ -48,6 +48,72 @@ def test_influence_ignores_case_and_punctuation():
     assert influence("Hello, World!", "hello world", [])[0] == 0.0
 
 
+# Embedding distance: a fake embedder over hand-written texts. Same meaning, different
+# words share a direction; a changed answer points elsewhere.
+_VECTORS = {
+    "Your Zorqel dose is 20mg.": [1.0, 0.0, 0.0],
+    "You take 20mg of Zorqel.": [0.98, 0.2, 0.0],
+    "I do not know your dose.": [0.0, 0.0, 1.0],
+    "Zorqel, 20mg daily.": [0.95, 0.31, 0.0],
+}
+
+
+class _FakeEmbed:
+    def __init__(self):
+        self.calls: list[list[str]] = []
+
+    def __call__(self, texts):
+        self.calls.append(list(texts))
+        return [_VECTORS[t] for t in texts]
+
+
+def test_embedding_scores_a_reworded_answer_as_close_where_jaccard_does_not():
+    full, reworded = "Your Zorqel dose is 20mg.", "You take 20mg of Zorqel."
+    jaccard, _ = influence(full, reworded, [])
+    cosine, _ = influence(full, reworded, [], embed=_FakeEmbed())
+    assert jaccard > 0.5
+    assert cosine < 0.05
+
+
+def test_embedding_scores_a_changed_answer_as_far():
+    score, floor = influence("Your Zorqel dose is 20mg.", "I do not know your dose.", [], embed=_FakeEmbed())
+    assert (score, floor) == (pytest.approx(1.0), 0.0)
+
+
+def test_embedding_floor_comes_from_repeats():
+    repeats = ["Your Zorqel dose is 20mg.", "You take 20mg of Zorqel.", "Zorqel, 20mg daily."]
+    score, floor = influence(repeats[0], "I do not know your dose.", repeats, embed=_FakeEmbed())
+    assert 0 < floor < 0.1
+    assert score == pytest.approx(1.0 - floor)
+
+
+def test_embedding_embeds_each_distinct_text_once_in_one_call():
+    fake = _FakeEmbed()
+    full = "Your Zorqel dose is 20mg."
+    influence(full, full, [full, "You take 20mg of Zorqel."], embed=fake)
+    assert fake.calls == [[full, "You take 20mg of Zorqel."]]
+
+
+def test_embedding_identical_text_is_zero():
+    t = "Your Zorqel dose is 20mg."
+    assert influence(t, t, [], embed=_FakeEmbed()) == (pytest.approx(0.0), 0.0)
+
+
+def test_embedding_rejects_an_embedder_that_drops_vectors():
+    with pytest.raises(ValueError):
+        influence("Your Zorqel dose is 20mg.", "I do not know your dose.", [], embed=lambda texts: [[1.0, 0.0, 0.0]])
+
+
+def test_default_distance_makes_no_embed_call(monkeypatch):
+    # Jaccard stays the default: nothing reaches a model unless the caller passes one.
+    def boom(texts):
+        raise AssertionError("influence() called the embedder without being given one")
+
+    monkeypatch.setattr(llm, "embed", boom)
+    score, floor = influence("a b", "c d", ["a b", "a c"])
+    assert floor == pytest.approx(1 - 1 / 3)
+
+
 # ------------------------------------------------------------ propose_relation
 
 

@@ -21,7 +21,9 @@ the disagreement worth interrupting for.
 
 from __future__ import annotations
 
+import math
 import re
+from collections.abc import Callable
 
 from app.models import AssertionStatus, Sensitivity
 
@@ -299,7 +301,12 @@ def propose_relation(
     return None
 
 
-def influence(full: str, ablated: str, repeats: list[str]) -> tuple[float, float]:
+def influence(
+    full: str,
+    ablated: str,
+    repeats: list[str],
+    embed: Callable[[list[str]], list[list[float]]] | None = None,
+) -> tuple[float, float]:
     """(score, noise_floor) for one memory. noise_floor is the mean pairwise distance
     among `repeats` (full-context regenerations); score is distance(full, ablated)
     minus that floor. Pure text distance, no model call, so it is testable on
@@ -307,12 +314,29 @@ def influence(full: str, ablated: str, repeats: list[str]) -> tuple[float, float
 
     Distance is token-set Jaccard distance over lowercased words. It ignores order and
     repetition, so it is cheap and stable, but a reworded answer with the same meaning
-    scores as changed; the repeats floor is what absorbs ordinary sampling variation."""
+    scores as changed; the repeats floor is what absorbs ordinary sampling variation.
 
-    def dist(a: str, b: str) -> float:
-        ta, tb = set(_tokens(a)), set(_tokens(b))
-        union = ta | tb
-        return 1.0 - len(ta & tb) / len(union) if union else 0.0
+    Pass `embed` (llm.embed, the pinned embedder) for cosine distance between
+    embeddings instead, which scores a reworded answer as close. Every distinct text is
+    embedded in one batch. Jaccard stays the default until a live comparison has been
+    run; this function never calls a model unless the caller hands it one."""
+    if embed is None:
+
+        def dist(a: str, b: str) -> float:
+            ta, tb = set(_tokens(a)), set(_tokens(b))
+            union = ta | tb
+            return 1.0 - len(ta & tb) / len(union) if union else 0.0
+
+    else:
+        texts = list(dict.fromkeys([full, ablated, *repeats]))
+        vectors = dict(zip(texts, embed(texts), strict=True))
+
+        def dist(a: str, b: str) -> float:
+            va, vb = vectors[a], vectors[b]
+            norm = math.hypot(*va) * math.hypot(*vb)
+            if norm == 0:
+                return 0.0 if va == vb else 1.0
+            return 1.0 - sum(x * y for x, y in zip(va, vb, strict=True)) / norm
 
     pairs = [dist(a, b) for i, a in enumerate(repeats) for b in repeats[i + 1 :]]
     floor = sum(pairs) / len(pairs) if pairs else 0.0
