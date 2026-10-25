@@ -19,7 +19,9 @@
 //    nothing was inferred.
 //  * It does not go through review. `review_state: accepted` — asking someone to
 //    approve the thing they just typed is the consent-fatigue failure mode
-//    principle 2 is written against.
+//    principle 2 is written against. The one exception is a fact about someone
+//    else (third_party): that person cannot review it, so it stays in this chat
+//    and goes to review, and the dialog says so before submit (D55).
 
 import { useState } from "react";
 import { Loader2, Plus } from "lucide-react";
@@ -61,6 +63,12 @@ const BLANK = {
   scope: "persistent" as Scope,
 };
 
+/** Same wording as THIRD_PARTY_REASON in backend/app/services/policy.py (D55):
+ *  the backend forces these items to this chat and to review, so the dialog says
+ *  so before submit instead of quietly overriding the user's scope choice. */
+const THIRD_PARTY_REASON = "About someone else, who cannot see or remove this.";
+const THIRD_PARTY_HELP_ID = "add-memory-third-party-help";
+
 export function AddMemoryButton({
   chatId,
   /** The most recent *real* message id in the active chat. Null disables the
@@ -80,6 +88,8 @@ export function AddMemoryButton({
 
   const ready = !!chatId && !!sourceMessageId;
   const complete = !!form.content.trim() && !!form.status && !!form.sensitivity;
+  const thirdParty = form.status === "third_party";
+  const scope: Scope = thirdParty ? "session" : form.scope;
 
   const set = <K extends keyof typeof BLANK>(key: K, value: (typeof BLANK)[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
@@ -94,19 +104,22 @@ export function AddMemoryButton({
         source_type: "stated",
         status: form.status as AssertionStatus,
         sensitivity: form.sensitivity as Sensitivity,
-        scope: form.scope,
+        scope,
         confidence: 1.0,
         source_message_id: sourceMessageId,
         block_name: form.block || null,
         // Required when session-scoped, rejected when persistent — the backend
         // enforces both, and a CHECK constraint enforces it again.
-        session_chat_id: form.scope === "session" ? chatId : null,
-        review_state: "accepted",
-        needs_review: false,
+        session_chat_id: scope === "session" ? chatId : null,
+        review_state: thirdParty ? "pending" : "accepted",
+        needs_review: thirdParty,
       });
       await refresh();
-      announce("Added to memory.");
-      onAdded("Added to memory.");
+      const done = thirdParty
+        ? "Added to this chat only, waiting for your review."
+        : "Added to memory.";
+      announce(done);
+      onAdded(done);
       setForm(BLANK);
       setOpen(false);
     } catch (e) {
@@ -143,8 +156,9 @@ export function AddMemoryButton({
           <DialogHeader>
             <DialogTitle>Add a memory</DialogTitle>
             <DialogDescription>
-              This is kept as something you said, at full confidence, and is not
-              sent for review — you wrote it.
+              {thirdParty
+                ? "This is kept as something you said, but because it is about someone else it stays in this chat and goes to review."
+                : "This is kept as something you said, at full confidence, and is not sent for review — you wrote it."}
             </DialogDescription>
           </DialogHeader>
 
@@ -219,9 +233,11 @@ export function AddMemoryButton({
               <label className="min-w-[9rem] flex-1">
                 <span className="meta mb-1 block text-ink-muted">Scope</span>
                 <select
-                  value={form.scope}
+                  value={scope}
                   onChange={(e) => set("scope", e.target.value as Scope)}
-                  className="min-h-11 w-full rounded-input border border-outline-ink bg-sunken px-3 text-body-sm text-ink"
+                  disabled={thirdParty}
+                  aria-describedby={thirdParty ? THIRD_PARTY_HELP_ID : undefined}
+                  className="min-h-11 w-full rounded-input border border-outline-ink bg-sunken px-3 text-body-sm text-ink disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {SCOPES.map((s) => (
                     <option key={s} value={s}>
@@ -231,6 +247,17 @@ export function AddMemoryButton({
                 </select>
               </label>
             </div>
+
+            {/* Text, not just a greyed-out control: a disabled select alone does
+                not say why it cannot be changed. */}
+            {thirdParty && (
+              <p
+                id={THIRD_PARTY_HELP_ID}
+                className="rounded-input border border-outline-ink p-3 text-body-sm text-ink"
+              >
+                {THIRD_PARTY_REASON} It stays in this chat only and goes to review.
+              </p>
+            )}
 
             {error && (
               <p role="alert" className="text-body-sm text-danger-ink">
