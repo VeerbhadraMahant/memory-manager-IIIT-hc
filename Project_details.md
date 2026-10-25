@@ -128,6 +128,28 @@ demo or the architecture if reversed.
   wrong label is worse than none. Also: the abstracted form of a third-party fact gets its own
   column, because the review card needs it after extraction has finished; reusing `content` would
   have discarded the specific wording before the user chose.
+- **D51 — the influence baseline is a fresh full-context repeat, not the stored reply.** The stored
+  reply ran under the original retrieval set and stale flags, so comparing against it would count
+  that drift as the memory's influence. Rejected: scoring against the stored reply, which saves one
+  call but conflates drift with effect.
+- **D52 — an `updates` edge supersedes the older item only when the newer one is accepted or
+  auto_accepted.** Rejected: superseding on any confirmed edge, which let an item still pending
+  review, or later rejected, hide the fact it was meant to replace.
+- **D53 — same-turn candidates are compared with earlier candidates from that turn, with the earlier
+  one as the `from` end** ("I planned X; actually I finished it"). Rejected: comparing only against
+  stored items, which missed corrections made inside a single message.
+- **D54 — `exclude_all` together with `revoke_item_ids` returns 422.** `exclude_all` is a comparison
+  and revokes nothing. Rejected: silently ignoring one of the two, which would leave the user unsure
+  whether anything was revoked.
+- **D55 — a third-party fact added by hand is forced to session scope and review**, the same rule
+  extraction applies (F8). Rejected: honouring the user's "persistent" choice for hand-entered items,
+  which would make the manual path a way around the rule.
+- **D56 — an edge decision is audited on both ends and refused (409) when either end is deleted.**
+  The decision changes how both items are retrieved and cascaded. Rejected: auditing only the `from`
+  end, and letting a stale client confirm a link to a deleted memory.
+- **D57 — the per-test reset also restores the demo user's flow rules** to migration 009's defaults.
+  Rejected: resetting only items and blocks, which let one test's denied destination leak into the
+  next and pass or fail it for the wrong reason.
 
 ## 7. Build status by phase
 

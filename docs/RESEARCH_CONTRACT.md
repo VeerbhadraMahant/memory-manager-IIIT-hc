@@ -125,7 +125,10 @@ Frontend clients for all of these already exist in `frontend/lib/api.ts`:
   end-of-session audit.
 - **F3 (A, B1, F).** The route loads the message, its attributions and its stored
   provider/model, regenerates once without each memory and `repeats` times with all of
-  them on that same provider, and scores each with `classify.influence`. Verdicts:
+  them on that same provider, and scores each with `classify.influence`. The baseline is
+  a fresh full-context repeat, not the stored reply, which ran under the original
+  retrieval set and stale flags. All calls run concurrently (`INFLUENCE_WORKERS` = 4 in
+  `routers/chats.py`), and the noise floor is computed once from the repeats. Verdicts:
   `changed_answer` if score > 0.05, `within_noise` if 0 < score <= 0.05,
   `no_measurable_effect` if score <= 0, `failed` on a call error. `chat_turn` and
   `regenerate` now persist `provider`/`model` on the assistant message. F: an on-demand
