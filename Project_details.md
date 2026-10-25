@@ -150,6 +150,25 @@ demo or the architecture if reversed.
 - **D57 — the per-test reset also restores the demo user's flow rules** to migration 009's defaults.
   Rejected: resetting only items and blocks, which let one test's denied destination leak into the
   next and pass or fail it for the wrong reason.
+- **D58 — the mode badge's tooltip is a description held in a hidden sibling outside the button.**
+  Chromium folded the tooltip text into the button's accessible name, so screen readers read the
+  label followed by the whole tip. Now the visible tooltip is `aria-hidden`. Tried and rejected: an
+  `aria-describedby` span inside the button, which Chromium still folded into the name.
+- **D59 — the relation detector knows number words, negation and named instances.** The cases it
+  missed went into a separate after-rules fixture (18 rows). That fixture is reported apart from the
+  original 55 rows, so the original score is not inflated by rows written for the fix. "Never" is not
+  treated as negation: the rule covers stopping only, and "never misses X" states a habit, not a
+  stop. Scores: the
+  original set went from F1 0.915 to 0.984, and the after-rules set from 0.375 to 1.000. The second
+  number is expected, because those rows were written for this fix.
+- **D60 — influence can use embedding distance, but only when the caller passes an embedder.** The
+  default stays token Jaccard and makes no model call. `/influence` does not switch until a live
+  comparison shows the change is worth it. Rejected: switching the default, which would change a
+  reported number without evidence.
+- **D61 — sampling-consistency confidence is an option in the calibration script, reported beside
+  the verbalized confidence.** It never replaces the 0.85 gate on its own. No real sampler is wired
+  in, because one would call the extraction model. Rejected: replacing verbalized confidence
+  outright, which would hide the comparison the option exists for.
 
 ## 7. Build status by phase
 
