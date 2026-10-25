@@ -358,7 +358,7 @@ def main() -> int:
 
     user = str(settings.demo_user_id)
 
-    with psycopg.connect(settings.database_url, row_factory=dict_row) as conn:
+    with psycopg.connect(settings.dsn, row_factory=dict_row) as conn:
         with conn.cursor() as cur:
             if not args.yes and not confirm(cur):
                 print("aborted.")
