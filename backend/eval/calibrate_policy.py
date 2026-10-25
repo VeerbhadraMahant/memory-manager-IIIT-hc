@@ -6,6 +6,13 @@ Input is a JSONL export, one row per memory item:
 `--database-url` builds that export with a read-only query (EXPORT_SQL; never run by tests).
 Output says "informed by N items", never "validated": agreement with the user is a signal,
 not ground truth, and review outcomes only exist for items that were shown to the user.
+
+Optional sampling-consistency confidence (Xiong et al. 2024, arXiv:2306.13063): pass
+`sample` to analyse() and each item's status is re-classified k times; its confidence
+becomes the share of samples that agree with the stored status. The result sits beside
+the model's own (verbalized) confidence so the two can be compared before either replaces
+the fixed 0.85 gate. A real sampler calls the extraction model, so it is not wired to the
+CLI; tests pass a mock.
 """
 
 from __future__ import annotations
@@ -13,6 +20,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -134,7 +142,36 @@ def heldout(rows: list[dict], frac: float, target_regret: float) -> dict:
             "test_result": sweep(test, [best["threshold"]])[0]}
 
 
-def analyse(rows: list[dict], split: float | None = None, target_regret: float = 0.05) -> dict:
+def consistency_confidence(answer: str, samples: list[str]) -> float:
+    """Share of `samples` that agree with `answer` (0..1)."""
+    if not samples:
+        raise ValueError("consistency needs at least one sample")
+    return sum(s == answer for s in samples) / len(samples)
+
+
+def with_consistency(rows: list[dict], sample: Callable[[dict, int], list[str]], k: int) -> list[dict]:
+    """Copies of the rows that have a status, with `confidence` replaced by the
+    consistency estimate over `sample(row, k)` and the original kept as
+    `verbalized_confidence`. Rows without a status have nothing to agree with and are dropped."""
+    out = []
+    for r in rows:
+        if not r.get("status"):
+            continue
+        samples = sample(r, k)
+        if len(samples) != k:
+            raise ValueError(f"sampler returned {len(samples)} samples for {r.get('id')}, expected {k}")
+        out.append({**r, "verbalized_confidence": r["confidence"],
+                    "confidence": consistency_confidence(r["status"], samples)})
+    return out
+
+
+def analyse(
+    rows: list[dict],
+    split: float | None = None,
+    target_regret: float = 0.05,
+    sample: Callable[[dict, int], list[str]] | None = None,
+    k: int = 5,
+) -> dict:
     sw = sweep(rows)
     res = {
         "informed_by_items": len(rows),
@@ -147,6 +184,17 @@ def analyse(rows: list[dict], split: float | None = None, target_regret: float =
     }
     if split:
         res["heldout"] = heldout(rows, split, target_regret)
+    if sample is not None:
+        crows = with_consistency(rows, sample, k)
+        csw = sweep(crows)
+        res["consistency"] = {
+            "samples_per_item": k,
+            "informed_by_items": len(crows),
+            "reliability": reliability_table(crows),
+            "ece": ece(crows),
+            "sweep": csw,
+            "pareto": pareto(csw),
+        }
     return res
 
 
@@ -169,6 +217,11 @@ def to_markdown(res: dict) -> str:
         h = res["heldout"]
         L += ["", f"Held-out: train {h['train']}, test {h['test']}, chosen {h['chosen']}"
               f" -> test {h.get('test_result')}"]
+    if "consistency" in res:
+        c = res["consistency"]
+        L += ["", f"Sampling-consistency confidence ({c['samples_per_item']} samples, "
+              f"{c['informed_by_items']} items with a status): ECE {_f(c['ece'])}"
+              f" vs verbalized {_f(res['ece'])}"]
     return "\n".join(L)
 
 
