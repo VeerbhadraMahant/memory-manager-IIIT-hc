@@ -1,5 +1,6 @@
 "use client";
 
+import { useId } from "react";
 import { Info } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -35,11 +36,14 @@ export function ModeBadge({
   tipTitle: string;
   tip: string;
 }) {
+  const tipId = useId();
   return (
+    <>
     <button
       type="button"
       onClick={onClick}
       aria-pressed={active}
+      aria-describedby={tipId}
       className={cn(
         "group relative flex min-h-11 shrink-0 items-center gap-2 rounded-pill border px-3.5 text-body-sm transition-colors",
         active ? ACTIVE[tone] : INACTIVE,
@@ -52,8 +56,12 @@ export function ModeBadge({
       <span className={active ? "font-medium" : "font-normal"}>{label}</span>
       <span className="relative ml-0.5 inline-flex items-center justify-center">
         <Info className="size-3.5 shrink-0 opacity-70 group-hover:opacity-100" aria-hidden="true" />
+        {/* Visual only. Inside the button, Chromium folded this text into the name, and
+            it still does for any descendant aria-describedby points at, so the
+            description lives in the hidden span after the button instead. */}
         <span
           role="tooltip"
+          aria-hidden="true"
           className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 w-72 -translate-x-1/2 rounded-card bg-elevated shadow-pop px-3.5 py-3 text-left text-body-sm font-normal text-ink opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
         >
           <span className="mb-1 block font-medium">{tipTitle}</span>
@@ -61,5 +69,9 @@ export function ModeBadge({
         </span>
       </span>
     </button>
+    <span id={tipId} hidden>
+      {tip}
+    </span>
+    </>
   );
 }
