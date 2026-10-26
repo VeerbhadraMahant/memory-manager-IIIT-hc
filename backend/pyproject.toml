@@ -5,7 +5,7 @@ name = "negotiated-ai-memory-backend"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
-  "fastapi>=0.115",
+  "fastapi>=0.121",
   "psycopg[binary,pool]>=3.2",
   "pgvector>=0.3.6",
   "pydantic>=2.9",

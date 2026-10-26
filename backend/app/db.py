@@ -51,6 +51,10 @@ def db_cursor() -> Iterator:
     on an exception, so a handler that raises HTTPException halfway never leaves a
     partial write behind.
 
+    Routes must declare it as `Depends(db_cursor, scope="function")`. With the default
+    request scope FastAPI runs this exit code AFTER the response is sent, so the client
+    can be told a delete succeeded before it is committed (or when the commit fails).
+
     Do not hold this across an LLM call on a hot path — see `get_cursor` and the turn
     handler, which take short-lived connections around the network calls instead.
     """

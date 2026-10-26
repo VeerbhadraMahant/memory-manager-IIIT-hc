@@ -135,6 +135,8 @@ export function MemoryList({
     try {
       for (const id of selection) await fn(id);
       setSelection(new Set());
+    } catch {
+      // Leave the selection in place so the user can retry what did not go through.
     } finally {
       setBulkBusy(false);
     }

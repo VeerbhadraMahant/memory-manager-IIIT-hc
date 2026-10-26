@@ -8,6 +8,7 @@ from uuid import UUID
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
 from app.auth import User, current_user
+from app.config import settings
 from app.db import db_cursor, pool
 from app.models import (
     AssertionStatus,
@@ -64,7 +65,7 @@ def list_providers():
 
 
 @router.post("", response_model=Chat, status_code=201)
-def create_chat(payload: ChatCreate, user: User = Depends(current_user), cur=Depends(db_cursor)):
+def create_chat(payload: ChatCreate, user: User = Depends(current_user), cur=Depends(db_cursor, scope="function")):
     cur.execute(
         "insert into chats (user_id, title) values (%s, %s) returning *",
         (user.id, payload.title),
@@ -75,7 +76,7 @@ def create_chat(payload: ChatCreate, user: User = Depends(current_user), cur=Dep
 
 
 @router.get("", response_model=list[Chat])
-def list_chats(user: User = Depends(current_user), cur=Depends(db_cursor)):
+def list_chats(user: User = Depends(current_user), cur=Depends(db_cursor, scope="function")):
     cur.execute(
         """select * from chats
             where user_id = %s and deleted_at is null
@@ -86,7 +87,7 @@ def list_chats(user: User = Depends(current_user), cur=Depends(db_cursor)):
 
 
 @router.patch("/{chat_id}", response_model=Chat)
-def rename_chat(chat_id: UUID, payload: ChatUpdate, user: User = Depends(current_user), cur=Depends(db_cursor)):
+def rename_chat(chat_id: UUID, payload: ChatUpdate, user: User = Depends(current_user), cur=Depends(db_cursor, scope="function")):
     _assert_chat(cur, chat_id, user.id)
     cur.execute(
         "update chats set title = %s where id = %s and user_id = %s returning *",
@@ -98,7 +99,7 @@ def rename_chat(chat_id: UUID, payload: ChatUpdate, user: User = Depends(current
 
 
 @router.delete("/{chat_id}", response_model=ChatDeleted)
-def delete_chat(chat_id: UUID, user: User = Depends(current_user), cur=Depends(db_cursor)):
+def delete_chat(chat_id: UUID, user: User = Depends(current_user), cur=Depends(db_cursor, scope="function")):
     """Tombstone a chat, and with it the memories that were confined to it.
 
     Not a row delete — see migration 006 for why the schema forbids one. The split
@@ -150,7 +151,7 @@ def delete_chat(chat_id: UUID, user: User = Depends(current_user), cur=Depends(d
 
 
 @router.get("/{chat_id}/messages", response_model=list[Message])
-def list_messages(chat_id: UUID, user: User = Depends(current_user), cur=Depends(db_cursor)):
+def list_messages(chat_id: UUID, user: User = Depends(current_user), cur=Depends(db_cursor, scope="function")):
     # Guarded like every other chat route. Without this it happily served the
     # transcript of a chat the user had deleted — harmless while there is one
     # hardcoded user, a cross-account read the moment there is more than one.
@@ -160,7 +161,7 @@ def list_messages(chat_id: UUID, user: User = Depends(current_user), cur=Depends
 
 
 @router.post("/{chat_id}/messages", response_model=Message, status_code=201)
-def add_message(chat_id: UUID, payload: MessageCreate, user: User = Depends(current_user), cur=Depends(db_cursor)):
+def add_message(chat_id: UUID, payload: MessageCreate, user: User = Depends(current_user), cur=Depends(db_cursor, scope="function")):
     """Raw append, no LLM and no extraction. Kept for tests and seeding."""
     _assert_chat(cur, chat_id, user.id)
     cur.execute(
@@ -246,6 +247,13 @@ def chat_turn(
         )
     except Exception as e:
         log.exception("chat completion failed")
+        # No reply means no extraction will ever be scheduled; do not leave it pending.
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                "update messages set extraction_status = 'skipped' "
+                "where id = %s and extraction_status = 'pending'",
+                (user_msg["id"],),
+            )
         raise HTTPException(502, f"LLM call failed: {llm.public_error(e)}") from e
 
     with pool.connection() as conn, conn.cursor() as cur:
@@ -293,7 +301,7 @@ def _record_attributions(cur, message_id, used: list[dict]) -> None:
 
 
 @router.get("/{chat_id}/candidates", response_model=CandidatesResponse)
-def turn_candidates(chat_id: UUID, message_id: UUID, user: User = Depends(current_user), cur=Depends(db_cursor)):
+def turn_candidates(chat_id: UUID, message_id: UUID, user: User = Depends(current_user), cur=Depends(db_cursor, scope="function")):
     """What extraction produced for one message. Polled by the review card.
 
     Splitting pending from auto-accepted in the response is the interruption budget
@@ -302,12 +310,20 @@ def turn_candidates(chat_id: UUID, message_id: UUID, user: User = Depends(curren
     """
     _assert_chat(cur, chat_id, user.id)
     cur.execute(
-        "select extraction_status, extraction_error from messages where id = %s and chat_id = %s",
-        (message_id, chat_id),
+        """select extraction_status, extraction_error,
+                  (extraction_status = 'pending'
+                   and created_at < now() - make_interval(secs => %s)) as stalled
+           from messages where id = %s and chat_id = %s""",
+        (settings.extraction_stale_after_s, message_id, chat_id),
     )
     msg = cur.fetchone()
     if not msg:
         raise HTTPException(404, "message not found in this chat")
+    if msg["stalled"]:
+        # The worker was frozen or killed after the response (serverless), and the boot
+        # sweep only runs on a cold start. Say so instead of spinning forever.
+        msg["extraction_status"] = "failed"
+        msg["extraction_error"] = "interrupted before it finished — send the message again"
 
     cur.execute(
         f"{ITEM_SELECT} where mi.source_message_id = %s and mi.deleted_at is null "
@@ -457,7 +473,12 @@ def message_influence(
         cur.execute(
             """select mi.id, mi.content, mi.status
                from attributions a join memory_items mi on mi.id = a.memory_item_id
+               left join blocks b on b.id = mi.block_id
                where a.message_id = %s and mi.user_id = %s and mi.deleted_at is null
+                 -- A block made private (or denied to chat) after this reply must not
+                 -- be re-sent to a model by the influence probe.
+                 and not coalesce(b.private, false)
+                 and not ('chat' = any(coalesce(b.denied_destinations::text[], '{}')))
                order by mi.created_at""",
             (message_id, user.id),
         )
@@ -578,7 +599,7 @@ def verified_draft(chat_id: UUID, payload: DraftRequest, user: User = Depends(cu
 
 
 @router.get("/{chat_id}/scope-report", response_model=ScopeReport)
-def scope_report(chat_id: UUID, user: User = Depends(current_user), cur=Depends(db_cursor)):
+def scope_report(chat_id: UUID, user: User = Depends(current_user), cur=Depends(db_cursor, scope="function")):
     """What this session can and cannot reach.
 
     Session scoping is enforced in two different places for two different reasons,
@@ -641,7 +662,7 @@ def scope_report(chat_id: UUID, user: User = Depends(current_user), cur=Depends(
 
 
 @router.post("/{chat_id}/purge-ephemeral", response_model=dict)
-def purge_ephemeral(chat_id: UUID, user: User = Depends(current_user), cur=Depends(db_cursor)):
+def purge_ephemeral(chat_id: UUID, user: User = Depends(current_user), cur=Depends(db_cursor, scope="function")):
     """Redact the text of off-the-record turns in this chat.
 
     Off the record governs *persistence*, not the current conversation: an ephemeral

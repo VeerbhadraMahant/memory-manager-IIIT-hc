@@ -317,7 +317,11 @@ export function Onboarding({
       // close; `consent` is what the app reads, `nam.onboarded` is only a record
       // that the explanation has been seen.
       setConsent(accepted ? "accepted" : "declined");
-      window.localStorage.setItem(ONBOARDED_KEY, "1");
+      try {
+        window.localStorage.setItem(ONBOARDED_KEY, "1");
+      } catch {
+        /* storage blocked: the record is optional */
+      }
       // Rewound on the way out, not on the way in. A replay has to start at step 1,
       // and doing it here — where the dialog actually closes — avoids syncing
       // `forceOpen` into state from an effect, which fires an extra render on every

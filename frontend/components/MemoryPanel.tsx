@@ -373,8 +373,12 @@ function SinceYouWereAway() {
                         variant="outline"
                         size="sm"
                         onClick={async () => {
-                          await actions.confirm(e.memory_item_id);
-                          setConfirmed((c) => new Set(c).add(e.memory_item_id));
+                          try {
+                            await actions.confirm(e.memory_item_id);
+                            setConfirmed((c) => new Set(c).add(e.memory_item_id));
+                          } catch {
+                            // Button stays, so the user can try again.
+                          }
                         }}
                       >
                         Still true

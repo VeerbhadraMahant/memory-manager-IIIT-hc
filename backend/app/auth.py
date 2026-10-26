@@ -120,6 +120,9 @@ def _verify_supabase_token(token: str) -> dict | None:
                 issuer=f"{base}/auth/v1",
                 options=options,
             )
+    except jwt.PyJWKClientConnectionError as e:
+        log.warning("could not fetch Supabase signing keys: %s", e)
+        raise HTTPException(503, "could not verify credentials right now; retry") from e
     except (jwt.PyJWTError, OSError) as e:
         log.info("supabase token rejected: %s", type(e).__name__)
     return None

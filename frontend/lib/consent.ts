@@ -52,13 +52,21 @@ function subscribe(onChange: () => void) {
   };
 }
 
+// Fallback for browsers where storage throws (blocked site data), so the dialog can still close.
+const inMemory = new Map<string, string>();
+
 function read(userId: string, isDemo: boolean): MemoryConsent {
   // The un-keyed value from before this change cannot be attributed to a person, so it
   // is honoured only for the shared demo account — which is where it came from when
   // there was no sign-in — and never for a real account.
-  const raw =
-    window.localStorage.getItem(keyFor(userId)) ??
-    (isDemo ? window.localStorage.getItem(LEGACY_KEY) : null);
+  let raw: string | null;
+  try {
+    raw =
+      window.localStorage.getItem(keyFor(userId)) ??
+      (isDemo ? window.localStorage.getItem(LEGACY_KEY) : null);
+  } catch {
+    raw = inMemory.get(keyFor(userId)) ?? null;
+  }
   return raw === "accepted" || raw === "declined" ? raw : null;
 }
 
@@ -79,7 +87,12 @@ export function useMemoryConsent(): [
 
   const set = useCallback(
     (next: Exclude<MemoryConsent, null>) => {
-      window.localStorage.setItem(keyFor(userId), next);
+      inMemory.set(keyFor(userId), next);
+      try {
+        window.localStorage.setItem(keyFor(userId), next);
+      } catch {
+        /* kept in memory for this tab */
+      }
       notify();
     },
     [userId],

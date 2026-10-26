@@ -77,10 +77,15 @@ def provision_user(
             email = None
     cur.execute(
         """insert into users (id, handle, email, name, avatar_url, google_sub)
-           values (%s, %s, %s, %s, %s, %s) returning *""",
+           values (%s, %s, %s, %s, %s, %s)
+           on conflict (id) do nothing returning *""",
         (user_id, f"user-{str(user_id)[:8]}-{str(user_id)[-4:]}", email, name, avatar_url, google_sub),
     )
     row = cur.fetchone()
+    if row is None:
+        # A parallel first request created the row between our select and insert.
+        cur.execute("select * from users where id = %s", (user_id,))
+        row = cur.fetchone()
     seed_blocks(cur, user_id)
     log.info("provisioned user %s", user_id)
     return row

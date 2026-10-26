@@ -49,7 +49,7 @@ class RequestContext:
         scope.setdefault("state", {})["request_id"] = rid
         start = time.perf_counter()
         status = 500
-        path = scope["path"]
+        path = scope["path"].removeprefix(scope.get("root_path", ""))
         is_docs = path in self.docs_paths
 
         async def send_wrapper(message: Message) -> None:

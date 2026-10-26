@@ -139,7 +139,10 @@ export function ReviewCard({
                       variant="outlineInk"
                       size="sm"
                       onClick={() =>
-                        void actions.reject(it.id).then(() => onResolved(it.id))
+                        void actions
+                          .reject(it.id)
+                          .then(() => onResolved(it.id))
+                          .catch(() => undefined) // item stays listed, so the user can retry
                       }
                     >
                       Forget this
@@ -151,6 +154,7 @@ export function ReviewCard({
                         void actions
                           .rescope(it.id, "session")
                           .then(() => onResolved(it.id))
+                          .catch(() => undefined)
                       }
                     >
                       Only this chat

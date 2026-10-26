@@ -1,6 +1,6 @@
 # Direct dependencies, as compatible ranges. `requirements.lock` is the exact
 # resolved set the Docker image installs; regenerate it with `make lock`.
-fastapi>=0.115
+fastapi>=0.121
 uvicorn[standard]>=0.32
 psycopg[binary,pool]>=3.2
 pgvector>=0.3.6

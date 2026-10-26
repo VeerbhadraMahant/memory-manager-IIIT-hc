@@ -592,7 +592,7 @@ function Workbench() {
               role="alert"
               className="mt-6 rounded-card border border-danger bg-danger-dim p-4 text-body-sm text-danger-on-bg"
             >
-              Backend unreachable: {fatal}. Is uvicorn running on port 8000?
+              Could not load your session: {fatal}. Reload the page to try again.
             </p>
           )}
 

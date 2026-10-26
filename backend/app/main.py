@@ -62,7 +62,11 @@ async def lifespan(app: FastAPI):
 
     pool.open()
     pool.wait(timeout=20)
-    swept = _sweep_interrupted_extractions()
+    try:
+        swept = _sweep_interrupted_extractions()
+    except Exception:
+        log.exception("startup sweep of interrupted extractions failed; continuing")
+        swept = 0
     if swept:
         log.warning("marked %d interrupted extraction pass(es) as failed", swept)
     yield

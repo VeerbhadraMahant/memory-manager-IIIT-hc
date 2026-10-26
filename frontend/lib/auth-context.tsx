@@ -134,17 +134,22 @@ export function AuthProvider({
     let unsubscribe: (() => void) | undefined;
 
     (async () => {
-      let cfg: AuthConfig;
-      try {
-        cfg = await api.authConfig();
-      } catch {
-        // Backend down, or an older backend with no /auth/config. Do not block on it:
-        // the page's own boot reports "backend unreachable" far more usefully than a
-        // blank gate would.
-        if (!cancelled) setState({ status: "ready", mode: "none", userId: "unknown", isDemo: false });
-        return;
+      // A serverless cold start can fail the first call, so retry before giving up.
+      // Falling through to the no-auth mode here would show an app whose every
+      // request is a 401, with no way to sign in.
+      let cfg: AuthConfig | undefined;
+      for (let attempt = 0; attempt < 3 && !cfg && !cancelled; attempt++) {
+        try {
+          cfg = await api.authConfig();
+        } catch {
+          if (attempt < 2) await new Promise((r) => setTimeout(r, 1500));
+        }
       }
       if (cancelled) return;
+      if (!cfg) {
+        setState({ status: "misconfigured", message: "Could not reach the server. Reload the page to try again." });
+        return;
+      }
       cfgRef.current = cfg;
 
       if (!cfg.auth_required) {
@@ -189,7 +194,12 @@ export function AuthProvider({
       } catch {
         if (!cancelled) toSignedOut();
       }
-    })();
+    })().catch((e) => {
+      // A failed Supabase chunk load or getSession() would otherwise leave "Loading…" forever.
+      if (!cancelled) {
+        setState({ status: "misconfigured", message: e instanceof Error ? e.message : "Sign-in failed to start." });
+      }
+    });
 
     // Any 401 after sign-in (expired session, revoked user) returns to the sign-in
     // screen rather than leaving a half-working app that fails every click.

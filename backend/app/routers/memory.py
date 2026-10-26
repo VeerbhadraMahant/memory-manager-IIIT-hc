@@ -64,7 +64,7 @@ BLOCK_COLS = """id, name, default_sensitivity, restrictive_rank, is_fallback,
 
 
 @router.get("/blocks", response_model=list[Block])
-def list_blocks(user: User = Depends(current_user), cur=Depends(db_cursor)):
+def list_blocks(user: User = Depends(current_user), cur=Depends(db_cursor, scope="function")):
     cur.execute(
         f"""
         select {BLOCK_COLS}
@@ -77,7 +77,7 @@ def list_blocks(user: User = Depends(current_user), cur=Depends(db_cursor)):
 
 
 @router.patch("/blocks/{name}/privacy", response_model=Block)
-def set_block_privacy(name: str, payload: BlockPrivacy, user: User = Depends(current_user), cur=Depends(db_cursor)):
+def set_block_privacy(name: str, payload: BlockPrivacy, user: User = Depends(current_user), cur=Depends(db_cursor, scope="function")):
     """Mark a block private, or lift it.
 
     Private means retrieval excludes the block, so its memories are never written into
@@ -121,7 +121,7 @@ def dedupe_destinations(destinations) -> list[str]:
 
 
 @router.patch("/blocks/{name}/flows", response_model=Block)
-def set_block_flows(name: str, payload: BlockFlows, user: User = Depends(current_user), cur=Depends(db_cursor)):
+def set_block_flows(name: str, payload: BlockFlows, user: User = Depends(current_user), cur=Depends(db_cursor, scope="function")):
     """Replace the places this block's memories may not flow to (chat, draft, summary,
     relevance). It replaces the whole list, so an empty list lifts every restriction.
 
@@ -142,7 +142,7 @@ def set_block_flows(name: str, payload: BlockFlows, user: User = Depends(current
 
 @router.get("/items", response_model=list[MemoryItem])
 def list_items(
-    user: User = Depends(current_user), cur=Depends(db_cursor),
+    user: User = Depends(current_user), cur=Depends(db_cursor, scope="function"),
     block: str | None = None,
     status: AssertionStatus | None = None,
     sensitivity: Sensitivity | None = None,
@@ -150,7 +150,7 @@ def list_items(
     review_state: ReviewState | None = None,
     q: str | None = Query(None, description="substring match on content"),
     include_deleted: bool = False,
-    limit: int = Query(200, le=1000),
+    limit: int = Query(200, ge=1, le=1000),
 ):
     """Backs the P4 list view. Filters compose; all are optional."""
     where = ["mi.user_id = %s"]
@@ -187,7 +187,7 @@ def list_items(
 
 
 @router.get("/items/{item_id}", response_model=MemoryItem)
-def get_item(item_id: UUID, user: User = Depends(current_user), cur=Depends(db_cursor)):
+def get_item(item_id: UUID, user: User = Depends(current_user), cur=Depends(db_cursor, scope="function")):
     cur.execute(f"{ITEM_SELECT} where mi.id = %s and mi.user_id = %s",
                 (item_id, user.id))
     row = cur.fetchone()
@@ -314,7 +314,7 @@ def _return(cur, item_id: UUID):
 
 
 @router.post("/items/{item_id}/accept", response_model=MemoryItem)
-def accept_item(item_id: UUID, user: User = Depends(current_user), cur=Depends(db_cursor)):
+def accept_item(item_id: UUID, user: User = Depends(current_user), cur=Depends(db_cursor, scope="function")):
     _load(cur, item_id, user.id)
     cur.execute(
         """update memory_items
@@ -328,7 +328,7 @@ def accept_item(item_id: UUID, user: User = Depends(current_user), cur=Depends(d
 
 
 @router.post("/items/{item_id}/reject", response_model=MemoryItem)
-def reject_item(item_id: UUID, user: User = Depends(current_user), cur=Depends(db_cursor)):
+def reject_item(item_id: UUID, user: User = Depends(current_user), cur=Depends(db_cursor, scope="function")):
     """Rejection tombstones rather than deletes.
 
     The audit trail is the point: "the system proposed this and the user said no" is
@@ -410,7 +410,7 @@ def edit_item(item_id: UUID, payload: MemoryItemEdit, user: User = Depends(curre
 
 
 @router.post("/items/{item_id}/rescope", response_model=MemoryItem)
-def rescope_item(item_id: UUID, payload: RescopeRequest, user: User = Depends(current_user), cur=Depends(db_cursor)):
+def rescope_item(item_id: UUID, payload: RescopeRequest, user: User = Depends(current_user), cur=Depends(db_cursor, scope="function")):
     """Move an item between session and persistent.
 
     Demoting to session needs a chat to anchor to (D14); the source message's chat is
@@ -441,7 +441,7 @@ def rescope_item(item_id: UUID, payload: RescopeRequest, user: User = Depends(cu
 # --------------------------------------------------------------------------
 
 @router.post("/items/{item_id}/confirm", response_model=MemoryItem)
-def confirm_item(item_id: UUID, user: User = Depends(current_user), cur=Depends(db_cursor)):
+def confirm_item(item_id: UUID, user: User = Depends(current_user), cur=Depends(db_cursor, scope="function")):
     """"Yes, this is still true." Resets the decay clock.
 
     Decay is not deletion — a stale item is still used, just never asserted as current
@@ -594,7 +594,7 @@ def _cascade(cur, root_id: UUID) -> tuple[CascadePreview, set[UUID]]:
 
 
 @router.get("/graph", response_model=ProvenanceGraph)
-def full_graph(user: User = Depends(current_user), cur=Depends(db_cursor), limit: int = Query(GRAPH_NODE_CAP, le=500)):
+def full_graph(user: User = Depends(current_user), cur=Depends(db_cursor, scope="function"), limit: int = Query(GRAPH_NODE_CAP, ge=1, le=500)):
     """Every live item and every edge between them — the graph view's backing data.
 
     Capped, and it reports when it capped. A view that silently shows 150 of 400
@@ -622,7 +622,7 @@ def full_graph(user: User = Depends(current_user), cur=Depends(db_cursor), limit
 
 
 @router.get("/items/{item_id}/graph", response_model=ProvenanceGraph)
-def item_graph(item_id: UUID, user: User = Depends(current_user), cur=Depends(db_cursor)):
+def item_graph(item_id: UUID, user: User = Depends(current_user), cur=Depends(db_cursor, scope="function")):
     """The deletion preview, as data. Answers exactly one question."""
     _load(cur, item_id, user.id)
     cascade, touched = _cascade(cur, item_id)
@@ -641,7 +641,7 @@ def item_graph(item_id: UUID, user: User = Depends(current_user), cur=Depends(db
 
 
 @router.delete("/items/{item_id}", response_model=CascadePreview)
-def delete_item(item_id: UUID, user: User = Depends(current_user), cur=Depends(db_cursor)):
+def delete_item(item_id: UUID, user: User = Depends(current_user), cur=Depends(db_cursor, scope="function")):
     """Tombstone an item and everything that exists only because of it.
 
     Executes exactly the preview `GET /items/{id}/graph` showed — same `_cascade`
@@ -690,7 +690,7 @@ SUBNODE_COLS = "id, memory_item_id, content, confidence, category, created_at"
 
 
 @router.get("/items/{item_id}/subnodes", response_model=list[Subnode])
-def list_subnodes(item_id: UUID, user: User = Depends(current_user), cur=Depends(db_cursor)):
+def list_subnodes(item_id: UUID, user: User = Depends(current_user), cur=Depends(db_cursor, scope="function")):
     _load(cur, item_id, user.id)
     cur.execute(
         f"select {SUBNODE_COLS} from memory_subnodes where memory_item_id = %s and user_id = %s order by created_at",
@@ -702,7 +702,7 @@ def list_subnodes(item_id: UUID, user: User = Depends(current_user), cur=Depends
 @router.post("/items/{item_id}/subnodes", response_model=Subnode, status_code=201)
 def create_subnode(
     item_id: UUID, payload: SubnodeCreate,
-    user: User = Depends(current_user), cur=Depends(db_cursor),
+    user: User = Depends(current_user), cur=Depends(db_cursor, scope="function"),
 ):
     _load(cur, item_id, user.id)
     cur.execute("select count(*) as n from memory_subnodes where memory_item_id = %s", (item_id,))
@@ -721,7 +721,7 @@ def create_subnode(
 @router.patch("/subnodes/{subnode_id}", response_model=Subnode)
 def edit_subnode(
     subnode_id: UUID, payload: SubnodeEdit,
-    user: User = Depends(current_user), cur=Depends(db_cursor),
+    user: User = Depends(current_user), cur=Depends(db_cursor, scope="function"),
 ):
     fields = payload.model_dump(exclude_unset=True, exclude_none=True)
     if not fields:
@@ -743,7 +743,7 @@ def edit_subnode(
 
 
 @router.delete("/subnodes/{subnode_id}")
-def delete_subnode(subnode_id: UUID, user: User = Depends(current_user), cur=Depends(db_cursor)):
+def delete_subnode(subnode_id: UUID, user: User = Depends(current_user), cur=Depends(db_cursor, scope="function")):
     cur.execute(
         "delete from memory_subnodes where id = %s and user_id = %s returning memory_item_id",
         (subnode_id, user.id),
@@ -756,7 +756,7 @@ def delete_subnode(subnode_id: UUID, user: User = Depends(current_user), cur=Dep
 
 
 @router.post("/items/{item_id}/prune", response_model=PruneResponse)
-def prune_subnodes(item_id: UUID, user: User = Depends(current_user), cur=Depends(db_cursor)):
+def prune_subnodes(item_id: UUID, user: User = Depends(current_user), cur=Depends(db_cursor, scope="function")):
     """Drop child notes that are low-confidence or duplicates of an earlier one.
 
     Deterministic and explainable on purpose — no model decides what the user's notes
@@ -877,7 +877,7 @@ def relevance(payload: RelevanceRequest, user: User = Depends(current_user)):
 @router.get("/edges", response_model=list[EdgeProposal])
 def list_edges(
     state: EdgeState = EdgeState.proposed,
-    user: User = Depends(current_user), cur=Depends(db_cursor),
+    user: User = Depends(current_user), cur=Depends(db_cursor, scope="function"),
 ):
     """Edges in `state` (default proposed), newest first. Only edges whose two ends are
     both the caller's live items, so a proposal never mentions a deleted memory."""
@@ -897,7 +897,7 @@ def list_edges(
 
 
 @router.patch("/edges/{edge_id}", response_model=GraphEdge)
-def decide_edge(edge_id: UUID, payload: EdgeDecision, user: User = Depends(current_user), cur=Depends(db_cursor)):
+def decide_edge(edge_id: UUID, payload: EdgeDecision, user: User = Depends(current_user), cur=Depends(db_cursor, scope="function")):
     """Confirm or reject a proposed edge. Only a proposed edge can be decided: a
     decision is not silently overwritten by a second one."""
     cur.execute(
@@ -974,7 +974,7 @@ def normalize_since(since: datetime, now: datetime) -> datetime:
 
 
 @router.get("/digest", response_model=DigestResponse)
-def digest(since: datetime, user: User = Depends(current_user), cur=Depends(db_cursor)):
+def digest(since: datetime, user: User = Depends(current_user), cur=Depends(db_cursor, scope="function")):
     """Changes to the caller's memories since `since` (ISO 8601): created, auto_accepted,
     edited, flagged_for_review, deleted, stale. Newest first, at most 200 entries;
     `counts` always covers every change, not only the entries returned.

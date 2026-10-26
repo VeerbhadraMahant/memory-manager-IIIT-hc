@@ -334,12 +334,14 @@ def extract_candidates(turn: str, block_names: list[str]) -> list[ExtractedCandi
 
     text = _content(data)
     if not text:
-        return []
+        raise LLMError("the extraction model returned no content")
     try:
         parsed = ExtractionResult.model_validate_json(text)
-    except Exception:
+    except Exception as e:
+        # Raised, not swallowed: returning [] would record the pass as 'done' with
+        # nothing remembered, which looks the same as a message with no facts in it.
         log.warning("extraction returned unparseable JSON: %s", text[:400])
-        return []
+        raise LLMError("the extraction model returned unparseable output") from e
     return list(parsed.candidates)
 
 

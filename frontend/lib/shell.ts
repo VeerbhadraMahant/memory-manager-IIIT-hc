@@ -47,7 +47,12 @@ const panelStore = {
     };
   },
   get(): boolean {
-    const saved = window.localStorage.getItem(PANEL_KEY);
+    let saved: string | null = null;
+    try {
+      saved = window.localStorage.getItem(PANEL_KEY);
+    } catch {
+      /* storage blocked: fall through to the default */
+    }
     if (saved === "open") return true;
     if (saved === "closed") return false;
     // Default: closed until explicitly opened by the user.
@@ -68,7 +73,11 @@ export function useMemoryPanel(): [boolean, (open: boolean) => void] {
   const [override, setOverride] = useState<boolean | null>(null);
   const set = useCallback((open: boolean) => {
     setOverride(open);
-    window.localStorage.setItem(PANEL_KEY, open ? "open" : "closed");
+    try {
+      window.localStorage.setItem(PANEL_KEY, open ? "open" : "closed");
+    } catch {
+      /* storage blocked: the override above still applies for this session */
+    }
   }, []);
   return [override ?? stored, set];
 }

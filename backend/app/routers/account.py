@@ -11,7 +11,7 @@ router = APIRouter(tags=["account"], dependencies=[Depends(general_limit)])
 
 
 @router.get("/me", response_model=Me)
-def me(user: User = Depends(current_user), cur=Depends(db_cursor)):
+def me(user: User = Depends(current_user), cur=Depends(db_cursor, scope="function")):
     """Who the request is acting as, for the sidebar's profile entry.
 
     Reads the `users` row so what the UI shows is a fact from the database.
@@ -28,7 +28,7 @@ def me(user: User = Depends(current_user), cur=Depends(db_cursor)):
 
 
 @router.get("/me/export")
-def export_my_data(user: User = Depends(current_user), cur=Depends(db_cursor)):
+def export_my_data(user: User = Depends(current_user), cur=Depends(db_cursor, scope="function")):
     """Everything stored about the caller, as JSON (data portability).
 
     Embeddings are omitted — they are derived, large, and meaningless to a person.
@@ -60,7 +60,7 @@ def export_my_data(user: User = Depends(current_user), cur=Depends(db_cursor)):
 
 
 @router.delete("/me")
-def delete_my_account(user: User = Depends(current_user), cur=Depends(db_cursor)):
+def delete_my_account(user: User = Depends(current_user), cur=Depends(db_cursor, scope="function")):
     """Permanently erase the caller and everything they stored.
 
     Unlike item deletion (a tombstone, so provenance survives) this is a true erase —

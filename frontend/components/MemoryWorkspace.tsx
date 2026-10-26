@@ -44,7 +44,12 @@ const viewStore = {
     return () => window.removeEventListener("storage", onChange);
   },
   get(): View {
-    const saved = window.localStorage.getItem(STORAGE_KEY);
+    let saved: string | null = null;
+    try {
+      saved = window.localStorage.getItem(STORAGE_KEY);
+    } catch {
+      /* storage blocked: default to the list */
+    }
     return saved === "graph" ? "graph" : "list";
   },
   // The list is the primary view (principle 6), so it is what an unconfigured
@@ -104,7 +109,11 @@ export function MemoryWorkspace({
 
   const choose = useCallback((next: View) => {
     setOverride(next);
-    window.localStorage.setItem(STORAGE_KEY, next);
+    try {
+      window.localStorage.setItem(STORAGE_KEY, next);
+    } catch {
+      /* storage blocked: the override above still applies for this session */
+    }
   }, []);
 
   // §4.4: a chip's "show in graph" opens the collapsed panel (page.tsx) — but
