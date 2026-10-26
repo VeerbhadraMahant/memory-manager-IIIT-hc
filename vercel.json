@@ -3,13 +3,7 @@
   "services": {
     "backend": {
       "root": "backend",
-      "framework": "fastapi",
-      "routes": [
-        {
-          "src": "/api/(.*)",
-          "transforms": [{ "type": "request.path", "op": "set", "args": "/$1" }]
-        }
-      ]
+      "framework": "fastapi"
     },
     "frontend": {
       "root": "frontend",

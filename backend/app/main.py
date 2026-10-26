@@ -75,6 +75,9 @@ app = FastAPI(
     description="Memory the user negotiates, rather than memory that accumulates silently.",
     version="1.0.0",
     lifespan=lifespan,
+    # Vercel mounts this service at /api and hands us the full path. Starlette strips
+    # root_path when present and leaves paths without it alone, so local dev is unchanged.
+    root_path="/api",
     docs_url="/docs" if DOCS_ON else None,
     redoc_url=None,
     openapi_url="/openapi.json" if DOCS_ON else None,
