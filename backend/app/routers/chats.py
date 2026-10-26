@@ -243,7 +243,7 @@ def chat_turn(
     # switching models carries the memory across rather than re-deriving it (D32).
     try:
         reply, provider_used, model_used, reasoning = llm.chat_response(
-            history, used, payload.provider
+            history, used, payload.provider, failover=True
         )
     except Exception as e:
         log.exception("chat completion failed")
@@ -417,7 +417,7 @@ def regenerate(chat_id: UUID, payload: RegenerateRequest, user: User = Depends(c
             )
 
     try:
-        reply, provider_used, model_used, _ = llm.chat_response(history, used, payload.provider)
+        reply, provider_used, model_used, _ = llm.chat_response(history, used, payload.provider, failover=True)
     except Exception as e:
         log.exception("regenerate completion failed")
         raise HTTPException(502, f"chat call failed: {llm.public_error(e)}") from e

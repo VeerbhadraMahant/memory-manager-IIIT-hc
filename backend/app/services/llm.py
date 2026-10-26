@@ -251,6 +251,10 @@ preferences and constraints. A substantive turn usually yields two to six candid
 Do not extract greetings, questions, one-off requests, passing moods, or facts about
 the world rather than the user. Return an empty list for small talk.
 
+A person saying who they are is not small talk. Their name, even inside a greeting or
+said casually ("hello, bhadra here", "it's Rahul", "call me Sam"), is a stated identity
+fact worth keeping; extract it and ignore the greeting around it.
+
 FIELDS
 
 source_type
@@ -459,7 +463,7 @@ def _openai_compatible_chat(
         r.raise_for_status()
         return r.json()
 
-    data = with_retry(call)
+    data = with_retry(call, attempts=2)
     if isinstance(data, dict) and data.get("error"):
         log.warning("%s error body: %s", label, scrub(str(data["error"]))[:300])
         raise LLMError(f"{label} reported an error")
@@ -489,7 +493,7 @@ def _gemini_chat(*, api_key: str, model: str, system: str, history: list[dict]) 
         r.raise_for_status()
         return r.json()
 
-    data = with_retry(call)
+    data = with_retry(call, attempts=2)
     if "error" in data:
         log.warning("gemini error body: %s", scrub(str(data["error"]))[:300])
         raise LLMError(f"Gemini reported an error ({data['error'].get('code')})")
@@ -546,10 +550,45 @@ def resolve_provider(provider: str | None) -> str:
     return settings.default_chat_provider if settings.default_chat_provider in ids else next(iter(ids), "openrouter")
 
 
+# Alternatives tried, in this order, when the chosen provider fails a turn.
+_FAILOVER_ORDER = ("groq", "openrouter", "gemini")
+
+
 def chat_response(
-    history: list[dict], memory_items: list[dict], provider: str | None = None
+    history: list[dict],
+    memory_items: list[dict],
+    provider: str | None = None,
+    *,
+    failover: bool = False,
 ) -> tuple[str, str, str, str]:
-    """Answer one turn.
+    """Answer one turn, optionally moving to another configured provider on failure.
+
+    The memory block is built from the database, so any provider can answer with the
+    same memory; the return value names the one that actually did. Off by default:
+    the influence probe compares replies across calls and must stay on one model.
+    """
+    chosen = resolve_provider(provider)
+    try:
+        return _chat_once(history, memory_items, chosen)
+    except (LLMError, httpx.HTTPError) as first:
+        if not failover:
+            raise
+        configured = {p["id"] for p in available_providers()}
+        for alt in _FAILOVER_ORDER:
+            if alt == chosen or alt not in configured:
+                continue
+            log.warning("chat provider %s failed (%s); trying %s", chosen, type(first).__name__, alt)
+            try:
+                return _chat_once(history, memory_items, alt)
+            except (LLMError, httpx.HTTPError):
+                continue
+        raise first
+
+
+def _chat_once(
+    history: list[dict], memory_items: list[dict], chosen: str
+) -> tuple[str, str, str, str]:
+    """Answer one turn on exactly `chosen`.
 
     Returns (reply, provider_id, model, reasoning). The provider and model are what
     actually ran, not what was requested (see resolve_provider). `reasoning` is the
@@ -557,7 +596,6 @@ def chat_response(
     none — the UI must render nothing in that case rather than substituting a
     plausible-looking summary."""
     system = CHAT_SYSTEM.format(memory_block=_memory_block(memory_items))
-    chosen = resolve_provider(provider)
 
     if chosen == "gemini":
         if not settings.gemini_key:
