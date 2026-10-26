@@ -39,7 +39,10 @@ class Settings(BaseSettings):
     # (in_progress vs. completed) is the field the whole design rests on, and it runs
     # off the critical path where the extra second costs nothing. Verified on the
     # tense test ("still writing" -> in_progress, "finish next month" -> planned).
-    llm_extract_model: str = "nvidia/nemotron-3-super-120b-a12b:free"
+    # The :free nemotron slug still listed but its upstream function was gone (404 from
+    # Nvidia), so extraction failed on every turn. Paid haiku costs ~$0.0001 a call, passes
+    # the tense test, and honours strict json_schema.
+    llm_extract_model: str = "anthropic/claude-haiku-5.5"
 
     # Chat is what the user waits on, so it gets the faster model rather than the
     # best one. This is an MoE with few active params — quick, and it passed the
@@ -73,7 +76,8 @@ class Settings(BaseSettings):
     groq_api_key: SecretStr | None = None
     # Qwen is a reasoning model and emits <think>...</think> in the content; llm.py
     # strips those rather than showing the user the model's scratchpad.
-    groq_chat_model: str = "qwen/qwen3.6-27b"
+    # qwen3.6-27b was retired from Groq (404); 3.8 is its successor and answers.
+    groq_chat_model: str = "qwen/qwen3.8-27b"
     groq_base_url: str = "https://api.groq.com/openai/v1"
 
     # Which provider answers when the client does not ask for one.
